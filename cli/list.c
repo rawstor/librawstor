@@ -63,17 +63,27 @@ int rawstor_cli_list(const char* location, const RawstorCliOutput* output) {
             if (rawstor_target_tenant(*it, tenant, sizeof(tenant)) < 0) {
                 tenant[0] = '\0';
             }
+            char* target = rawstor_cli_list_target(*it, location);
+            if (target == NULL) {
+                fprintf(stderr, "Failed to format listed target\n");
+                rawstor_string_list_delete(targets);
+                rawstor_cli_op_destroy(&op);
+                rawstor_cli_table_delete(table);
+                return EXIT_FAILURE;
+            }
             char location_buf[1024];
             rawstor_cli_target_location(
-                *it, location_buf, sizeof(location_buf)
+                target, location_buf, sizeof(location_buf)
             );
             RawstorCliCell cells[] = {
                 rawstor_cli_cell_optional(uuid),
                 rawstor_cli_cell_optional(tenant),
-                rawstor_cli_cell_string(*it),
+                rawstor_cli_cell_string(target),
                 rawstor_cli_cell_string(location_buf),
             };
-            if (rawstor_cli_table_add_row(table, cells) < 0) {
+            int added = rawstor_cli_table_add_row(table, cells);
+            free(target);
+            if (added < 0) {
                 fprintf(stderr, "Out of memory\n");
                 rawstor_string_list_delete(targets);
                 rawstor_cli_op_destroy(&op);

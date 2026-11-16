@@ -72,7 +72,8 @@ int rawstor_pki_init(
 int rawstor_pki_issue(
     const char* dir, enum RawstorPkiRole role, const char* tenant,
     const char* name, unsigned long validity, const char* cert_file,
-    const char* key_file, char* identity, size_t size
+    const char* key_file, char* identity, size_t size,
+    const RawstorPkiPermissions* permissions
 ) {
     return guarded([&] {
         check_room(identity, size);
@@ -95,10 +96,31 @@ int rawstor_pki_issue(
                 EINVAL, std::generic_category(), "Unknown role"
             );
         }
+        rawtls::Permissions policy;
+        if (permissions) {
+            if (permissions->count > RAWSTOR_PKI_MAX_OBJECT_PERMISSIONS) {
+                throw std::system_error(
+                    EINVAL, std::generic_category(),
+                    "Too many object restrictions"
+                );
+            }
+            policy.role = permissions->role;
+            for (size_t i = 0; i < permissions->count; ++i) {
+                const auto& entry = permissions->objects[i];
+                if (!memchr(entry.object_id, 0, sizeof(entry.object_id)) ||
+                    !policy.objects.emplace(entry.object_id, entry.permissions)
+                         .second) {
+                    throw std::system_error(
+                        EINVAL, std::generic_category(),
+                        "Invalid object restriction"
+                    );
+                }
+            }
+        }
         give(
             rawtls::CA(dir).issue(
                 r, text(tenant), text(name), seconds(validity), cert_file,
-                key_file
+                key_file, policy
             ),
             identity
         );
@@ -130,6 +152,13 @@ int rawstor_pki_show(
         );
         info->not_after = found.not_after;
         info->issued = found.issued;
+        info->permissions = {};
+        info->permissions.role = found.permissions.role;
+        for (const auto& [object, mask] : found.permissions.objects) {
+            auto& entry = info->permissions.objects[info->permissions.count++];
+            std::memcpy(entry.object_id, object.c_str(), object.size() + 1);
+            entry.permissions = mask;
+        }
     });
 }
 

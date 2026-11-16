@@ -422,3 +422,23 @@ TEST(MonitorTest, collects_five_thousand_backends_with_bounded_queue) {
 }
 
 } // namespace
+
+TEST(
+    MonitorAuthorizationTest,
+    a_local_mds_witness_is_available_without_provider_rpc
+) {
+    using namespace rawstor::mdsserver;
+    tests::TmpDir dir;
+    auto ost = ost_at("ost://127.0.0.1:1");
+    ost.roles = {Role::Witness};
+    Topology topology;
+    topology.add(ost);
+    ObjectStore store(dir.db_path(), topology);
+    Monitor monitor(store, Opts{}, ost.id);
+    std::thread worker([&] { monitor.loop(); });
+    EXPECT_TRUE(eventually([&] { return store.backend_available(ost.id); }));
+    monitor.stop();
+    worker.join();
+    EXPECT_EQ(store.info().used, 0u);
+    EXPECT_EQ(store.info().total, 0u);
+}

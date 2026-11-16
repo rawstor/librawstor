@@ -1,3 +1,4 @@
+#include <rawtls/authorization.hpp>
 #include <rawtls/transport.hpp>
 
 #include <rawtls/context.hpp>
@@ -18,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <ctime>
 #include <exception>
 #include <memory>
 #include <optional>
@@ -101,6 +103,7 @@ public:
     void cancel_recv_multishot() noexcept override { _recv.cancel(); }
 
     const rawtls::SpiffeId* peer() const noexcept override { return nullptr; }
+    uint64_t peer_expiry() const noexcept override { return 0; }
 };
 
 const size_t cipher_size = 1 << 16;
@@ -129,6 +132,8 @@ private:
     std::string _expected_peer;
     rawtls::Role _expected_role = rawtls::Role::ost;
     std::optional<rawtls::SpiffeId> _peer;
+    uint64_t _peer_expiration = 0;
+    uint64_t _local_expiration = 0;
     bool _handshake_done = false;
     bool _verify_failed = false;
     // True once the peer has said it will send no more.
@@ -171,7 +176,7 @@ private:
     }
 
     // The identity `cert` stands for, or std::system_error(EACCES).
-    rawtls::SpiffeId _check_peer(x509_st* cert) const {
+    rawtls::SpiffeId _check_peer(x509_st* cert, bool own = false) const {
         if (X509_check_ca(cert) != 0) {
             refuse("the certificate is a CA");
         }
@@ -179,8 +184,9 @@ private:
         // Absent extended key usage is not "any": the certificate must say it
         // may be used for the end of the connection it is on.
         uint32_t usage = X509_get_extended_key_usage(cert);
-        uint32_t needed =
-            _mode == rawtls::Mode::client ? XKU_SSL_SERVER : XKU_SSL_CLIENT;
+        uint32_t needed = (_mode == rawtls::Mode::client) != own
+                              ? XKU_SSL_SERVER
+                              : XKU_SSL_CLIENT;
         if (usage == UINT32_MAX || !(usage & needed)) {
             refuse("the certificate lacks the extended key usage");
         }
@@ -221,10 +227,10 @@ private:
             refuse("the URI SAN is not a rawstor SPIFFE ID");
         }
         const rawtls::SpiffeId& id = *parsed;
-        if (id.trust_domain() != _trust_domain) {
+        if (!own && id.trust_domain() != _trust_domain) {
             refuse("the SPIFFE ID is in another trust domain");
         }
-        if (_mode == rawtls::Mode::client) {
+        if (!own && _mode == rawtls::Mode::client) {
             if (!id.is_server()) {
                 refuse(
                     "the server's SPIFFE ID is not that of an OST or an MDS"
@@ -237,7 +243,12 @@ private:
                 refuse("the server's SPIFFE ID is not the one expected");
             }
         }
-        return id;
+        parsed->permissions(rawtls::certificate_permissions(cert));
+        if (id.role() != rawtls::Role::client &&
+            (id.permissions().role || !id.permissions().objects.empty())) {
+            refuse("only tenant clients may carry permissions");
+        }
+        return *parsed;
     }
 
     // Throws EACCES for a refused peer, EPROTO for any other failure of the
@@ -292,6 +303,23 @@ private:
             // that finished without it has no identity to go by.
             if (!_peer.has_value()) {
                 refuse("no identity was established");
+            }
+            struct tm expiry{};
+            X509* peer_cert = SSL_get0_peer_certificate(_ssl);
+            if (peer_cert &&
+                ASN1_TIME_to_tm(X509_get0_notAfter(peer_cert), &expiry) == 1) {
+                time_t epoch = timegm(&expiry);
+                if (epoch > 0) {
+                    _peer_expiration = static_cast<uint64_t>(epoch);
+                }
+            }
+            X509* own = SSL_get_certificate(_ssl);
+            (void)_check_peer(own, true);
+            if (ASN1_TIME_to_tm(X509_get0_notAfter(own), &expiry) == 1) {
+                time_t epoch = timegm(&expiry);
+                if (epoch > 0) {
+                    _local_expiration = static_cast<uint64_t>(epoch);
+                }
             }
             _handshake_done = true;
             return true;
@@ -379,6 +407,12 @@ private:
     rawstd::Task<size_t> _write(const iovec* iov, size_t count) {
         co_await _write_mutex.acquire();
         Release release(_write_mutex);
+        // Reconnect with the reloaded credentials before sending an expired
+        // certificate's command; the server's EACCES is a permanent IO error.
+        if (_mode == rawtls::Mode::client &&
+            _local_expiration <= static_cast<uint64_t>(time(nullptr))) {
+            RAWSTD_THROW_SYSTEM_ERROR(ECONNRESET);
+        }
         size_t total = 0;
         for (size_t i = 0; i < count; ++i) {
             if (iov[i].iov_len > 0) {
@@ -508,6 +542,7 @@ public:
     void cancel_recv_multishot() noexcept override;
 
     const rawtls::SpiffeId* peer() const noexcept override { return &*_peer; }
+    uint64_t peer_expiry() const noexcept override { return _peer_expiration; }
 };
 
 /*

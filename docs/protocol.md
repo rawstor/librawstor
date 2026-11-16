@@ -36,8 +36,8 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | Tenant: owner of an object (`ALLOCATE`, `OBJ_CREATE`, `META`), filter of `LIST`; registry `LIST_TENANTS`, `TENANT_CREATE` / `TENANT_REMOVE` on the MDS | ✅ | OST `ost/src/client.cpp`, MDS `mds/src/client.cpp`; [Tenants](tenants.md) |
 | Explicit `len` field in the response (`{res, len, hash}`) | ❌ | `res` still carries the payload size |
 | `map_epoch` in the IO frame (epoch-fence) | ❌ | planned in [MDS design](mds.md) |
-| Authentication: mutual TLS on every connection, identity from the certificate | ❌ | planned in [Security design](security.md) (stage 2) |
-| Authorization: capability tokens issued by `RESOLVE` and checked by the OST, per-command rights | ❌ | planned in [Security design](security.md) (stage 3) |
+| Authentication: mutual TLS on every connection, identity from the certificate | ✅ | [Security design](security.md) (stage 2) |
+| Authorization: certificate tenant roles and object restrictions, checked by MDS and OST | ✅ | [Security design](security.md), `librawtls/authorization.hpp`, MDS and OST dispatch |
 
 One binary protocol is spoken by every rawstor server role: `rawstor-ost`
 (object storage) and `rawstor-mds` (metadata server). The authoritative
@@ -227,7 +227,7 @@ none any more -- the lease ran out and the barrier lifted itself.
 ### Handshake — 8 bytes
 
 `HANDSHAKE`'s request and response payload. `features` is the set of optional
-protocol features, a bit mask; no bit is defined yet. The client offers what it
+protocol features, a bit mask. No feature bits are currently defined. The client offers what it
 has and the server answers with the subset it accepts, which the connection
 then uses; each side ignores the bits it does not know. There is no protocol
 version: features are the only negotiation.
@@ -956,3 +956,49 @@ Registered objects are `OBJECT` rows at offset zero; witness records are
 `CHUNK` rows carrying their real chunk offsets. Limits count IDs, and all
 offsets of an ID stay on one page. The row type alone says which kind of
 address was listed.
+
+
+## Authorization
+
+MDS and OST read the access policy from the authenticated leaf certificate.
+No authorization payload is added to `RESOLVE` or `OBJ_REMOVE` maps; their
+chunk slots contain the member identity and location. Both services check
+certificate expiry for new tenant commands, the closed command table in
+[Security](security.md#roles-and-permissions-per-command), object restrictions and
+the object's owner. Foreign objects return `-ENOENT`; insufficient permissions
+return `-EACCES`. The tenant of an allocation must match the certificate.
+
+The signed policy is a noncritical private X.509 extension with UUID-derived
+OID `2.25.110097391626234565544022595913142399087` (UUID
+`52d3fc80-54f7-49a5-932b-28eb45da706f`). Its extnValue contains the DER encoding
+of a UTF8String with this canonical ASCII content:
+
+```text
+rawstor-access
+3
+018f4e2a-2222-7000-8000-000000000002=1
+018f4e2a-2222-7000-8000-000000000003=0
+```
+
+The second line is the default role: none=0, reader=1, writer=2, manager=3. Following lines
+are optional per-object restrictions, sorted by canonical lowercase UUID,
+with decimal masks (`read=1`, `write=2`, `manage=4`). Each line,
+including the final one, ends in a newline. At most 128 objects are allowed;
+duplicate objects, nil UUIDs, unknown roles/bits, noncanonical content,
+trailing DER data and duplicate policy extensions are rejected. A missing
+extension grants no tenant permissions. Provider certificates must not carry it.
+
+An explicit object mask overrides the tenant role's default permissions and
+covers all chunks and versions of that object. Objects not listed retain the
+role's defaults. With `none`, every unlisted object is denied. All snapshot
+data is read-only; a manager may manage versions of an allowed object.
+The certificate SAN provides the tenant; it is not duplicated in the policy.
+
+The policy is noncritical so standard TLS certificate verification remains
+in effect without suppressing unknown-critical-extension errors. Rawstor
+itself requires a usable policy for tenant access and parses it strictly.
+The CA signs it along with the identity, expiry and other certificate fields.
+
+A removal retry checks the certificate's current policy and the tenant saved
+with the removal record. It can return the recorded map only to the owning
+tenant or provider admin; OST independently checks the owner of each member.

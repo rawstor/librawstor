@@ -6,37 +6,10 @@
 #include <rawstor.h>
 
 #include <rawstd/exitcode.h>
-#include <rawstd/units.h>
-#include <rawstd/uuid.h>
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-static void log_spec(FILE* output, const struct RawstorObjectSpec* spec) {
-    char buf[256];
-    rawstd_bytes_to_size(spec->size, buf, sizeof(buf));
-
-    fprintf(output, "  size: %s\n", buf);
-    fprintf(output, "  mirrors: %u\n", spec->width);
-
-    /* chunk_size is meaningful for both a plain object (create-by-location
-     * splits it itself) and an mds:// one; failure_domain/stripe_width are
-     * mds:// object policy only. Silently unused otherwise. */
-    if (spec->chunk_size != 0) {
-        rawstd_bytes_to_size(spec->chunk_size, buf, sizeof(buf));
-        fprintf(output, "  chunk size: %s\n", buf);
-    }
-    if (spec->failure_domain != 0) {
-        fprintf(output, "  failure domain: %u\n", spec->failure_domain);
-    }
-    if (spec->stripe_width != 0) {
-        fprintf(
-            output, "  stripe width: %llu\n",
-            (unsigned long long)spec->stripe_width
-        );
-    }
-}
 
 static const char* const created_columns[] = {
     "object_id", "tenant",     "target",         "size",
@@ -149,8 +122,7 @@ int rawstor_cli_create(
         return checked;
     }
 
-    fprintf(stderr, "Creating object with specification:\n");
-    log_spec(stderr, &spec);
+    fprintf(stderr, "Creating object: %s\n", target);
 
     RawstorCliOp op;
     int res = rawstor_cli_op_init(&op);
@@ -216,8 +188,7 @@ int rawstor_cli_create_at(
         return checked;
     }
 
-    fprintf(stderr, "Creating object with specification:\n");
-    log_spec(stderr, &spec);
+    fprintf(stderr, "Creating object: %s\n", location);
 
     // NULL/0 asks for the target string's own length alone -- the same
     // snprintf(NULL, 0, ...) idiom rawstor_location_create() itself just

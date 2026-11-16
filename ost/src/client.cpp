@@ -1,4 +1,6 @@
+#include <atomic>
 #include <ost/client.hpp>
+#include <rawstor/pki.h>
 
 #include <ost/server.hpp>
 
@@ -36,6 +38,8 @@
 #include <cstring>
 
 namespace {
+// A transfer invalidates cached ownership on every worker.
+std::atomic<uint64_t> ownership_generation{1};
 
 // How long a writer's session that ended without LEAVE waits for the
 // writer's replacement connection before the copy is LOST. A writer opens
@@ -176,6 +180,64 @@ rawstd::Task<std::shared_ptr<Client>> Client::create(
         throw;
     }
     co_return client;
+}
+
+rawstd::Task<int> Client::_authorize(
+    RawstorCommandType command, const uint8_t* object, uint64_t offset,
+    const uint8_t* version, uint64_t flags
+) {
+    int error =
+        _authorization.check(*_transport, command, object, version, flags);
+    if (error || !_transport->peer() ||
+        _transport->peer()->role() != rawtls::Role::client || !object) {
+        co_return error;
+    }
+    bool bound = command == RAWSTOR_CMD_READ || command == RAWSTOR_CMD_WRITE ||
+                 command == RAWSTOR_CMD_FLUSH || command == RAWSTOR_CMD_LEAVE ||
+                 command == RAWSTOR_CMD_DISCARD ||
+                 command == RAWSTOR_CMD_WRITE_ZEROES;
+    uint64_t generation = ownership_generation.load();
+    if (bound && _owner_generation == generation) {
+        co_return 0;
+    }
+    RawstdUUID id{};
+    memcpy(id.bytes, object, sizeof(id.bytes));
+    try {
+        co_await with_slot(
+            _queue, _server.locations(),
+            [&](rawstor::Slot& slot) -> rawstd::Task<void> {
+                std::vector<RawstorObjectMeta> records;
+                try {
+                    records = co_await slot.meta(id, offset);
+                } catch (const std::system_error& e) {
+                    if (command == RAWSTOR_CMD_ALLOCATE &&
+                        e.code().value() == ENOENT) {
+                        co_return;
+                    }
+                    throw;
+                }
+                if (records.empty()) {
+                    RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+                }
+                for (const auto& record : records) {
+                    if (record.state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
+                        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+                    }
+                    if (int denied = _authorization.owner(
+                            *_transport, record.tenant_id
+                        )) {
+                        RAWSTD_THROW_SYSTEM_ERROR(denied);
+                    }
+                }
+            }
+        );
+        if (bound) {
+            _owner_generation = generation;
+        }
+    } catch (const std::system_error& e) {
+        co_return e.code().value();
+    }
+    co_return 0;
 }
 
 Client::Client(
@@ -350,6 +412,15 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 if (client == nullptr) {
                     co_return;
                 }
+                if (int error = co_await client->_authorize(
+                        head.cmd, set_object.object_id, set_object.offset,
+                        set_object.version_id, set_object.val
+                    )) {
+                    co_await client->_send_response(
+                        head.cmd, head.cid, -error, 0
+                    );
+                    break;
+                }
                 _set_object(weak, head, set_object);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
@@ -362,6 +433,25 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
+                }
+                if (int error = co_await client->_authorize(
+                        head.cmd, spec.object_id, spec.chunk_offset, nullptr, 0
+                    )) {
+                    co_await client->_send_response(
+                        head.cmd, head.cid, -error, 0
+                    );
+                    break;
+                }
+                if (client->_transport->peer() &&
+                    client->_transport->peer()->role() ==
+                        rawtls::Role::client &&
+                    client->_authorization.owner(
+                        *client->_transport, spec.tenant_id
+                    )) {
+                    co_await client->_send_response(
+                        head.cmd, head.cid, -ENOENT, 0
+                    );
+                    break;
                 }
                 _allocate(weak, head, spec);
                 rawstd::DetachedTask::rethrow_if_pending();
@@ -376,6 +466,15 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 if (client == nullptr) {
                     co_return;
                 }
+                if (int error = co_await client->_authorize(
+                        head.cmd, basic.object_id, basic.offset,
+                        basic.version_id, 0
+                    )) {
+                    co_await client->_send_response(
+                        head.cmd, head.cid, -error, 0
+                    );
+                    break;
+                }
                 _release(weak, head, basic);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
@@ -389,6 +488,14 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 if (client == nullptr) {
                     co_return;
                 }
+                if (int error = co_await client->_authorize(
+                        head.cmd, basic.object_id, basic.offset, nullptr, 0
+                    )) {
+                    co_await client->_send_response(
+                        head.cmd, head.cid, -error, 0
+                    );
+                    break;
+                }
                 _set_owner(weak, head, basic);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
@@ -401,6 +508,14 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
+                }
+                if (int error = co_await client->_authorize(
+                        head.cmd, basic.object_id, basic.offset, nullptr, 0
+                    )) {
+                    co_await client->_send_response(
+                        head.cmd, head.cid, -error, 0
+                    );
+                    break;
                 }
                 _create_version(weak, head, basic);
                 rawstd::DetachedTask::rethrow_if_pending();
@@ -416,6 +531,14 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 if (client == nullptr) {
                     co_return;
                 }
+                if (int error = co_await client->_authorize(
+                        head.cmd, basic.object_id, basic.offset, nullptr, 0
+                    )) {
+                    co_await client->_send_response(
+                        head.cmd, head.cid, -error, 0
+                    );
+                    break;
+                }
                 _freeze_thaw(weak, head, basic);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
@@ -430,6 +553,39 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 if (client == nullptr) {
                     co_return;
                 }
+                if (int error = co_await client->_authorize(
+                        head.cmd, nullptr, 0, nullptr, 0
+                    )) {
+                    co_await client->_send_response(
+                        head.cmd, head.cid, -error, 0
+                    );
+                    break;
+                }
+                if (client->_transport->peer() &&
+                    client->_transport->peer()->role() ==
+                        rawtls::Role::client) {
+                    RawstdUUID tenant{}, requested{};
+                    rawstd_uuid_from_string(
+                        &tenant, client->_transport->peer()->tenant().c_str()
+                    );
+                    memcpy(
+                        requested.bytes, list_payload.tenant_id,
+                        sizeof(requested.bytes)
+                    );
+                    if (!rawstd_uuid_is_nil(&requested) &&
+                        client->_authorization.owner(
+                            *client->_transport, requested.bytes
+                        )) {
+                        co_await client->_send_response(
+                            head.cmd, head.cid, -ENOENT, 0
+                        );
+                        break;
+                    }
+                    memcpy(
+                        list_payload.tenant_id, tenant.bytes,
+                        sizeof(tenant.bytes)
+                    );
+                }
                 _list(weak, head, list_payload);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
@@ -442,6 +598,15 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
+                }
+                if (int error = co_await client->_authorize(
+                        head.cmd, basic.object_id, basic.offset,
+                        basic.version_id, 0
+                    )) {
+                    co_await client->_send_response(
+                        head.cmd, head.cid, -error, 0
+                    );
+                    break;
                 }
                 _meta(weak, head, basic);
                 rawstd::DetachedTask::rethrow_if_pending();
@@ -456,6 +621,14 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 if (client == nullptr) {
                     co_return;
                 }
+                if (int error = co_await client->_authorize(
+                        head.cmd, basic.object_id, basic.offset, nullptr, 0
+                    )) {
+                    co_await client->_send_response(
+                        head.cmd, head.cid, -error, 0
+                    );
+                    break;
+                }
                 _list_versions(weak, head, basic);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
@@ -468,6 +641,14 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
+                }
+                if (int error = co_await client->_authorize(
+                        head.cmd, nullptr, 0, nullptr, 0
+                    )) {
+                    co_await client->_send_response(
+                        head.cmd, head.cid, -error, 0
+                    );
+                    break;
                 }
                 _info(weak, head);
                 rawstd::DetachedTask::rethrow_if_pending();
@@ -482,6 +663,15 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 if (client == nullptr) {
                     co_return;
                 }
+                if (int error = co_await client->_authorize(
+                        head.cmd, client->_bound_object.bytes,
+                        client->_bound_offset, client->_bound_version.bytes, 0
+                    )) {
+                    co_await client->_send_response(
+                        head.cmd, head.cid, -error, 0
+                    );
+                    break;
+                }
                 _flush(weak, head, basic.val);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
@@ -495,6 +685,15 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
+                }
+                if (int error = co_await client->_authorize(
+                        head.cmd, client->_bound_object.bytes,
+                        client->_bound_offset, client->_bound_version.bytes, 0
+                    )) {
+                    co_await client->_send_response(
+                        head.cmd, head.cid, -error, 0
+                    );
+                    break;
                 }
                 _leave(weak, head);
                 rawstd::DetachedTask::rethrow_if_pending();
@@ -511,6 +710,15 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 if (client == nullptr) {
                     co_return;
                 }
+                if (int error = co_await client->_authorize(
+                        head.cmd, propose_payload.object_id,
+                        propose_payload.chunk_offset, nullptr, 0
+                    )) {
+                    co_await client->_send_response(
+                        head.cmd, head.cid, -error, 0
+                    );
+                    break;
+                }
                 _sync(weak, head, propose_payload);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
@@ -523,6 +731,16 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
+                }
+                if (int error = co_await client->_authorize(
+                        head.cmd, client->_bound_object.bytes,
+                        client->_bound_offset, client->_bound_version.bytes,
+                        io.flags
+                    )) {
+                    co_await client->_send_response(
+                        head.cmd, head.cid, -error, 0
+                    );
+                    break;
                 }
                 _read(weak, head, io);
                 rawstd::DetachedTask::rethrow_if_pending();
@@ -537,6 +755,16 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 if (client == nullptr) {
                     co_return;
                 }
+                if (int error = co_await client->_authorize(
+                        head.cmd, client->_bound_object.bytes,
+                        client->_bound_offset, client->_bound_version.bytes,
+                        io.flags
+                    )) {
+                    co_await client->_send_response(
+                        head.cmd, head.cid, -error, 0
+                    );
+                    break;
+                }
                 _discard(weak, head, io);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
@@ -550,6 +778,16 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 if (client == nullptr) {
                     co_return;
                 }
+                if (int error = co_await client->_authorize(
+                        head.cmd, client->_bound_object.bytes,
+                        client->_bound_offset, client->_bound_version.bytes,
+                        io.flags
+                    )) {
+                    co_await client->_send_response(
+                        head.cmd, head.cid, -error, 0
+                    );
+                    break;
+                }
                 _write_zeroes(weak, head, io);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
@@ -562,6 +800,20 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
+                }
+
+                if (int error = co_await client->_authorize(
+                        head.cmd, client->_bound_object.bytes,
+                        client->_bound_offset, client->_bound_version.bytes,
+                        io.flags
+                    )) {
+                    co_await client->_send_response(
+                        head.cmd, head.cid, -error, 0
+                    );
+                    if (io.len) {
+                        RAWSTD_THROW_SYSTEM_ERROR(error);
+                    }
+                    break;
                 }
 
                 // 64MB limit -- reject before committing to receive this
@@ -592,6 +844,16 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                     }
                 }
 
+                if (int error = co_await client->_authorize(
+                        head.cmd, client->_bound_object.bytes,
+                        client->_bound_offset, client->_bound_version.bytes,
+                        io.flags
+                    )) {
+                    co_await client->_send_response(
+                        head.cmd, head.cid, -error, 0
+                    );
+                    break;
+                }
                 _write(
                     weak, head, io,
                     std::make_shared<std::vector<unsigned char>>(
@@ -730,6 +992,14 @@ rawstd::DetachedTask Client::_list(
         );
         std::vector<RawstorFrameListEntry> entries;
         for (const auto& group : groups) {
+            if (client->_transport->peer() &&
+                client->_transport->peer()->role() == rawtls::Role::client &&
+                !(client->_transport->peer()->permissions().mask(
+                      group.id.bytes
+                  ) &
+                  RAWSTOR_PERM_READ)) {
+                continue;
+            }
             RawstorFrameListEntry entry{};
             memcpy(entry.id, group.id.bytes, sizeof(entry.id));
             memcpy(
@@ -784,6 +1054,10 @@ rawstd::DetachedTask Client::_allocate(
     RawstdUUID tenant;
     memcpy(tenant.bytes, payload.tenant_id, sizeof(tenant.bytes));
 
+    struct OwnershipChange {
+        OwnershipChange() { ++ownership_generation; }
+        ~OwnershipChange() { ++ownership_generation; }
+    } ownership_change;
     int result = 0;
     try {
         RawstorObjectSpec spec{};
@@ -831,6 +1105,10 @@ rawstd::DetachedTask Client::_release(
     RawstdUUID version_id;
     memcpy(version_id.bytes, payload.version_id, sizeof(payload.version_id));
 
+    struct OwnershipChange {
+        OwnershipChange() { ++ownership_generation; }
+        ~OwnershipChange() { ++ownership_generation; }
+    } ownership_change;
     int result = 0;
     try {
         co_await with_slot(
@@ -878,6 +1156,10 @@ rawstd::DetachedTask Client::_set_owner(
     RawstdUUID owner;
     memcpy(owner.bytes, payload.version_id, sizeof(payload.version_id));
 
+    struct OwnershipChange {
+        OwnershipChange() { ++ownership_generation; }
+        ~OwnershipChange() { ++ownership_generation; }
+    } ownership_change;
     int result = 0;
     try {
         if (rawstd_uuid_is_nil(&owner)) {
@@ -1402,6 +1684,9 @@ rawstd::DetachedTask Client::_set_object(
     }
     if (!error) {
         client->_slot = std::move(slot);
+        client->_bound_object = id;
+        client->_bound_offset = payload.offset;
+        client->_bound_version = version_id;
         client->_size = size;
         client->_member = client->_server._gate->member(id, payload.offset);
     }

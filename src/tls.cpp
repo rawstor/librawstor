@@ -1,6 +1,8 @@
 #include "tls.hpp"
 
 #include "opts.h"
+#include <rawstor/location.h>
+#include <rawtls/ca.hpp>
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
@@ -16,6 +18,7 @@ namespace {
 
 std::mutex mutex;
 std::unique_ptr<rawtls::Context> process_context;
+RawstdUUID client_tenant{};
 // The identity required of every MDS, empty to accept any MDS of the trust
 // domain.
 std::string mds_identity;
@@ -78,15 +81,31 @@ void initialize() {
         }
     }
     std::lock_guard<std::mutex> lock(mutex);
+    rawtls::SpiffeId own(rawtls::inspect(config.cert_file).identity);
+    client_tenant = {};
+    if (own.role() == rawtls::Role::client) {
+        rawstd_uuid_from_string(&client_tenant, own.tenant().c_str());
+    }
     process_context = std::move(context);
     mds_identity = std::move(mds);
     signal_context.store(process_context.get());
+}
+
+RawstdUUID default_owner() {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!rawstd_uuid_is_nil(&client_tenant)) {
+        return client_tenant;
+    }
+    RawstdUUID result{};
+    rawstd_uuid_from_string(&result, RAWSTOR_DEFAULT_TENANT);
+    return result;
 }
 
 void terminate() noexcept {
     std::lock_guard<std::mutex> lock(mutex);
     signal_context.store(nullptr);
     process_context.reset();
+    client_tenant = {};
     mds_identity.clear();
     ost_identities.clear();
     mds_hosts.clear();

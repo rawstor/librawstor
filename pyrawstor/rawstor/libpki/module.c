@@ -3,6 +3,8 @@
 
 #include <rawstor/pki.h>
 
+#include <string.h>
+
 /* The extension is separate from librawstor on purpose: importing librawstor
  * initializes rawstor, which needs TLS settings, and these are the functions
  * that make them. Nothing here initializes rawstor. */
@@ -50,18 +52,68 @@ static PyObject* py_pki_issue(PyObject* Py_UNUSED(self), PyObject* args) {
     unsigned long validity;
     const char* cert_file;
     const char* key_file;
+    unsigned int access_role = 0;
+    PyObject* object_permissions = Py_None;
     if (!PyArg_ParseTuple(
-            args, "sizzkss", &dir, &role, &tenant, &name, &validity, &cert_file,
-            &key_file
+            args, "sizzkss|IO", &dir, &role, &tenant, &name, &validity,
+            &cert_file, &key_file, &access_role, &object_permissions
         )) {
         return NULL;
+    }
+    struct RawstorPkiPermissions permissions = {0};
+    permissions.role = access_role;
+    if (object_permissions != Py_None) {
+        if (!PyDict_Check(object_permissions) ||
+            PyDict_Size(object_permissions) >
+                RAWSTOR_PKI_MAX_OBJECT_PERMISSIONS) {
+            PyErr_SetString(
+                PyExc_ValueError,
+                "object_permissions must be a dict with at most 128 entries"
+            );
+            return NULL;
+        }
+        Py_ssize_t position = 0;
+        PyObject* key;
+        PyObject* value;
+        while (PyDict_Next(object_permissions, &position, &key, &value)) {
+            Py_ssize_t size;
+            PyObject* encoded = PyUnicode_AsUTF8String(key);
+            if (!encoded) {
+                return NULL;
+            }
+            char* object;
+            if (PyBytes_AsStringAndSize(encoded, &object, &size) < 0) {
+                Py_DECREF(encoded);
+                return NULL;
+            }
+            unsigned long mask = PyLong_AsUnsignedLong(value);
+            if (PyErr_Occurred()) {
+                Py_DECREF(encoded);
+                return NULL;
+            }
+            if (size != 36 || memchr(object, 0, (size_t)size) ||
+                mask > RAWSTOR_PERM_ALL) {
+                Py_DECREF(encoded);
+                PyErr_SetString(
+                    PyExc_ValueError,
+                    "object_permissions requires UUID keys and masks in 0..7"
+                );
+                return NULL;
+            }
+            struct RawstorPkiObjectPermissions* entry =
+                &permissions.objects[permissions.count++];
+            memcpy(entry->object_id, object, 36);
+            Py_DECREF(encoded);
+            entry->object_id[36] = '\0';
+            entry->permissions = (unsigned int)mask;
+        }
     }
     char identity[RAWSTOR_PKI_IDENTITY_SIZE];
     int res;
     Py_BEGIN_ALLOW_THREADS;
     res = rawstor_pki_issue(
         dir, (enum RawstorPkiRole)role, tenant, name, validity, cert_file,
-        key_file, identity, sizeof(identity)
+        key_file, identity, sizeof(identity), &permissions
     );
     Py_END_ALLOW_THREADS;
     if (res < 0) {
@@ -116,8 +168,30 @@ static PyObject* py_pki_show(PyObject* Py_UNUSED(self), PyObject* args) {
     } else {
         issued = PyBool_FromLong(info.issued);
     }
-    PyObject* ret =
-        Py_BuildValue("(sLO)", info.identity, info.not_after, issued);
+    PyObject* restrictions = PyDict_New();
+    if (!restrictions) {
+        Py_DECREF(issued);
+        return NULL;
+    }
+    for (size_t i = 0; i < info.permissions.count; ++i) {
+        PyObject* mask =
+            PyLong_FromUnsignedLong(info.permissions.objects[i].permissions);
+        if (!mask ||
+            PyDict_SetItemString(
+                restrictions, info.permissions.objects[i].object_id, mask
+            ) < 0) {
+            Py_XDECREF(mask);
+            Py_DECREF(restrictions);
+            Py_DECREF(issued);
+            return NULL;
+        }
+        Py_DECREF(mask);
+    }
+    PyObject* ret = Py_BuildValue(
+        "(sLOIO)", info.identity, info.not_after, issued, info.permissions.role,
+        restrictions
+    );
+    Py_DECREF(restrictions);
     Py_DECREF(issued);
     return ret;
 }

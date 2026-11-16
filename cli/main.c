@@ -80,9 +80,10 @@ static void usage(void) {
         "\n"
         "shorthand:\n"
         "  create                = object create\n"
+        "  info                  = location info\n"
         "  list(ls)              = object list\n"
         "  remove(rm)            = object remove\n"
-        "  info                  = location info\n"
+        "  show                  = object show\n"
         "\n"
         "Run `rawstor <command> --help` to list a command's subcommands and "
         "`rawstor <command> <subcommand> --help` to show its usage.\n"
@@ -2107,6 +2108,8 @@ static int run_command(
         ret = command_list(argc, argv);
     } else if (strcmp(command, "remove") == 0 || strcmp(command, "rm") == 0) {
         ret = command_remove(argc, argv, TARGET_OBJECT);
+    } else if (strcmp(command, "show") == 0) {
+        ret = command_show(argc, argv, TARGET_OBJECT);
     } else if (strcmp(command, "info") == 0) {
         ret = command_info(argc, argv);
     } else if (strcmp(command, "tenant") == 0) {

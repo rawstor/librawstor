@@ -15,8 +15,8 @@ instead run with [`--insecure`](#insecure-mode), which turns all of this off.
 - **Identity: a SPIFFE ID** (one URI SAN) in the peer's certificate, issued by
   any CA that can write it: the project's own (`rawstor pki`) or an external
   one.
-- **Authorization: tokens signed by the MDS**, bound to the client's
-  certificate, with a closed rights table per command.
+- **Authorization: CA-signed roles and object permissions in the client's
+  certificate**, checked independently by MDS and OST for each command.
 - **`--insecure`** for a storage network isolated from every untrusted party:
   plaintext and no authentication at all.
 - **There is no mode with authentication but without encryption.** In this
@@ -45,8 +45,8 @@ document's own numbering (see [Implementation stages](#implementation-stages)).
 | kTLS offload of the data path | 2 | ❌ | optional, off by default (stage 0) |
 | `--insecure`: plaintext, no authentication, per process | 2 | ✅ | `--insecure` on every executable, `RawstorOpts::insecure` in a program, never in a systemd unit; [Without TLS](configuration.md#without-tls) |
 | Certificate and CA reload without downtime | 2 | ✅ | `SIGHUP` and `SIGUSR1` in `rawstor-ost` and `rawstor-mds`, `SIGUSR1` in `rawstor-vhost` and `rawstor-vduse`; `rawstor_tls_request_reload()` |
-| Principals and roles in the MDS store, admin API (the tenant registry exists, see stage 1) | 3 | ❌ | — |
-| Capability tokens issued by `RESOLVE`, checked by OST | 3 | ❌ | — |
+| Certificate tenant roles and object restrictions | 3 | ✅ | CA-signed policy, PKI CLI/C/Python APIs |
+| Independent MDS and OST authorization | 3 | ✅ | Certificate policy, metadata ownership and closed per-command permissions table |
 | `rawstor pki` helper (own CA: init, issue, renew), `rawstor_pki_*()`, pyrawstor `rawstor.pki` | 4 | ✅ | [Issuing certificates](configuration.md#issuing-certificates) |
 | External CA support (SPIRE with spiffe-helper, Vault PKI, step-ca, cert-manager) | 4 | ✅ | documentation: [Issuing certificates](#issuing-certificates) |
 | At-rest encryption, server side (ZFS / dm-crypt) | 5 | ❌ | documentation only |
@@ -95,9 +95,9 @@ flowchart LR
     end
 
     guest -- "virtio-blk, no rawstor protocol" --> vhost
-    vhost -- "mTLS: RESOLVE, token" --> mds
-    vhost -- "mTLS: SET_OBJECT + token, IO" --> ost
-    cp -- "tenants, principals (admin API)" --> mds
+    vhost -- "mTLS: RESOLVE" --> mds
+    vhost -- "mTLS: SET_OBJECT, IO" --> ost
+    cp -- "tenants and ownership (admin API)" --> mds
     cp -- "registers attachment" --> ca
     ca -. "short-lived SPIFFE certificate" .-> vhost
     ca -. "certificates" .-> mds
@@ -140,8 +140,8 @@ spiffe://<trust_domain>/tenant/<tenant_id>/client/<name>   a tenant's client
 
 Any CA that can write a URI SAN fits: SPIRE, Vault PKI, step-ca, cert-manager
 or the project's own helper (`rawstor pki`). See [Issuing certificates](#issuing-certificates).
-The certificate proves *who* the peer is; it carries no permissions (stage 3),
-so rights can change without reissuing it.
+The certificate proves *who* the peer is and carries the signed tenant role
+and object permissions. Changing those permissions requires reissuing it.
 
 A client never accepts "any certificate from the trusted CA" as the server.
 Every connection has an **expected server identity** that comes from trusted
@@ -149,8 +149,8 @@ configuration, not from the peer: for an MDS, the identity configured next to
 its address; for an OST, `spiffe://<trust_domain>/ost/<ost_id>` where `ost_id` is
 the one the MDS returns in `RESOLVE` (the topology's OST UUID). A handshake
 whose peer SAN differs fails. The one exception is the witness an MDS hosts
-on its own port: the topology lists it as an `ost://` location with an id of
-its own, but the server there is the MDS, so a client that was configured with
+on its own port: the topology lists it as an `ost://` location whose UUID
+matches the MDS certificate ID, and the server there is the MDS, so a client that was configured with
 that address as an `mds://` one requires an MDS identity (the one named by
 `RAWSTOR_TLS_MDS_ID`, if set) from it instead. The address counts only once it has completed a handshake as an MDS, and it is the
 one the client was given, not one the peer names. The address
@@ -231,7 +231,7 @@ sets up with an external source and what changes for security.
   hour, renewed at about half of it. SPIRE relies on expiry rather than
   revocation (forced revocation has been a long-standing roadmap item there),
   so with it the exposure window after a compromise is the certificate
-  lifetime plus the token lifetime, hours plus minutes. Vault PKI and step-ca
+  lifetime; established client permissions expire with the certificate. Vault PKI and step-ca
   can publish a CRL, which rawstor reloads with the other files.
 
 ### With SPIRE
@@ -274,111 +274,76 @@ paths it is entitled to.
 - **The CA's registration interface becomes the tenant boundary.** The MDS
   believes the tenant in the SPIFFE ID, so whoever can create a SPIRE entry
   or request a certificate under `/tenant/acme/` can act as `acme`. Only
-  the control plane may have that right; a deployment guide must say so.
-- **CA says who, MDS says what.** Roles (`reader`, `writer`, `manager`) stay
-  in MDS records created by the same control plane through the admin API.
-  A certificate without a matching principal gets `-EACCES` on every
-  command that needs one.
+  the control plane may have that permission; a deployment guide must say so.
+- **The CA signs identity and permissions.** Tenant client certificates carry
+  a none/reader/writer/manager role and optional per-object restrictions. An external
+  issuer must emit the rawstor policy extension; a bare SPIFFE identity grants
+  no tenant access. Only the control plane may request roles and restrictions.
 - **The trust domain and the CA bundle are configuration of every service.**
   A bundle from federation or a second CA is accepted only if listed.
 - **Failure of the CA does not stop IO.** Established connections and
-  tokens keep working until their lifetime ends; new volumes cannot be
-  attached and expired certificates are not renewed. Certificate lifetime
+  certificates keep working until their lifetime ends; expired certificates
+  cannot be renewed. Certificate lifetime
   is therefore also the time an operator has to bring a CA back.
 
-## Authorization: capability tokens
+## Authorization: certificate permissions
 
-mTLS says who is calling. Whether they may touch an object is decided once,
-by the MDS, and then proven to the OST by a token, so the OST never calls the
-MDS on the IO path.
+The CA signs a client's tenant identity, role and optional object restrictions
+in the same certificate. MDS and OST verify the certificate and independently
+apply its policy to commands and the object's owner. OST does not contact MDS
+for authorization, and a client can use a direct OST target while MDS is down.
 
-1. The client sends `RESOLVE` / `OBJ_*` to the MDS. The MDS checks the
-   principal's tenant and role against the object's tenant.
-2. `RESOLVE` returns, with each chunk location, a **token**:
-   `{tenant_id, object_id, rights (read | write | discard | manage),
-   not_after, client certificate fingerprint}`, signed by the MDS.
-3. The client sends the token in `SET_OBJECT` to the OST. The OST verifies the
-   signature, the expiry, that the fingerprint equals that of the connection's
-   TLS peer, and that the `object_id` of the token is the one in the
-   `SET_OBJECT` (an object id is unique on its own, the tenant is the owner
-   and not part of the key). The `tenant_id` of the token must also equal the
-   tenant in the peer's certificate. The result is cached
-   in the connection's Slot. The token is verified once per connection, not
-   per request.
+`none` grants no default permissions; `reader` grants read; `writer` adds
+write (including discard and zeroing); `manager` adds structural operations. Explicit object masks
+override the role defaults and cover all chunks and versions. A zero mask denies
+the object; unspecified objects retain the role defaults. `none` plus one object
+mask therefore grants access only to that object, including its versions. Snapshots remain immutable. See the signed
+[extension format](protocol.md#authorization) and
+[issuance examples](configuration.md#authorization).
 
-### Request flow
+Certificate expiry is checked for every new tenant command, including on an
+open connection. Renewal preserves permissions; changing them requires a new
+certificate. An old copy retains its signed permissions until expiry or revocation.
+CRLs apply on new connections. Credential reloads affect new connections, not
+the certificate an existing TLS session authenticated.
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant CP as Control plane
-    participant CA as CA
-    participant C as Client (vhost)
-    participant M as MDS
-    participant O as OST
+OST checks local ownership before metadata operations and binding an object.
+Data connections cache a verified owner, invalidated across workers when an
+object is allocated, released or transferred, so ownership changes force a
+new check without a metadata read for each ordinary I/O. In-flight operations
+may finish; subsequent commands check the new owner. MDS holds its ownership
+lock across synchronous authorization and metadata operations.
 
-    CP->>M: create tenant, principal, object (admin API)
-    CP->>CA: register attachment (tenant, volume)
-    CA-->>C: certificate, SPIFFE ID under /tenant/T/
-    C->>M: mTLS handshake (client verifies expected MDS ID)
-    C->>M: RESOLVE(object)
-    M->>M: principal's tenant and role vs object's tenant
-    M-->>C: chunk locations + signed token per chunk
-    C->>O: mTLS handshake (client verifies spiffe://.../ost/ost_id)
-    C->>O: SET_OBJECT(object, token)
-    O->>O: signature, expiry, certificate fingerprint, object, tenant vs certificate
-    O-->>C: ok, rights cached in the Slot
-    loop IO
-        C->>O: READ / WRITE (no token check per request)
-        O-->>C: data
-    end
-    Note over C,O: token expiry: new commands get -EACCES, client re-resolves
-```
-
-Choices:
-
-- **Ed25519 signature, not HMAC.** The OSTs hold only the MDS public key, so
-  a compromised OST cannot mint tokens for other OSTs. The key is identified
-  by a key id, so it can be rotated with two keys valid at once.
-- **Binding to the connection's certificate** makes a leaked token useless
-  without the matching private key.
-- **Short lifetime** (minutes). Long-lived connections renew by sending a new
-  token in a fresh `SET_OBJECT`-like command (`RENEW`, to be defined in the
-  protocol page); an expired token on an open connection fails new
-  commands with `-EACCES` and the client re-resolves.
-- `FREEZE`/`THAW` and the other lease holders keep their own tokens; they
-  additionally require the `manage` right.
-
-### Roles and rights per command
+### Roles and permissions per command
 
 Two kinds of principals, told apart by the path of their SPIFFE ID:
 
 - **Tenant principals** (`/tenant/<id>/client/...`) hold one role inside
-  their own tenant; the role bounds the rights `RESOLVE` puts into a token:
-  `reader` → `read`; `writer` → `read`, `write`, `discard`; `manager` →
+  their own tenant, signed into the certificate:
+  `none` → no defaults; `reader` → `read`; `writer` → `read`, `write`; `manager` →
   those plus `manage` (structural changes: allocate, release, versions,
-  freeze). Rights on a single object narrower than the role may be granted
-  per object (stage 3).
+  freeze). Explicit object permissions override these defaults. A `none` client
+  has no tenant-wide listing permission and may access only its named objects.
 - **Provider principals**: `mds` (`/mds/...`), `admin` (`/admin/...`). They
-  are not tenant-scoped and authorize by role, not by token.
+  are not tenant-scoped and authorize by their certificate role.
 
 The list is closed: a command that is not in the table is refused with
 `-EACCES`. `—` means the role may not use the command.
 
 OST commands:
 
-| Command | Tenant principal: token right | `mds` | `admin` |
+| Command | Tenant principal: certificate permission | `mds` | `admin` |
 |---|---|---|---|
 | `HANDSHAKE` | any | any | any |
-| `SET_OBJECT` | any right in the token; `RAWSTOR_READONLY` needs `read`, a read-write open needs `write` | role | role |
+| `SET_OBJECT` | `RAWSTOR_READONLY` needs `read`, a read-write open needs `write` | role | role |
 | `READ`, `META`, `LIST_VERSIONS` | `read` | role | role |
 | `WRITE`, `FLUSH`, `LEAVE` | `write` | — | — |
-| `SYNC_PREPARE`, `SYNC_ACCEPT` (the chunk's configuration register on a witness member) | `write` | — | — |
-| `DISCARD`, `WRITE_ZEROES` with `UNMAP` | `discard` | — | — |
+| `SYNC_PREPARE`, `SYNC_ACCEPT` (the chunk membership register, including witnesses) | `write` | — | role |
+| `DISCARD`, `WRITE_ZEROES` with `UNMAP` | `write` | — | — |
 | `WRITE_ZEROES` without `UNMAP` | `write` | — | — |
 | `ALLOCATE`, `RELEASE`, `CREATE_VERSION`, `FREEZE`, `THAW` | `manage` | — | role |
 | `SET_OWNER` (records the owner in one member; `rawstor object transfer` sends it to every member) | — | — | role |
-| `LIST` | — | role | role |
+| `LIST` | `read`, filtered to the certificate tenant and readable objects | role | role |
 | `LOCATION_INFO` | — | role | role |
 
 MDS commands:
@@ -386,16 +351,18 @@ MDS commands:
 | Command | Tenant principal: role | `mds` | `admin` |
 |---|---|---|---|
 | `HANDSHAKE` | any | any | any |
-| `SET_OBJECT` (binds nothing on an MDS) | any | — | role |
-| `RESOLVE` | `reader`; the token carries at most the rights of the role | — | role |
+| `SET_OBJECT` (binds nothing on an MDS) | any nonzero default or object permissions | — | role |
+| `RESOLVE` | any nonzero permissions on the object | — | role |
 | `LIST_VERSIONS` | `reader` | — | role |
-| `LIST` | any, answers only the tenant of the certificate | — | role: any tenant or all |
+| `LIST` | default role grants `read`; answers only the certificate tenant | — | role: any tenant or all |
 | `OBJ_CREATE`, `OBJ_RESIZE`, `OBJ_REMOVE`, `OBJ_COMMIT_VERSION`, `OBJ_REMOVE_VERSION` | `manager` | — | role |
-| `ALLOCATE`, `RELEASE`, `META`, `SYNC_PREPARE`, `SYNC_ACCEPT` on a witness hosted by the MDS | as the same command on an OST (`SYNC_*`: `write`), by token | — | as on an OST |
+| `ALLOCATE`, `RELEASE`, `META`, `SYNC_PREPARE`, `SYNC_ACCEPT` on a witness hosted by the MDS | as the same command on an OST (`SYNC_*`: `write`), by certificate | — | as on an OST |
 | `LOCATION_INFO` | — | — | role |
 | `LIST_TENANTS`, `TENANT_CREATE`, `TENANT_REMOVE` | — | — | role |
 | `OBJ_TRANSFER` (changes the owner of an object) | — | — | role |
-| principal and role management (admin API) | — | — | role |
+
+Provider admins also use the membership register to initialize newly created
+objects and manage their copies. This grants metadata control, not data writes.
 
 `SYNC_PREPARE` and `SYNC_ACCEPT` are how a writer records which copies are in
 sync, excludes one and takes it back, so every writer needs them and a
@@ -411,39 +378,32 @@ Rules that apply to every row:
 
 - The tenant is taken from the certificate, never from the request. A tenant
   principal whose request names another `tenant_id` (the owner in `LIST` or
-  `OBJ_CREATE`) is refused as if the object did not exist. Until stage 3 the
-  tenant a caller names is asserted by the caller ([Tenants](tenants.md)).
+  `OBJ_CREATE`) is refused as if the object did not exist. A tenant location without user information uses the certificate tenant.
 - An object of another tenant is `-ENOENT`, in every command, so a tenant
   cannot probe for ids. A known object of its own tenant that the role does
   not allow is `-EACCES`.
-- "role" for `mds` and `admin` means no token is needed; the OST decides
-  by the identity in the certificate. A tenant principal always needs a
-  token for an OST command, except `LIST` and `LOCATION_INFO`, which no
-  tenant principal may call on an OST.
-- `LIST` on an OST names every chunk of every tenant, which is why it is
-  reserved for `mds` and `admin`; rows carry the owner.
+- Provider roles come from the SPIFFE identity; tenant roles and masks come
+  from the signed policy. `LIST` on an OST filters tenant clients to their
+  own readable objects. Only providers may inspect location-wide statistics.
 - Tenants own objects and nothing else: only an `admin` changes the owner of
   an object or touches the registry, so a tenant cannot give an object away
   or create a tenant.
 
+Initial allocation has a known unresolved namespace gap: a tenant-wide client
+certificate does not prove global ownership of a UUID when the requested OST
+member has no local metadata. A manager can occupy another tenant's future
+member key. See the [allocation namespace plan](tenants.md#planned-allocation-namespace-isolation)
+for the impact, architectural alternatives and acceptance criteria. This is
+separate from intentional direct OST access and resource quotas.
+
 ## Tenants
 
-A tenant is the unit of isolation, ownership and (later) quota. Options
-considered:
-
-| Option | For | Against |
-|---|---|---|
-| A. Static file (like `topology.conf`) | trivial | no API, every change is a reload, cannot be driven by a cloud control plane |
-| B. Records in the MDS store, small admin API | the control plane drives it; same store and failover as everything else; offline `--reconstruct` stays honest | rawstor grows a (small) user model |
-| C. Delegate to an external IdP (OIDC), MDS only validates tokens | no user model in rawstor | an IdP becomes a hard dependency of the data path's setup; token format work |
-
-**Recommendation: B**, with the CA (own or external) being the only trust
-anchor shared with the outside. The MDS stores `tenant`, `principal`
-(certificate subject → tenant, role) and an object's `tenant_id`. The cloud
-control plane creates tenants and principals through the admin API (an `admin`
-principal), then issues certificates. C can be layered on later by a service
-that maps an OIDC identity to a rawstor certificate; it needs nothing from
-the core.
+A tenant is the unit of isolation, ownership and (later) quota. MDS stores the
+tenant registry and each object's owner. The control plane creates tenants
+through the provider admin API and requests client certificates with a role
+and object restrictions from the CA. No principal registry is needed in MDS.
+An external identity service can issue the same certificate policy without
+adding an online authorization dependency to either storage service.
 
 Stage 1 is in place ([Tenants](tenants.md), [Protocol](protocol.md)):
 
@@ -623,8 +583,8 @@ integrity of the wire, which XTS does not give, still come from TLS.
 that process. There is no environment variable and a systemd unit has no way to
 set it. It is the only way: a process that has no TLS
 settings and is not told to go without refuses to start. Traffic is then **plaintext, and no peer is authenticated**: there is
-no certificate to read an identity, a tenant or a role from, so the rights
-table, tokens and tenant isolation do not apply and every peer that can reach
+no certificate to read an identity, a tenant or a role from, so the permissions
+table and tenant isolation do not apply and every peer that can reach
 the port can do everything, as before this design. It is meant for a storage
 network that is isolated from every untrusted party, and for development and
 tests; the operator takes responsibility for the network.
@@ -716,8 +676,8 @@ of scope here.
 
 | It can | It cannot |
 |---|---|
-| read every chunk it stores, of every tenant, in plaintext unless the volume is encrypted on the client (stage 6) | mint or alter a token: it holds only the MDS public key |
-| return altered data: the copy is read from one in-sync member, XTS gives no integrity and the transport hash is not cryptographic | use a client's token against another OST: the token is bound to the client's certificate, whose key it does not have |
+| read every chunk it stores, of every tenant, in plaintext unless the volume is encrypted on the client (stage 6) | mint or alter client permissions: it does not hold the CA private key |
+| return altered data: the copy is read from one in-sync member, XTS gives no integrity and the transport hash is not cryptographic | use a client's permissions against another OST: it does not hold the client's private key |
 | lie about its own state: a copy's state (`CLEAN`, `DIRTY`, `LOST`, sync id) is kept by the copy itself, so it can claim to be the up-to-date member | present itself as another OST: clients expect a specific `ost_id` identity |
 | keep using its certificate until it expires, unless the CA publishes revocation | reach chunks it does not hold |
 
@@ -730,8 +690,7 @@ is still a member.
 In this order:
 
 1. **Stop advertising it.** The OST is marked `quarantined` in the topology: it
-   receives no new placement, `RESOLVE` no longer returns it, and no token is
-   issued for it. (Today the MDS refuses to drop an OST that still holds
+   receives no new placement and `RESOLVE` no longer returns it. (Today the MDS refuses to drop an OST that still holds
    chunks, so a state between "in use" and "removed" is needed.)
 2. **Stop trusting its identity.** The CA stops issuing and renewing its
    certificate: delete the SPIRE entry, or do not renew; where the CA
@@ -757,13 +716,13 @@ In this order:
 | Step | Effective after |
 |---|---|
 | `RESOLVE` stops returning it | at once, for clients that resolve |
-| Token expiry | minutes: no new `SET_OBJECT` on it |
 | Epoch fence | the next write that reaches a healthy member |
-| Certificate expiry | hours (SPIRE has no revocation; a CRL shortens it elsewhere) |
+| Certificate expiry | new TLS handshakes refuse the expired OST certificate; a CRL can shorten this interval |
 
-A client that only reads from the compromised copy and never writes keeps
-reading it until its token expires and it resolves again; reads are not
-fenced.
+A client that only reads from an established connection to the compromised
+copy is not fenced by the planned write fence. Certificate expiry prevents
+new TLS handshakes; it does not guarantee that an existing read connection
+is closed. Cutting off such readers remains part of the exclusion design.
 
 ### Dependencies
 
@@ -779,7 +738,7 @@ flowchart TD
     s0["0. Benchmark: TLS mode"] --> s2
     s1["1. Protocol groundwork:<br/>HANDSHAKE, owner tenant, crypto_params"] --> s2["2. Transport: mTLS"]
     s1 --> s3
-    s2 --> s3["3. Authorization: tenants, tokens"]
+    s2 --> s3["3. Authorization: certificate permissions"]
     s2 --> s4["4. PKI tooling"]
     s1 --> s6
     s3 --> s6["6. At-rest, client side"]
@@ -824,9 +783,9 @@ require re-doing earlier ones.
    clients and OSTs open, and a closed connection is logged and counted, since
    a legitimate peer that retries is told apart from a flood only by the
    rate.
-3. **Authorization.** Tenants, principals and roles in the MDS store and admin
-   API; capability tokens in `RESOLVE`, verified by the OST; per-command rights
-   table; `-EACCES` / `-ENOENT` semantics (a foreign object is `-ENOENT`).
+3. **Authorization (done).** CA-signed tenant roles and object restrictions;
+   independent MDS and OST checks against ownership and per-command permissions;
+   `-EACCES` / `-ENOENT` semantics (a foreign object is `-ENOENT`).
 4. **PKI tooling (done).** `rawstor pki` runs a small CA (init, issue, renew)
    for deployments that have none, `<rawstor/pki.h>` and pyrawstor's
    `rawstor.pki` do the same for a program; documentation for SPIRE (with
@@ -841,6 +800,21 @@ require re-doing earlier ones.
    member replacement with resync, and the operator procedure above. It depends
    on MDS and mirroring work and can be scheduled independently of stages 2-6.
 
+
+8. **Transfer by mutual tenant consent (planned).** Separate certificate permissions
+   for export and import; offer/accept/cancel/status API; durable MDS-coordinated
+   ownership handover with member fencing and crash recovery. Both clients keep
+   access only to their own tenants. Initial scope: objects in the same MDS.
+   See the [implementation plan](tenants.md#planned-transfer-by-mutual-consent).
+
+
+9. **Allocation namespace isolation (open problem, planned).** Prevent a tenant
+   from obstructing another tenant's missing members through UUID reuse during
+   direct allocation. Decide between tenant-scoped physical keys and trusted
+   global ownership evidence; cover repair, reconstruction and transfer. No
+   runtime fix is implemented. See the
+   [problem and plan](tenants.md#planned-allocation-namespace-isolation).
+
 ## Open questions
 
 - **Double encryption of encrypted volumes** (optimization, not a defect). For
@@ -853,10 +827,6 @@ require re-doing earlier ones.
   record layer of our own. Worth doing only if measurements on production
   hardware show the combined cost of XTS and TLS to be unacceptable; the cost
   of XTS alone has not been measured yet.
-- How to move an existing plaintext cluster to TLS without stopping it: a
-  service listening on a TLS and a plaintext port during the transition, or a
-  restart order (MDS, OSTs, then clients) that relies on mirroring and client
-  reconnects.
 - The kernel baseline for kTLS if it is made the default: stage 0 tested only
   7.0, and the zero-copy `send_zc` is not available on a kTLS socket.
 - Whether one TLS connection per chunk slot stays, or stage 2 should coincide
@@ -864,4 +834,4 @@ require re-doing earlier ones.
   ([MDS design](mds.md)): handshake cost makes this likely.
 - Where the KMS plugin lives (client library vs. a helper daemon on the
   hypervisor) and how a key reaches a vhost process at attach time.
-- Whether `admin` rights are one role or split (tenant admin vs. operator).
+- Whether `admin` permissions are one role or split (tenant admin vs. operator).

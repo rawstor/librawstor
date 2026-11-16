@@ -3,6 +3,8 @@
 #include <mds/server.hpp>
 
 #include "config.h"
+#include "opts.h"
+#include <rawtls/ca.hpp>
 
 #include <rawstd/exitcode.h>
 #include <rawstd/logging.hpp>
@@ -361,7 +363,14 @@ void mds(
         wake_pipes.emplace_back(rawstd::Pipe::Mode::NonBlocking);
     }
 
-    rawstor::mdsserver::Monitor monitor(store, opts);
+    RawstdUUID local_witness{};
+    if (const char* cert = rawstor_opts_tls_cert()) {
+        rawtls::SpiffeId identity(rawtls::inspect(cert).identity);
+        if (identity.role() == rawtls::Role::mds) {
+            rawstd_uuid_from_string(&local_witness, identity.name().c_str());
+        }
+    }
+    rawstor::mdsserver::Monitor monitor(store, opts, local_witness);
     store.set_space_change_listener([&monitor](
                                         const std::vector<RawstdUUID>& osts
                                     ) { monitor.refresh(osts); });

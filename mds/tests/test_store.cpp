@@ -1,4 +1,5 @@
 #include "tmp_dir.hpp"
+#include <rawstor/pki.h>
 
 #include <mds/placement.hpp>
 #include <mds/store.hpp>
@@ -1414,5 +1415,204 @@ TEST_F(ObjectStoreTest, reconstruct_restores_the_owner) {
     EXPECT_EQ(rawstd_uuid_cmp(&entries[0].id, &id), 0);
     EXPECT_EQ(
         errno_of([&] { store.remove_tenant(RawstdUUID{}, acme); }), EBUSY
+    );
+}
+
+TEST_F(
+    ObjectStoreTest,
+    authorization_uses_certificate_roles_and_object_restrictions
+) {
+    ObjectStore store = make_store();
+    RawstdUUID tenant = make_id(), other = make_id(), object = make_id();
+    store.create_tenant(make_id(), tenant);
+    store.create_tenant(make_id(), other);
+    store.create(
+        tenant, make_id(), object, chunk_size, chunk_size, make_policy(1)
+    );
+    RawstdUUIDString tenant_text;
+    rawstd_uuid_to_string(&tenant, &tenant_text);
+    std::string identity = std::string("spiffe://cluster.example/tenant/") +
+                           tenant_text + "/client/user";
+    rawtls::SpiffeId peer(identity);
+    auto error = [&](int expected, auto call) {
+        try {
+            call();
+            FAIL() << "expected error " << expected;
+        } catch (const std::system_error& e) {
+            EXPECT_EQ(e.code().value(), expected);
+        }
+    };
+    error(EACCES, [&] { store.authorize(&peer, RAWSTOR_CMD_RESOLVE, object); });
+    peer.permissions({RAWSTOR_ROLE_READER, {}});
+    EXPECT_EQ(
+        store.authorize(&peer, RAWSTOR_CMD_RESOLVE, object).permissions,
+        RAWSTOR_PERM_READ
+    );
+    error(EACCES, [&] {
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE, object);
+    });
+    error(ENOENT, [&] {
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_CREATE, {}, other);
+    });
+    error(EACCES, [&] { store.authorize(&peer, RAWSTOR_CMD_TENANT_CREATE); });
+    peer.permissions({RAWSTOR_ROLE_MANAGER, {}});
+    EXPECT_EQ(
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE, object).permissions,
+        RAWSTOR_PERM_ALL
+    );
+    RawstdUUID foreign = make_id(), unowned = make_id();
+    store.create(
+        other, make_id(), foreign, chunk_size, chunk_size, make_policy(1)
+    );
+    store.create(
+        {}, make_id(), unowned, chunk_size, chunk_size, make_policy(1)
+    );
+    error(ENOENT, [&] {
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_CREATE, foreign, tenant);
+    });
+    error(ENOENT, [&] {
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_CREATE, unowned, tenant);
+    });
+    error(ENOENT, [&] { store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE); });
+    RawstdUUIDString object_text;
+    rawstd_uuid_to_string(&object, &object_text);
+    peer.permissions(
+        {RAWSTOR_ROLE_MANAGER, {{object_text, RAWSTOR_PERM_READ}}}
+    );
+    error(EACCES, [&] {
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE, object);
+    });
+    EXPECT_EQ(
+        store.authorize(&peer, RAWSTOR_CMD_RESOLVE, object).permissions,
+        RAWSTOR_PERM_READ
+    );
+    store.transfer(make_id(), object, other);
+    error(ENOENT, [&] { store.authorize(&peer, RAWSTOR_CMD_RESOLVE, object); });
+    peer.permissions({});
+    error(EACCES, [&] { store.authorize(&peer, RAWSTOR_CMD_LIST); });
+}
+
+TEST_F(
+    ObjectStoreTest, a_tenant_can_authorize_only_its_own_recorded_remove_retry
+) {
+    ObjectStore store = make_store();
+    RawstdUUID tenant = make_id(), object = make_id(), mutation = make_id();
+    store.create_tenant(make_id(), tenant);
+    RawstdUUIDString text;
+    rawstd_uuid_to_string(&tenant, &text);
+    std::string identity = std::string("spiffe://cluster.example/tenant/") +
+                           text + "/client/manager";
+    rawtls::SpiffeId peer(identity);
+    peer.permissions({RAWSTOR_ROLE_MANAGER, {}});
+    store.create(
+        tenant, make_id(), object, chunk_size, chunk_size, make_policy(1)
+    );
+    store.remove(mutation, object);
+    EXPECT_NO_THROW(
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE, object, {}, mutation)
+    );
+    EXPECT_THROW(
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE, object, {}, make_id()),
+        std::system_error
+    );
+    EXPECT_THROW(
+        store.authorize(&peer, RAWSTOR_CMD_RESOLVE, object), std::system_error
+    );
+    peer.permissions({});
+    EXPECT_THROW(
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE, object, {}, mutation),
+        std::system_error
+    );
+}
+
+TEST_F(
+    ObjectStoreTest, witness_authorization_uses_certificate_policy_and_owner
+) {
+    ObjectStore store = make_store();
+    RawstdUUID tenant = make_id(), foreign = make_id(), object = make_id();
+    RawstdUUIDString text;
+    rawstd_uuid_to_string(&tenant, &text);
+    rawtls::SpiffeId peer(
+        std::string("spiffe://cluster.example/tenant/") + text +
+        "/client/writer"
+    );
+    peer.permissions({RAWSTOR_ROLE_MANAGER, {}});
+    RawstorObjectSpec spec{};
+    spec.size = chunk_size;
+    spec.chunk_size = chunk_size;
+    spec.width = 2;
+    store.create_witness(foreign, object, 0, spec);
+    EXPECT_THROW(
+        store.authorize_witness(&peer, RAWSTOR_CMD_META, object, 0),
+        std::system_error
+    );
+    EXPECT_THROW(
+        store.authorize_witness(&peer, RAWSTOR_CMD_ALLOCATE, object, 0, tenant),
+        std::system_error
+    );
+    store.remove_witness(object, 0);
+    EXPECT_NO_THROW(
+        store.authorize_witness(&peer, RAWSTOR_CMD_ALLOCATE, object, 0, tenant)
+    );
+    EXPECT_THROW(
+        store.authorize_witness(
+            &peer, RAWSTOR_CMD_ALLOCATE, object, 0, foreign
+        ),
+        std::system_error
+    );
+    store.create_witness(tenant, object, 0, spec);
+    EXPECT_NO_THROW(
+        store.authorize_witness(&peer, RAWSTOR_CMD_META, object, 0)
+    );
+    peer.permissions({RAWSTOR_ROLE_READER, {}});
+    EXPECT_THROW(
+        store.authorize_witness(&peer, RAWSTOR_CMD_SYNC_ACCEPT, object, 0),
+        std::system_error
+    );
+    EXPECT_THROW(
+        store.authorize_witness(&peer, RAWSTOR_CMD_RELEASE, object, 0),
+        std::system_error
+    );
+}
+
+TEST_F(
+    ObjectStoreTest,
+    none_can_resolve_only_granted_objects_without_listing_tenant
+) {
+    ObjectStore store = make_store();
+    RawstdUUID tenant = make_id(), object = make_id(), other = make_id();
+    store.create_tenant(make_id(), tenant);
+    for (const auto& id : {object, other}) {
+        store.create(
+            tenant, make_id(), id, chunk_size, chunk_size, make_policy(1)
+        );
+    }
+    RawstdUUIDString tenant_text, object_text;
+    rawstd_uuid_to_string(&tenant, &tenant_text);
+    rawstd_uuid_to_string(&object, &object_text);
+    rawtls::SpiffeId peer(
+        std::string("spiffe://cluster.example/tenant/") + tenant_text +
+        "/client/vhost"
+    );
+    peer.permissions({RAWSTOR_ROLE_NONE, {{object_text, 3}}});
+    EXPECT_NO_THROW(store.authorize(&peer, RAWSTOR_CMD_SET_OBJECT));
+    EXPECT_EQ(
+        store.authorize(&peer, RAWSTOR_CMD_RESOLVE, object).permissions, 3u
+    );
+    EXPECT_THROW(
+        store.authorize(&peer, RAWSTOR_CMD_RESOLVE, other), std::system_error
+    );
+    EXPECT_THROW(
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE, object),
+        std::system_error
+    );
+    EXPECT_THROW(
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_CREATE, make_id(), tenant),
+        std::system_error
+    );
+    EXPECT_THROW(store.authorize(&peer, RAWSTOR_CMD_LIST), std::system_error);
+    peer.permissions({RAWSTOR_ROLE_NONE, {}});
+    EXPECT_THROW(
+        store.authorize(&peer, RAWSTOR_CMD_SET_OBJECT), std::system_error
     );
 }

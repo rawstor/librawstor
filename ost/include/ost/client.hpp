@@ -10,6 +10,7 @@
 
 #include <rawio/queue.hpp>
 
+#include <rawtls/authorization.hpp>
 #include <rawtls/transport.hpp>
 
 #include <rawstd/coro.hpp>
@@ -41,6 +42,11 @@ private:
     std::unique_ptr<rawtls::Transport> _transport;
     // Set by HANDSHAKE, the first request: nothing is served before it.
     bool _handshaken = false;
+    rawtls::Authorization _authorization;
+    RawstdUUID _bound_object{};
+    RawstdUUID _bound_version{};
+    uint64_t _bound_offset = 0;
+    uint64_t _owner_generation = 0;
     std::shared_ptr<Slot> _slot;
     uint64_t _size = 0;
     // The write barrier of the chunk member `_slot` is bound to, looked up
@@ -53,6 +59,11 @@ private:
         rawio::Queue* queue = nullptr;
     };
     GateRef _gate_ref() const;
+
+    rawstd::Task<int> _authorize(
+        RawstorCommandType command, const uint8_t* object, uint64_t offset,
+        const uint8_t* version, uint64_t flags = 0
+    );
 
     // Drives this Client's whole request-dispatch lifetime: registers the
     // multishot recv, then loops co_awaiting one length-prefixed frame at

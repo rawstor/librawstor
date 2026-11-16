@@ -122,7 +122,7 @@ ssize_t location_info(
 
 } // namespace
 
-TEST(TlsMdsTest, location_info_over_tls) {
+TEST(TlsMdsTest, an_mds_certificate_has_no_mds_admin_permissions) {
     rawstor::tests::TlsProcess tls(
         "spiffe://" + rawstor::tests::TlsProcess::trust_domain + "/mds/" + mds_1
     );
@@ -130,9 +130,7 @@ TEST(TlsMdsTest, location_info_over_tls) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
     RawstorLocationInfo info = {};
-    EXPECT_EQ(location_info(*queue, server.location(), &info), 0);
-    EXPECT_EQ(info.used, (uint64_t)123);
-    EXPECT_EQ(info.total, (uint64_t)456);
+    EXPECT_EQ(location_info(*queue, server.location(), &info), -EACCES);
 }
 
 TEST(TlsMdsTest, an_ost_identity_is_not_accepted_for_an_mds) {
@@ -172,9 +170,11 @@ TEST(TlsMdsTest, the_configured_mds_name_is_accepted) {
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
     RawstorLocationInfo info = {};
-    EXPECT_EQ(location_info(*queue, server.location(), &info), 0);
+    EXPECT_EQ(location_info(*queue, server.location(), &info), -EACCES);
 }
 
+// The same MDS certificate is used by the test client: a successful TLS
+// handshake still ends in EACCES for LOCATION_INFO on the MDS.
 // An MDS hosts a witness on its own port, and the topology lists it as an
 // ost:// location. The server at that address is the MDS, with the identity of
 // an MDS, whatever id the witness has.
@@ -189,8 +189,8 @@ TEST(TlsMdsTest, the_witness_an_mds_hosts_is_accepted_at_its_address) {
     // Not known as an MDS yet, an ost:// address is expected to be an OST.
     EXPECT_NE(location_info(*queue, "ost://127.0.0.1:8911", &info), 0);
 
-    ASSERT_EQ(location_info(*queue, server.location(), &info), 0);
-    EXPECT_EQ(location_info(*queue, "ost://127.0.0.1:8911", &info), 0);
+    ASSERT_EQ(location_info(*queue, server.location(), &info), -EACCES);
+    EXPECT_EQ(location_info(*queue, "ost://127.0.0.1:8911", &info), -EACCES);
 }
 
 TEST(TlsMdsTest, the_witness_an_mds_hosts_needs_the_configured_mds_name) {
@@ -221,5 +221,5 @@ TEST(TlsMdsTest, an_address_refused_as_an_mds_stays_an_ost_address) {
     RawstorLocationInfo info = {};
     EXPECT_NE(location_info(*queue, server.location(), &info), 0);
     // It was refused as an MDS, so as an OST address it takes an OST.
-    EXPECT_EQ(location_info(*queue, "ost://127.0.0.1:8913", &info), 0);
+    EXPECT_EQ(location_info(*queue, "ost://127.0.0.1:8913", &info), -EACCES);
 }

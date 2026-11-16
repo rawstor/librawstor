@@ -15,7 +15,8 @@ AM_LDFLAGS = $(ASAN_LDFLAGS) -pthread \
              $(OPENSSL_LIBS)
 
 
-test_all_SOURCES = main.cpp \
+test_all_SOURCES = test_authorization.cpp \
+                   main.cpp \
                    pki.hpp \
                    test_ca.cpp \
                    test_spiffe.cpp \

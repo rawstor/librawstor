@@ -2,10 +2,11 @@
 
 A **tenant** is a field of an object: the party that owns it. An object is
 addressed by its id alone (ids are unique on their own), and the tenant is
-what a later check of rights looks at. Rights are not implemented yet, and
-nothing authenticates a caller: the tenant a caller names is **asserted by
-the caller**. Today the tenant owns, filters a listing and is recorded; it is
-not yet a security boundary.
+what authorization checks against the authenticated caller. In TLS mode the
+certificate identifies the caller's tenant and carries its signed role and
+object permission overrides. MDS and OST independently enforce that policy against
+the object's owner. Plaintext `--insecure` has no tenant security boundary. See
+[Authorization](configuration.md#authorization).
 
 ## Status
 
@@ -16,13 +17,15 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | Tenant in the location URI (`<tenant>@`), optional | ✅ | `src/location.cpp`, `librawstd/src/uri.cpp` |
 | Owner recorded with every chunk (`ALLOCATE`, chunk metadata, `META`) | ✅ | `src/blk_backend.cpp`, `include/rawstor/protocol.h` |
 | `LIST` by owner, every row carrying its owner; no tenant lists every object | ✅ | `src/blk_backend.cpp`, `mds/src/store.cpp` |
-| The default tenant owns what is created without naming one | ✅ | `src/location.cpp`, `mds/src/store.cpp` |
+| The caller's certificate tenant owns unnamed creates; providers/insecure clients use the default tenant | ✅ | `src/location.cpp`, `mds/src/store.cpp` |
 | MDS: owner of an object, tenant registry, `TENANT_CREATE` / `TENANT_REMOVE` / `LIST_TENANTS` | ✅ | `mds/src/store.cpp`, `mds/src/client.cpp` |
 | `--reconstruct` restores owners and registers their tenants | ✅ | `mds/src/store.cpp` |
 | CLI: `rawstor tenant create/list/remove` | ✅ | `cli/tenant.c` |
 | Transfer of an object to another tenant: `SET_OWNER`, `OBJ_TRANSFER`, `rawstor object transfer` | ✅ | `src/target.cpp`, `src/blk_backend.cpp`, `mds/src/store.cpp` |
-| Checking the caller's rights against the owner | ❌ | |
-| Authentication, binding a tenant to a certificate | ❌ | |
+| Transfer by mutual consent of two tenant clients, without admin credentials | ❌ | [Implementation plan](#planned-transfer-by-mutual-consent) |
+| Checking the caller's permissions against the owner | ✅ | Independent MDS and OST certificate policy checks |
+| Protection against cross-tenant UUID/member squatting on initial allocation | ❌ | [Open allocation namespace problem](#planned-allocation-namespace-isolation) |
+| Authentication, binding a tenant to a certificate | ✅ | mTLS SPIFFE identity and signed certificate permissions |
 
 ## Model
 
@@ -38,18 +41,21 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 - A location names a tenant as its **user information**, optionally. It is
   the tenant whose objects the location addresses: the owner of what is
   created through it, and the filter of what is listed through it. It is not
-  who is calling: the caller is a separate matter (a certificate, later), so
+  who is calling: the caller is identified by its TLS certificate, so
   an administrator creates an object for a user by naming that user in the
-  location. Until rights exist, nobody is refused.
-- `list` returns the objects **visible to the caller**. Until rights exist
-  that is the objects it owns; a caller that names no tenant, the
-  administrator, sees every object of the store.
+  location. TLS tenant callers may create only for their own tenant, subject to their role.
+- `list` returns the objects **visible to the caller**. A TLS tenant client
+  sees its own tenant. An admin or an insecure client that names no tenant
+  sees every object of the store.
 - A target names the owner of its object as the user information of its
-  URIs (`mds://<tenant>@host:port/<uuid>`), and none for an object of the
-  default tenant: an address without one stands for the default tenant, which
-  is the caller's own until a caller has an identity. So every row of a
+  URIs (`mds://<tenant>@host:port/<uuid>`). Without user information, a TLS
+  tenant client uses its own tenant; a provider or insecure client uses the
+  built-in default tenant. So every row of a
   listing carries its owner, also for the administrator, and
-  `rawstor_target_tenant()` reads it from the address.
+  `rawstor_target_tenant()` reads it from the address. In CLI `object list`,
+  the `tenant` column reports that owner, while displayed `target` and `location`
+  URIs retain only the tenant explicitly supplied in `LOCATION`. When omitted,
+  it is not added to those columns; a TLS client uses its certificate tenant.
 - Every other operation takes the tenant to be informational: an object is
   found by its id, whoever the caller says it is.
 
@@ -191,8 +197,10 @@ the tenant registered, and running the removal again finishes it. An object
 removed by someone else meanwhile is skipped. An object created for the tenant
 meanwhile can make the last step answer `-EBUSY`. The removal acts on the
 objects by their ids: an object transferred out of the tenant between the
-listing and its removal is removed with the rest, and nothing stops it, as nothing
-yet checks who may remove what (rights are the next stage and will be checked per object).
+listing and its removal can still be removed by the provider admin carrying
+out that operation: the batch is not atomic with ownership transfer. Tenant
+clients cannot remove the tenant registry or transfer ownership; their object
+operations are checked against their own tenant and role.
 
 `--reconstruct` rebuilds the map from what the OSTs hold, and the owner is part
 of a chunk's metadata, so owners come back with it; a tenant found as an owner is
@@ -248,6 +256,188 @@ records. The old address still finds the object, as every address does, by its
 id. The default tenant can be a source or a destination, and the nil UUID is
 never a destination.
 
+## Planned allocation namespace isolation
+
+Status: confirmed architectural problem, unresolved and deferred. No runtime
+fix is included in this plan. Review references:
+[foreign object ID allocation](https://github.com/rawstor/librawstor/pull/761#discussion_r4589291539)
+and [direct allocation without MDS placement](https://github.com/rawstor/librawstor/pull/761#discussion_r4589291550).
+
+### Problem and impact
+
+A tenant manager may create a missing member directly on an OST. Its
+certificate authorizes operations in its tenant, but does not establish global
+ownership of an arbitrary object UUID. The local metadata check proves an
+existing member's owner; it cannot prove who owns a missing member elsewhere.
+
+For example, tenant A owns object X. Tenant B can request `ALLOCATE` for X at
+an unused offset or on an OST that has not seen X, recording B as that member's
+owner. With the current physical key `(object UUID, offset)`, this can obstruct
+A's subsequent placement, resize or recovery. Existing-member ownership checks
+still prevent reading A's recorded data; the confirmed issue is cross-tenant
+namespace interference and availability.
+
+### Constraints
+
+- Preserve certificate-based authorization and direct OST operation without an
+  online MDS dependency on ordinary I/O. Direct allocation under `manage` is
+  intentional; absence of an MDS placement alone is not an authorization defect.
+- Tenant selection still defaults to the certificate identity; an explicit URI
+  tenant must be authorized. Naming a UUID or tenant grants no ownership.
+- Decide whether UUID uniqueness is a global ownership guarantee or a logical
+  convention backed by tenant-isolated physical storage. The current global
+  namespace claim cannot be enforced for first allocation from a tenant-wide
+  certificate alone.
+- Resource quotas and limits on legitimate direct allocations are separate work;
+  solving them does not establish the rightful owner of a UUID.
+
+### Decisions and implementation work
+
+1. **Choose the ownership model.** Evaluate tenant-scoped physical keys
+   `(tenant, object UUID, offset)` against a global namespace backed by trusted,
+   verifiable object-ownership evidence. In the first model, choosing another
+   tenant's UUID cannot occupy that tenant's storage key. In the second, define
+   who establishes ownership, how an OST verifies it on first allocation, and
+   how transfer and revocation update it without requiring MDS on every I/O.
+   Neither option is selected or implemented yet.
+2. **Define the scope of local hardening.** An object-level owner record on an
+   OST can prevent allocation of a foreign offset when that OST already knows
+   the object. Document that this alone does not protect an OST that has never
+   seen the UUID, and do not treat it as a complete global-namespace fix.
+3. **Update the affected contracts.** Cover allocation, lookup, listing,
+   versions, deletion, mirror repair, reconstruction and provider operations.
+   Define explicit tenant context for privileged requests and compatibility
+   with existing stored objects. Review protocol and backend metadata layouts.
+4. **Coordinate with ownership transfer.** Reconcile the chosen keys/evidence
+   with the [mutual-consent transfer plan](#planned-transfer-by-mutual-consent),
+   including fencing, durable ownership generations and recovery. Tenant-scoped
+   physical keys require a safe key transition when ownership changes.
+
+### Acceptance tests
+
+- Tenant B cannot obstruct A by allocating A's UUID at a missing offset or on a
+  different OST before A's legitimate allocation arrives. With isolated keys,
+  B's own object may exist independently without occupying A's key.
+- Verify the same behavior when the attacked OST has no local record of A's
+  object; checking other local offsets is not sufficient coverage.
+- Concurrent first allocations, UUID reuse, partial deletion, repair and restart
+  preserve the selected ownership model and cannot switch another tenant's data.
+- Provider operations select the intended tenant unambiguously; listing and
+  reconstruction preserve ownership even if isolated namespaces reuse a UUID.
+- Direct OST I/O continues with valid certificates while MDS is unavailable.
+- Document residual capacity-exhaustion risks separately from UUID ownership;
+  keep this issue open until the chosen namespace protection is implemented.
+
+## Planned transfer by mutual consent
+
+Status: planned, not implemented. The existing transfer remains provider-admin
+only. This task adds a separate offer/accept workflow for two clients that
+initially have access only to their own tenants.
+
+### Scope and authorization
+
+- Start with whole objects registered in the same MDS, including every chunk,
+  data copy, witness and version. Cross-MDS and direct-OST transfers are outside
+  the first implementation.
+- A missing tenant in the URI defaults to the certificate identity's tenant.
+  An explicit URI tenant is checked against certificate permissions; naming it
+  grants no access. Neither party needs a certificate for both tenants.
+- Add explicit certificate permissions `transfer-out` and `transfer-in`, with PKI
+  CLI/C/Python issuance, inspection and renewal support. Do not grant them
+  implicitly through `manager` or widen the existing `manage` bit. Object
+  restrictions must be able to deny export of a particular object.
+- The sender authorizes export from the current owner tenant to one named
+  destination. The receiver authorizes import into that destination. Neither
+  client receives provider credentials or general `SET_OWNER` permission.
+- A transfer ID identifies an offer; possessing it does not authorize acceptance.
+  Check the accepting client's destination tenant and import permission independently.
+
+### Proposed user flow
+
+These commands describe the planned interface; they are not available yet:
+
+```sh
+# Sender, authenticated only for tenant A.
+rawstor object transfer offer TARGET TENANT_B --expires 1h
+# Returns TRANSFER_ID.
+
+# Receiver, authenticated only for tenant B, using the same MDS location.
+rawstor object transfer accept TRANSFER_ID
+
+# Sender, before acceptance starts the handover.
+rawstor object transfer cancel TRANSFER_ID
+
+# Either participant, with access only to its own side of the transfer.
+rawstor object transfer show TRANSFER_ID
+```
+
+Offer management uses `RAWSTOR_LOCATION` when no MDS location is supplied.
+Document the explicit-location syntax when finalizing the CLI and C API.
+Keep `rawstor object transfer TARGET TENANT` as the provider-admin operation.
+
+### Implementation steps
+
+1. **Certificate policy and protocol.** Specify the new permissions and their object
+   mask semantics, validation of unknown bits, and renewal behavior. Define
+   offer, accept, cancel and status requests, idempotency keys, error semantics
+   and the metadata needed by OST. Validate authority on both clients' requests;
+   an offer is not an I/O capability.
+2. **Durable MDS offers.** Store a unique transfer ID, object ID, source and
+   destination tenants, initiating identity, source certificate evidence,
+   ownership generation, expiry, state and replay results. Limit expiry by the
+   sender certificate's expiry; revalidate the recorded approval at acceptance
+   against the current trust/revocation policy. Offers leave ownership unchanged.
+   Serialize acceptance, cancellation, expiry and conflicting transfers. Reject
+   stale offers after an ownership change, including transfer away and back.
+3. **MDS-to-OST authority.** Define how each member authenticates the responsible
+   MDS, rather than accepting any tenant or arbitrary MDS as a coordinator.
+   Scope transfer operations to the object, transfer ID, expected owner and
+   ownership generation. The coordinator may update transfer metadata without
+   acquiring data-write privileges. Tenant clients must remain unable to bypass
+   the offer/accept protocol with raw member commands.
+4. **Durable handover.** Let MDS coordinate the operation rather than asking a
+   tenant client to propagate `SET_OWNER`. Persist transfer fences on every
+   member, stop admitting tenant I/O and structural changes, and drain admitted
+   operations before the ownership decision. Ordinary expiring `FREEZE` leases
+   alone are insufficient: a restart or lease expiry must not reopen a partially
+   transferred object. Record the commit decision durably, update all members
+   and versions, then release the fences. Report success only after the required
+   members acknowledge completion; an unavailable member prevents completion.
+5. **Recovery and concurrency.** Persist progress and retry member operations
+   idempotently after disconnects and MDS/OST restarts. Before the durable commit
+   decision, a failed prepare can roll back its fences. After that decision,
+   recovery finishes the committed transfer. Prevent a tenant from clearing a
+   fence through direct OST access, and serialize resize, removal, version
+   mutations, tenant removal and provider-admin transfers with the handover.
+   Invalidate ownership cached by existing data connections.
+6. **Client APIs and documentation.** Implement offer/accept/cancel/status in
+   the C API, Python bindings and CLI. Status exposes details only to the
+   participants or provider admin; it distinguishes pending, preparing,
+   committing, completed, cancelled and expired operations. Document certificate
+   permissions, expiry, cancellation, retry behavior and the same-MDS limitation.
+
+### Acceptance tests
+
+- Two certificates, each authorized for just its own tenant, complete a transfer
+  without admin credentials; the object UUID and data are preserved.
+- Missing export/import permissions, a forbidden source object, the wrong destination
+  tenant, or a third client with only the transfer ID cannot complete it.
+- Expired, revoked, cancelled and stale approvals cannot be accepted. Replaying
+  requests cannot duplicate a transfer or undo a later ownership change.
+- Cancellation versus acceptance and two offers for one object have one durable
+  outcome. Concurrent resize, deletion, version creation and provider transfer
+  cannot bypass the ownership generation or leave untracked members.
+- After completion, the source loses access and the destination gains access on
+  MDS and direct OST connections, including handles opened before the handover.
+- Unavailable members, lost replies and crashes at every prepare/commit step
+  recover without reporting premature success, losing data, or exposing a copy
+  to the old tenant after the destination has received ownership.
+- Fences cover direct tenant commands as well as MDS-mediated access, persist
+  across OST restart and do not disappear when a write-barrier lease expires.
+- Ordinary reads/writes keep certificate-based authorization and acquire no
+  online dependency on MDS. Existing provider-admin transfers retain their
+  documented interface.
+
 ## CLI
 
 ```bash
@@ -293,7 +483,7 @@ records. `Location.tenants()`, `create_tenant()` and `remove_tenant()` raise
 
 ## Not here
 
-Authentication, the binding of a tenant to a certificate, rights, quotas and
-per-tenant limits are separate work. Until
-then any client can name any tenant, and the registry does not stop an OST from
-storing an object for a tenant it does not list.
+TLS authentication, certificate roles and object restrictions enforce
+tenant access; see [Security](security.md). Quotas and per-tenant resource
+limits are separate work. An insecure deployment has no authenticated tenant
+boundary.

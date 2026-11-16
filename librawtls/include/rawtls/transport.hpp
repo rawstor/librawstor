@@ -98,6 +98,8 @@ public:
 
     // The identity of the peer, null on a plain connection.
     virtual const SpiffeId* peer() const noexcept = 0;
+
+    virtual uint64_t peer_expiry() const noexcept = 0;
 };
 
 } // namespace rawtls

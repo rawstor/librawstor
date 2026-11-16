@@ -15,7 +15,7 @@ certificate this CA did not issue).
 
 import datetime
 import os
-from typing import NamedTuple, Optional, Union
+from typing import Dict, Mapping, NamedTuple, Optional, Union
 
 from . import libpki
 
@@ -63,6 +63,8 @@ def _issue(
     cert_file: Path,
     key_file: Path,
     validity: Validity,
+    access_role: int = 0,
+    object_permissions: Optional[Mapping[str, int]] = None,
 ) -> str:
     return libpki.issue(
         os.fspath(directory),
@@ -72,6 +74,8 @@ def _issue(
         _seconds(validity),
         os.fspath(cert_file),
         os.fspath(key_file),
+        access_role,
+        None if object_permissions is None else dict(object_permissions),
     )
 
 
@@ -120,12 +124,20 @@ def issue_client(
     cert_file: Path,
     key_file: Path,
     validity: Validity = VALIDITY,
+    *,
+    role: str,
+    object_permissions: Optional[Mapping[str, int]] = None,
 ) -> str:
-    """Issues a certificate and a key for a client called ``name`` of the
-    tenant ``tenant`` (a UUID), such as rawstor-vhost."""
-    return _issue(
-        directory, _CLIENT, tenant, name, cert_file, key_file, validity
-    )
+    """Issue tenant credentials with a none, reader, writer or manager role.
+
+    Object masks override the role for each named UUID, including its versions;
+    zero denies access. Other objects retain the role's permissions.
+    """
+    roles = {"none": 0, "reader": 1, "writer": 2, "manager": 3}
+    if role not in roles:
+        raise ValueError("role must be none, reader, writer or manager")
+    return _issue(directory, _CLIENT, tenant, name, cert_file, key_file, validity,
+                  roles[role], object_permissions)
 
 
 class Info(NamedTuple):
@@ -137,6 +149,8 @@ class Info(NamedTuple):
     not_after: datetime.datetime
     #: Whether the CA given to ``show()`` signed it, None without a CA.
     issued: Optional[bool]
+    access_role: Optional[str]
+    object_permissions: Dict[str, int]
 
 
 def show(cert_file: Path, directory: Optional[Path] = None) -> Info:
@@ -144,7 +158,7 @@ def show(cert_file: Path, directory: Optional[Path] = None) -> Info:
     changes nothing. With ``directory``, a CA, ``issued`` tells whether that CA
     signed it, without needing its private key. Raises ``OSError`` (``errno.EINVAL``) for a file that is not a
     certificate that names a process of rawstor."""
-    identity, not_after, issued = libpki.show(
+    identity, not_after, issued, access_role, object_permissions = libpki.show(
         os.fspath(cert_file),
         None if directory is None else os.fspath(directory),
     )
@@ -152,6 +166,9 @@ def show(cert_file: Path, directory: Optional[Path] = None) -> Info:
         identity,
         datetime.datetime.fromtimestamp(not_after, datetime.timezone.utc),
         issued,
+        ({0: "none", 1: "reader", 2: "writer", 3: "manager"}[access_role]
+         if "/tenant/" in identity else None),
+        object_permissions,
     )
 
 

@@ -3,9 +3,19 @@
 
 #include <rawstd/uri.hpp>
 
+#include <cstdint>
+#include <map>
 #include <string>
 
 namespace rawtls {
+
+// Certificate policy: the role supplies defaults; object masks override them.
+struct Permissions {
+    uint32_t role = 0;
+    std::map<std::string, uint32_t> objects;
+
+    uint32_t mask(const uint8_t* object = nullptr) const;
+};
 
 enum class Role {
     ost,
@@ -34,6 +44,7 @@ private:
     Role _role;
     std::string _tenant;
     std::string _name;
+    Permissions _permissions;
 
 public:
     // Throws std::system_error(EINVAL) if `uri` is not one of the shapes
@@ -52,6 +63,10 @@ public:
 
     // The OST id of an ost, the MDS id of an mds, the name of every other role.
     const std::string& name() const noexcept { return _name; }
+
+    const Permissions& permissions() const noexcept { return _permissions; }
+
+    void permissions(Permissions value) { _permissions = std::move(value); }
 
     // True for the roles that may serve a connection: an OST or an MDS.
     bool is_server() const noexcept {

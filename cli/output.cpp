@@ -5,6 +5,7 @@
 #include <rawstor.h>
 
 #include <rawstd/units.h>
+#include <rawstd/uri.hpp>
 
 #include <sys/ioctl.h>
 #include <sysexits.h>
@@ -441,6 +442,55 @@ void rawstor_cli_target_location(
             --it;
         }
     }
+}
+
+char* rawstor_cli_list_target(const char* target, const char* location) {
+    try {
+        const auto sources = rawstd::URI::uriv(location);
+        std::string result;
+        for (const auto& member : rawstd::URI::uriv(target)) {
+            const rawstd::URI* source = nullptr;
+            for (const auto& candidate : sources) {
+                const auto& path = candidate.path().str();
+                const auto& member_path = member.path().str();
+                bool scheme =
+                    candidate.scheme() == member.scheme() ||
+                    (candidate.scheme() == "mds" && member.scheme() == "ost");
+                if (scheme && candidate.host() == member.host() &&
+                    member_path.compare(0, path.size(), path) == 0 &&
+                    (path.empty() || path.back() == '/' ||
+                     member_path.size() == path.size() ||
+                     member_path[path.size()] == '/') &&
+                    (!source || path.size() > source->path().str().size())) {
+                    source = &candidate;
+                }
+            }
+            if (!source) {
+                errno = EINVAL;
+                return nullptr;
+            }
+            if (!result.empty()) {
+                result += ',';
+            }
+            result += member.scheme() + "://";
+            if (!source->userinfo().empty()) {
+                result += source->userinfo() + "@";
+            }
+            result += member.host() + member.path().str();
+        }
+        char* text = static_cast<char*>(std::malloc(result.size() + 1));
+        if (!text) {
+            errno = ENOMEM;
+            return nullptr;
+        }
+        std::memcpy(text, result.c_str(), result.size() + 1);
+        return text;
+    } catch (const std::bad_alloc&) {
+        errno = ENOMEM;
+    } catch (...) {
+        errno = EINVAL;
+    }
+    return nullptr;
 }
 
 int rawstor_cli_output_set_format(RawstorCliOutput* output, const char* name) {

@@ -89,10 +89,15 @@ rawstor pki init --trust-domain cluster.example ca
 rawstor pki issue --ca ca --cert ost.crt --key ost.key ost       # a new id
 rawstor pki issue --ca ca --cert mds.crt --key mds.key mds       # a new id
 rawstor pki issue --ca ca --cert hv1.crt --key hv1.key admin hv1
-rawstor pki issue --ca ca --cert vm.crt --key vm.key client <tenant uuid> vm-1
+rawstor pki issue --ca ca --cert vm.crt --key vm.key \
+  --role none --object-permissions <object-uuid>:3 client <tenant-uuid> vm-1
 rawstor pki renew --ca ca --cert ost.crt --key ost.key
 rawstor pki show --cert ost.crt                                  # what it says
 ```
+
+The `vm-1` example grants a virtual machine access only to its disk object:
+replace `<tenant-uuid>` and `<object-uuid>` with the tenant and disk UUIDs.
+Mask `3` permits reading, writing and discarding data.
 
 A CA is made for the trust domain of one cluster and keeps it, so every
 certificate it issues is in it. `issue` writes a certificate and a new key
@@ -154,3 +159,87 @@ start. It logs `INSECURE` at start. A port is TLS or plaintext, never both and
 never detected, so a plaintext process cannot talk to a TLS one, in either
 direction; mixing the two in a cluster is meant only for moving it from one
 mode to the other.
+
+
+## Authorization
+
+The client certificate carries its tenant (the SPIFFE identity), access role,
+and optional object restrictions. Both MDS and OST authorize it directly:
+there is no client registration, permission database, or signing key on MDS.
+A client can use an OST directly while MDS is unavailable.
+
+Issue client credentials on the CA machine:
+
+```sh
+rawstor pki issue --ca ca --cert client.crt --key client.key \
+  --role manager client 018f4e2a-2222-7000-8000-000000000001 tenant-manager
+```
+
+`--role` is required for a client: `none` grants no default permissions,
+`reader` reads and lists objects, `writer`
+adds writes and discards, and `manager` adds creation, deletion and version
+management. The process role shown as `role=client` is separate from the
+`access_role` shown by `pki show`. Provider `admin` certificates manage tenants,
+objects and ownership; `mds` certificates scan OST metadata. Neither provider
+role may write data, and OST certificates grant no provider permissions.
+
+To set explicit object permissions, repeat `--object-permissions UUID:MASK` when
+issuing the certificate (at most 128 entries). The mask overrides the role's defaults:
+`read=1`, `write=2`, `manage=4`; write includes discard and zeroing. Combine bits by addition, or use
+zero to deny the object. Other objects retain the role's defaults. Object permissions
+apply to the object and all its versions; snapshots remain read-only.
+
+```sh
+rawstor pki issue --ca ca --cert restricted-manager.crt --key restricted-manager.key \
+  --role manager \
+  --object-permissions 018f4e2a-2222-7000-8000-000000000002:1 \
+  --object-permissions 018f4e2a-2222-7000-8000-000000000003:0 \
+  client 018f4e2a-2222-7000-8000-000000000001 restricted-manager
+rawstor pki show --cert restricted-manager.crt
+```
+
+For a vhost that may access only one object, use `none` and grant that UUID
+read/write/discard (`3`):
+
+```sh
+rawstor pki issue --ca ca --cert vhost.crt --key vhost.key \
+  --role none \
+  --object-permissions 018f4e2a-2222-7000-8000-000000000002:3 \
+  client 018f4e2a-2222-7000-8000-000000000001 vhost-1
+```
+
+All other objects, including ones created later, are denied. The same grant
+covers the object's versions, whose data remains read-only. Use mask `1` and `rawstor-vhost --readonly` for
+a read-only vhost. Mask `3` grants ordinary data I/O, not allocation, removal,
+version management or repair that needs to allocate a replacement member.
+A `none` client uses the supplied object target; tenant-wide `list` is denied.
+MDS control connections may open to resolve an explicitly permitted object.
+
+With admin credentials, create the tenant in MDS before creating its objects:
+
+```sh
+rawstor tenant create mds://mds:7776 --uuid 018f4e2a-2222-7000-8000-000000000001
+```
+
+A location without a named tenant uses the client certificate's tenant.
+Naming another tenant is refused. OST checks the owner in local metadata;
+foreign objects return `ENOENT`, insufficient permissions return `EACCES`.
+
+`pki renew` preserves the signed role and restrictions. Use `pki issue` to
+change permissions. The old certificate retains its permissions until expiry or
+revocation; replacing a file does not revoke copies of it. Reload credentials
+on clients to use the new certificate on new connections. The client library
+reconnects an expired TLS connection with the reloaded credentials when retrying
+I/O. Expiry is checked for
+new commands on established tenant connections as well as during handshakes.
+A configured CRL is checked on new TLS connections.
+
+The C API in `<rawstor/pki.h>` accepts `RawstorPkiPermissions` in
+`rawstor_pki_issue()` and returns it in `RawstorPkiInfo.permissions`.
+Python `pki.issue_client(..., role="none", object_permissions={UUID: 3})` does
+the same; `pki.show()` returns `access_role` and `object_permissions`.
+
+An external CA must issue the [authorization extension](protocol.md#authorization)
+in addition to the SPIFFE SAN. Missing permissions grant no tenant access;
+malformed or duplicate extensions are rejected. Plaintext `--insecure`
+deliberately bypasses authentication and authorization.

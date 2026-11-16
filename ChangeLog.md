@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Certificate role `none` denies unlisted objects; explicit object permissions override role defaults, supporting credentials scoped to one vhost object.
+
+- TLS tenant authorization with CA-signed roles and object restrictions, independently checked by MDS and OST; PKI CLI/C/Python APIs issue, inspect and renew the signed permissions.
+
 - Tenants ([design](docs/tenants.md)): an object has an owner tenant, named in a location as optional user information (`ost://<tenant>@host:port`); `list` shows the objects a tenant owns and each one's tenant, or every object without a tenant; `create` without a tenant creates for the default tenant; an MDS keeps a tenant registry, and `rawstor tenant create`/`list`/`remove` manage it, and removing a tenant removes its objects with their versions; `rawstor object transfer TARGET TENANT` (`rawstor_target_transfer()`) makes another tenant the owner of an object; pyrawstor has `Location.tenants()`/`create_tenant()`/`remove_tenant()`, `Target.transfer()`, `Target.tenant`, `ObjectMeta.tenant` and `DEFAULT_TENANT`.
 - TLS 1.3 with mutual authentication between the client library and every service ([design](docs/security.md)), set with `RAWSTOR_TLS_TRUST_DOMAIN`, `RAWSTOR_TLS_CERT`, `RAWSTOR_TLS_KEY` and `RAWSTOR_TLS_CA` ([configuration](docs/configuration.md#tls)); a process without them refuses to start unless it is run with `--insecure` (`RawstorOpts::insecure` in a program; never an environment variable, so a systemd service always has TLS), which turns TLS off, and with it every authentication, and refuses to start if it has both: a peer is identified by the SPIFFE ID in its certificate, an OST the MDS resolved must present its own (`RAWSTOR_TLS_MDS_ID` pins the MDS likewise), and the certificate is read again on `SIGHUP`/`SIGUSR1` (`rawstor_tls_request_reload()`). OpenSSL 3.0 or newer is a build dependency.
 - `rawstor pki init`/`issue`/`renew` make a small CA and the certificates TLS needs and `rawstor pki show` reads one, `rawstor_pki_init()`/`rawstor_pki_issue()`/`rawstor_pki_renew()`/`rawstor_pki_show()` do the same for a program, and pyrawstor has `rawstor.pki`; importing `rawstor` no longer starts librawstor until `Target` or `Location` is used.
@@ -20,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python `Target.resize()` grows an `mds://` object.
 - `rawstor version create` works on `file://` members as a fake snapshot: the member's data file is copied into a per-version subdirectory under the write barrier.
 - A write barrier across `rawstor version create`: the OSTs hold new writes to every DATA member of every chunk (`FREEZE`/`THAW`, [design](docs/mds.md#the-write-barrier)), drain and flush the admitted ones, and release them once the version is registered, so a version is one consistent point in time even with a live writer; a lease releases them by itself if the caller dies.
-- `rawstor create`, `list`(`ls`), `remove`(`rm`) and `info` are shorthands for `rawstor object create|list|remove` and `rawstor location info`.
+- `rawstor create`, `list`(`ls`), `remove`(`rm`), `show` and `info` are shorthands for `rawstor object create|list|remove|show` and `rawstor location info`.
 - `ls` and `rm` are aliases for `list` and `remove` in `rawstor object`, `rawstor version` and `rawstor tenant`; usage shows them as `list(ls)` and `remove(rm)`.
 - `rawstor object list|show|chunks|slots|create|resolve`, `rawstor version list|create|show`, `rawstor tenant create|list` and `rawstor location info` take `--format table|json|value` (default `table`, a bordered table wrapped to the terminal width) and `--column COL[,COL...]` to choose and order the columns.
 - New MDS chunks with an even DATA width automatically place one witness in an unused failure domain; topology requires a `role` column (`data`, `witness` or both), with MDS witnesses addressed through `ost://`.
@@ -87,6 +91,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rawstor-vhost`'s `--num-queues`: it now serves as many virtqueues as the front-end sets up (QEMU's own `num-queues=`), so QEMU no longer fails to start a guest with more vCPUs than `--num-queues` (default `4`).
 
 ### Fixed
+
+- Provider admins can initialize mirrored object membership, including MDS witnesses, without data-write permissions.
+
+- CLI object listings preserve explicitly supplied URI tenants and report the owner separately without adding it to unqualified URIs.
 
 - PKI renewal and inspection verify the same certificate they read, using only the CA public key for signature checks.
 

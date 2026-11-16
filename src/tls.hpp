@@ -1,6 +1,7 @@
 #ifndef RAWSTOR_TLS_HPP
 #define RAWSTOR_TLS_HPP
 
+#include <rawstor/protocol.h>
 #include <rawtls/context.hpp>
 #include <rawtls/transport.hpp>
 
@@ -21,6 +22,9 @@ namespace tls {
  * are absent. Throws std::system_error if they are there but cannot be loaded.
  */
 void initialize();
+
+// The authenticated client tenant, or the built-in default for a provider.
+RawstdUUID default_owner();
 
 void terminate() noexcept;
 
