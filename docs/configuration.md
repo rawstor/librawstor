@@ -82,8 +82,9 @@ Session tickets are off, so each connection makes a full handshake.
 `rawstor-vhost`, `rawstor-vduse` and `rawstor-vhost-qemu`, or `RAWSTOR_INSECURE=1`
 in the environment, runs a process without TLS: its connections are plaintext
 and **no peer is authenticated**, so every peer that can reach a port can do
-everything. In a systemd instance the variable goes into its config file. A
-program that links librawstor sets `RawstorOpts::insecure` or the variable.
+everything. A systemd instance cannot run this way: its unit unsets the
+variable, so it needs TLS. A program that links librawstor sets
+`RawstorOpts::insecure` or the variable.
 Use it for a storage network that no untrusted party can reach, and for
 development and tests.
 

@@ -60,7 +60,6 @@ The config is an environment file (`KEY=VALUE` lines):
 | `QUEUE_SIZE` | `4096` | `--queue-size`. |
 | `WORKERS` | `12` | `--workers`. |
 | `RAWSTOR_TLS_*` | | TLS settings, see [Configuration](configuration.md#tls). |
-| `RAWSTOR_INSECURE` | `0` | `1` runs the instance without TLS. Without it, and without `RAWSTOR_TLS_*`, the instance refuses to start. |
 | `RAWSTOR_OPTS_*` | | Tuning knobs, see [Configuration](configuration.md). |
 
 The instance runs as the `rawstor` user under `ProtectSystem=strict`. Its
