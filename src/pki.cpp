@@ -46,7 +46,7 @@ extern "C" {
 int rawstor_pki_init(
     const char* dir, const char* name, unsigned long validity
 ) {
-    return guarded([&] { rawtls::Ca::init(dir, name, seconds(validity)); });
+    return guarded([&] { rawtls::CA::init(dir, name, seconds(validity)); });
 }
 
 int rawstor_pki_issue(
@@ -54,7 +54,7 @@ int rawstor_pki_issue(
     const char* cert_file, const char* key_file
 ) {
     return guarded([&] {
-        rawtls::Ca(dir).issue(identity, seconds(validity), cert_file, key_file);
+        rawtls::CA(dir).issue(identity, seconds(validity), cert_file, key_file);
     });
 }
 
@@ -63,7 +63,7 @@ int rawstor_pki_renew(
     unsigned long validity
 ) {
     return guarded([&] {
-        rawtls::Ca(dir).renew(cert_file, key_file, seconds(validity));
+        rawtls::CA(dir).renew(cert_file, key_file, seconds(validity));
     });
 }
 

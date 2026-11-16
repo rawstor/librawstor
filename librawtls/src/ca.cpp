@@ -292,7 +292,7 @@ void make_dir(const std::string& dir) {
 
 namespace rawtls {
 
-void Ca::init(
+void CA::init(
     const std::string& dir, const std::string& common_name,
     std::chrono::seconds validity
 ) {
@@ -315,7 +315,7 @@ void Ca::init(
     write_cert(join(dir, "ca.crt"), cert.get());
 }
 
-Ca::Ca(const std::string& dir) : _dir(dir) {
+CA::CA(const std::string& dir) : _dir(dir) {
     ERR_clear_error();
     if (access(join(dir, "ca.crt").c_str(), R_OK) != 0 ||
         access(join(dir, "ca.key").c_str(), R_OK) != 0) {
@@ -323,11 +323,11 @@ Ca::Ca(const std::string& dir) : _dir(dir) {
     }
 }
 
-std::string Ca::ca_file() const {
+std::string CA::ca_file() const {
     return join(_dir, "ca.crt");
 }
 
-void Ca::issue(
+void CA::issue(
     const std::string& uri, std::chrono::seconds validity,
     const std::string& cert_file, const std::string& key_file
 ) const {
@@ -361,7 +361,7 @@ void Ca::issue(
     write_cert(cert_file, cert.get());
 }
 
-void Ca::renew(
+void CA::renew(
     const std::string& cert_file, const std::string& key_file,
     std::chrono::seconds validity
 ) const {

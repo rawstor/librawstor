@@ -88,9 +88,9 @@ void expect_errno(int expected, const std::function<void()>& call) {
 
 } // namespace
 
-TEST(CaTest, init_makes_a_ca_whose_key_is_private) {
+TEST(CATest, init_makes_a_ca_whose_key_is_private) {
     Dir dir;
-    rawtls::Ca::init(dir.path("ca"), "test CA", hour);
+    rawtls::CA::init(dir.path("ca"), "test CA", hour);
 
     EXPECT_EQ(mode_of(dir.path("ca")), 0700u);
     EXPECT_EQ(mode_of(dir.path("ca/ca.key")), 0600u);
@@ -102,33 +102,33 @@ TEST(CaTest, init_makes_a_ca_whose_key_is_private) {
     EXPECT_EQ(X509_self_signed(cert.get(), 1), 1);
 }
 
-TEST(CaTest, init_refuses_an_existing_ca) {
+TEST(CATest, init_refuses_an_existing_ca) {
     Dir dir;
-    rawtls::Ca::init(dir.path("ca"), "test CA", hour);
+    rawtls::CA::init(dir.path("ca"), "test CA", hour);
     std::string before = serial_of(dir.path("ca/ca.crt"));
     expect_errno(EEXIST, [&] {
-        rawtls::Ca::init(dir.path("ca"), "other CA", hour);
+        rawtls::CA::init(dir.path("ca"), "other CA", hour);
     });
     EXPECT_EQ(serial_of(dir.path("ca/ca.crt")), before);
 }
 
-TEST(CaTest, init_rejects_bad_arguments) {
+TEST(CATest, init_rejects_bad_arguments) {
     Dir dir;
-    expect_errno(EINVAL, [&] { rawtls::Ca::init(dir.path("a"), "", hour); });
+    expect_errno(EINVAL, [&] { rawtls::CA::init(dir.path("a"), "", hour); });
     expect_errno(EINVAL, [&] {
-        rawtls::Ca::init(dir.path("b"), "CA", std::chrono::seconds(0));
+        rawtls::CA::init(dir.path("b"), "CA", std::chrono::seconds(0));
     });
 }
 
-TEST(CaTest, a_missing_ca_is_not_opened) {
+TEST(CATest, a_missing_ca_is_not_opened) {
     Dir dir;
-    expect_errno(ENOENT, [&] { rawtls::Ca ca(dir.path("nothing")); });
+    expect_errno(ENOENT, [&] { rawtls::CA ca(dir.path("nothing")); });
 }
 
-TEST(CaTest, issues_a_certificate_a_context_takes) {
+TEST(CATest, issues_a_certificate_a_context_takes) {
     Dir dir;
-    rawtls::Ca::init(dir.path("ca"), "test CA", hour);
-    rawtls::Ca ca(dir.path("ca"));
+    rawtls::CA::init(dir.path("ca"), "test CA", hour);
+    rawtls::CA ca(dir.path("ca"));
     ca.issue(ost_uri, hour, dir.path("ost.crt"), dir.path("ost.key"));
 
     EXPECT_EQ(mode_of(dir.path("ost.key")), 0600u);
@@ -171,10 +171,10 @@ TEST(CaTest, issues_a_certificate_a_context_takes) {
     EXPECT_NO_THROW(rawtls::Context context(config));
 }
 
-TEST(CaTest, issue_checks_the_identity) {
+TEST(CATest, issue_checks_the_identity) {
     Dir dir;
-    rawtls::Ca::init(dir.path("ca"), "test CA", hour);
-    rawtls::Ca ca(dir.path("ca"));
+    rawtls::CA::init(dir.path("ca"), "test CA", hour);
+    rawtls::CA ca(dir.path("ca"));
     for (const char* bad :
          {"", "ost", "https://cluster.example/ost/x",
           "spiffe://cluster.example/ost/not-a-uuid",
@@ -193,10 +193,10 @@ TEST(CaTest, issue_checks_the_identity) {
     });
 }
 
-TEST(CaTest, renew_keeps_the_identity_and_changes_the_rest) {
+TEST(CATest, renew_keeps_the_identity_and_changes_the_rest) {
     Dir dir;
-    rawtls::Ca::init(dir.path("ca"), "test CA", hour);
-    rawtls::Ca ca(dir.path("ca"));
+    rawtls::CA::init(dir.path("ca"), "test CA", hour);
+    rawtls::CA ca(dir.path("ca"));
     ca.issue(ost_uri, hour, dir.path("ost.crt"), dir.path("ost.key"));
     std::string serial = serial_of(dir.path("ost.crt"));
 
@@ -212,10 +212,10 @@ TEST(CaTest, renew_keeps_the_identity_and_changes_the_rest) {
     EXPECT_NO_THROW(rawtls::Context context(config));
 }
 
-TEST(CaTest, renew_refuses_what_another_ca_issued) {
+TEST(CATest, renew_refuses_what_another_ca_issued) {
     Dir dir;
-    rawtls::Ca::init(dir.path("ca"), "test CA", hour);
-    rawtls::Ca ca(dir.path("ca"));
+    rawtls::CA::init(dir.path("ca"), "test CA", hour);
+    rawtls::CA ca(dir.path("ca"));
 
     rawtls::testing::Pki other;
     rawtls::testing::IssueOptions options;
@@ -227,10 +227,10 @@ TEST(CaTest, renew_refuses_what_another_ca_issued) {
     });
 }
 
-TEST(CaTest, renew_needs_an_existing_certificate) {
+TEST(CATest, renew_needs_an_existing_certificate) {
     Dir dir;
-    rawtls::Ca::init(dir.path("ca"), "test CA", hour);
-    rawtls::Ca ca(dir.path("ca"));
+    rawtls::CA::init(dir.path("ca"), "test CA", hour);
+    rawtls::CA ca(dir.path("ca"));
     expect_errno(ENOENT, [&] {
         ca.renew(dir.path("none.crt"), dir.path("none.key"), hour);
     });

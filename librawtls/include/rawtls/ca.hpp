@@ -21,7 +21,7 @@ namespace rawtls {
  * CA, EINVAL for a bad ID, a bad validity or a certificate this CA did not
  * issue, ENOENT for a CA that is not there, other values from the file system.
  */
-class Ca final {
+class CA final {
 private:
     std::string _dir;
 
@@ -34,7 +34,7 @@ public:
     );
 
     // Opens the CA in `dir`; throws if it is not there or not readable.
-    explicit Ca(const std::string& dir);
+    explicit CA(const std::string& dir);
 
     // The CA certificate: what a process lists as its CA.
     std::string ca_file() const;
