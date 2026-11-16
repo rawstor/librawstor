@@ -16,8 +16,7 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
-rawstor_SOURCES = principal.c principal.h \
-                  chunks.c \
+rawstor_SOURCES = chunks.c \
                   chunks.h \
                   create.c \
                   create.h \
@@ -30,6 +29,8 @@ rawstor_SOURCES = principal.c principal.h \
                   output.h \
                   pki.c \
                   pki.h \
+                  principal.c \
+                  principal.h \
                   rawio_sync.c \
                   rawio_sync.h \
                   remove.c \
