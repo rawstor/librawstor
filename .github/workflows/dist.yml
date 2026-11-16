@@ -829,8 +829,19 @@ jobs:
     - name: install-python3-rawstor
       run: pip install wheelhouse/*.whl
     - name: test-python3-rawstor
+      # librawstor starts with TLS settings only, so the test makes some with
+      # the wheel's own rawstor.pki, which does not start it.
       run: |
-        mkdir -p /tmp/rawstor-wheel-install-test
+        mkdir -p /tmp/rawstor-wheel-install-test /tmp/pki
+        python -c "
+        from rawstor import pki
+        pki.init('/tmp/pki/ca', 'cluster.example')
+        pki.issue_admin('/tmp/pki/ca', 'ci', '/tmp/pki/cli.crt', '/tmp/pki/cli.key')
+        "
+        export RAWSTOR_TLS_TRUST_DOMAIN=cluster.example
+        export RAWSTOR_TLS_CERT=/tmp/pki/cli.crt
+        export RAWSTOR_TLS_KEY=/tmp/pki/cli.key
+        export RAWSTOR_TLS_CA=/tmp/pki/ca/ca.crt
         python -c "import rawstor; print(list(rawstor.Location('file:///tmp/rawstor-wheel-install-test').objects())); print('OK')"
 
   release:
