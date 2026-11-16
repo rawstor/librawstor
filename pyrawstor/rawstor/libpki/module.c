@@ -111,7 +111,8 @@ static PyObject* py_pki_show(PyObject* Py_UNUSED(self), PyObject* args) {
     }
     PyObject* issued;
     if (info.issued < 0) {
-        issued = Py_NewRef(Py_None);
+        issued = Py_None;
+        Py_INCREF(issued);
     } else {
         issued = PyBool_FromLong(info.issued);
     }
