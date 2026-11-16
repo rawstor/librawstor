@@ -49,22 +49,23 @@ environment file in `/etc/rawstor/`.
 A certificate names the process it belongs to by a SPIFFE ID,
 `spiffe://<trust domain>/<role>/<name>`, and a peer is accepted only if its ID
 is in the trust domain of the cluster and has the role it is expected to have:
-an OST's is `ost/<its id>`, an MDS's `mds/<name>`. Make the CA, and every
+an OST's is `ost/<its id>`, an MDS's `mds/<name>`. `rawstor pki` builds the ID
+from the role and the name, in the trust domain the CA was made for. Make the CA, and every
 certificate, on one machine of yours that is not a storage host (it needs only
 `librawstor`). The CA's private key, `ca/ca.key`, never leaves it; `rawstor pki`
 needs no TLS settings itself.
 
 ```
 TD=cluster.example
-OST1=$(cat /proc/sys/kernel/random/uuid)
-OST2=$(cat /proc/sys/kernel/random/uuid)
 CLUSTER=$(cat /proc/sys/kernel/random/uuid)
 
-rawstor pki init ca
-rawstor pki issue --ca ca --cert ost1.crt --key ost1.key spiffe://${TD}/ost/${OST1}
-rawstor pki issue --ca ca --cert ost2.crt --key ost2.key spiffe://${TD}/ost/${OST2}
-rawstor pki issue --ca ca --cert mds.crt --key mds.key spiffe://${TD}/mds/${CLUSTER}
-rawstor pki issue --ca ca --cert hv1.crt --key hv1.key spiffe://${TD}/admin/hv1
+rawstor pki init --trust-domain ${TD} ca
+# an OST's id is made with its certificate: it is the last part of the SPIFFE ID
+# that `issue` prints
+OST1=$(rawstor pki issue --ca ca --cert ost1.crt --key ost1.key ost | sed 's|.*/||')
+OST2=$(rawstor pki issue --ca ca --cert ost2.crt --key ost2.key ost | sed 's|.*/||')
+rawstor pki issue --ca ca --cert mds.crt --key mds.key mds ${CLUSTER}
+rawstor pki issue --ca ca --cert hv1.crt --key hv1.key admin hv1
 ```
 
 Certificates are valid for 7 days (`--validity`, `30d`, `12h`, ...). Before

@@ -190,8 +190,9 @@ published pages, to be re-checked when the choice is made):
   URI SAN on request or by ACME, without attestation. Adequate when the
   deployment tool already knows which process gets which tenant.
 - The project's own `rawstor pki` for installations with none of the above:
-  `init` makes a CA in a directory, `issue` makes the certificate and key of
-  one identity, `renew` replaces them before they expire. The CA is the one
+  `init` makes a CA for the trust domain of a cluster in a directory, `issue`
+  makes the certificate and key of one process from its role and name (`ost`,
+  `mds`, `admin` or `client`), `renew` replaces them before they expire. The CA is the one
   place that holds a signing key, and the helper runs on that one machine; it
   is a small tool, not an enrolment service, so getting the files to the hosts
   is up to the operator. See [Configuration](configuration.md#issuing-certificates).

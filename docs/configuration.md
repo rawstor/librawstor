@@ -85,26 +85,32 @@ needs no TLS settings itself. The CA is a directory with its certificate,
 `ca.key`, which stays on the machine that issues certificates:
 
 ```
-rawstor pki init ca
-rawstor pki issue --ca ca --cert ost.crt --key ost.key \
-    spiffe://cluster.example/ost/0198f1a2-3b4c-7d5e-8f90-a1b2c3d4e5f6
+rawstor pki init --trust-domain cluster.example ca
+rawstor pki issue --ca ca --cert ost.crt --key ost.key ost       # a new id
+rawstor pki issue --ca ca --cert mds.crt --key mds.key mds mds-1
+rawstor pki issue --ca ca --cert hv1.crt --key hv1.key admin hv1
+rawstor pki issue --ca ca --cert vm.crt --key vm.key client <tenant uuid> vm-1
 rawstor pki renew --ca ca --cert ost.crt --key ost.key
 ```
 
-`issue` writes a certificate and a new key (mode 0600) for a SPIFFE ID of one
-of the four shapes above, replacing the files; `renew` does the same for the
-identity of a certificate this CA issued, over the same files, and the running
-process reads them again on `SIGHUP` or `SIGUSR1`. A certificate is valid for 7
-days and a CA for 3650 unless `--validity` says otherwise (a number and `s`,
-`m`, `h` or `d`). Keys are EC P-256. There is no revocation beyond expiry and
-the optional `RAWSTOR_TLS_CRL`, so keep certificates short.
+A CA is made for the trust domain of one cluster and keeps it, so every
+certificate it issues is in it. `issue` writes a certificate and a new key
+(mode 0600) for a process, replacing the files, and prints the SPIFFE ID the
+certificate names: `ost [ID]` (the id is the one in the MDS topology, a UUID;
+without it a new one is made), `mds NAME`, `admin NAME` or
+`client TENANT NAME`. `renew` does the same for the process of a certificate this
+CA issued, over the same files, and the running process reads them again on
+`SIGHUP` or `SIGUSR1`. A certificate is valid for 7 days and a CA for 3650
+unless `--validity` says otherwise (a number and `s`, `m`, `h` or `d`). Keys are
+EC P-256. There is no revocation beyond expiry and the optional
+`RAWSTOR_TLS_CRL`, so keep certificates short.
 
 The same is available to programs: `rawstor_pki_init()`, `rawstor_pki_issue()`
 and `rawstor_pki_renew()` in `<rawstor/pki.h>`, which need no
-`rawstor_initialize()`, and `rawstor.pki` (`init()`, `issue()`, `renew()`) in
-pyrawstor, which does not start rawstor when imported, so a program can make its
-certificates and set `RAWSTOR_TLS_*` before it first uses `Location` or
-`Target`.
+`rawstor_initialize()`, and `rawstor.pki` (`init()`, `issue_ost()`,
+`issue_mds()`, `issue_admin()`, `issue_client()`, `renew()`) in pyrawstor, which
+does not start rawstor when imported, so a program can make its certificates and
+set `RAWSTOR_TLS_*` before it first uses `Location` or `Target`.
 
 Any other CA that writes the URI SAN fits as well, see
 [Security design](security.md#issuing-certificates).
