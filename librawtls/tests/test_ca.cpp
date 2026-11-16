@@ -69,8 +69,7 @@ std::unique_ptr<X509, void (*)(X509*)> load(const std::string& file) {
 std::string serial_of(const std::string& file) {
     auto cert = load(file);
     std::unique_ptr<BIGNUM, void (*)(BIGNUM*)> bn(
-        ASN1_INTEGER_to_BN(X509_get0_serialNumber(cert.get()), nullptr),
-        BN_free
+        ASN1_INTEGER_to_BN(X509_get0_serialNumber(cert.get()), nullptr), BN_free
     );
     char* hex = BN_bn2hex(bn.get());
     std::string s = hex;
@@ -115,9 +114,7 @@ TEST(CaTest, init_refuses_an_existing_ca) {
 
 TEST(CaTest, init_rejects_bad_arguments) {
     Dir dir;
-    expect_errno(EINVAL, [&] {
-        rawtls::Ca::init(dir.path("a"), "", hour);
-    });
+    expect_errno(EINVAL, [&] { rawtls::Ca::init(dir.path("a"), "", hour); });
     expect_errno(EINVAL, [&] {
         rawtls::Ca::init(dir.path("b"), "CA", std::chrono::seconds(0));
     });
