@@ -9,7 +9,7 @@
 
 namespace rawtls {
 
-// Certificate policy: object masks restrict the tenant role, never widen it.
+// Certificate policy: the role supplies defaults; object masks override them.
 struct Permissions {
     uint32_t role = 0;
     std::map<std::string, uint32_t> objects;

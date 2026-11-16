@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Certificate role `none` denies unlisted objects; explicit object permissions override role defaults, supporting credentials scoped to one vhost object.
+
 - TLS tenant authorization with CA-signed roles and object restrictions, independently checked by MDS and OST; PKI CLI/C/Python APIs issue, inspect and renew the signed permissions.
 
 - Tenants ([design](docs/tenants.md)): an object has an owner tenant, named in a location as optional user information (`ost://<tenant>@host:port`); `list` shows the objects a tenant owns and each one's tenant, or every object without a tenant; `create` without a tenant creates for the default tenant; an MDS keeps a tenant registry, and `rawstor tenant create`/`list`/`remove` manage it, and removing a tenant removes its objects with their versions; `rawstor object transfer TARGET TENANT` (`rawstor_target_transfer()`) makes another tenant the owner of an object; pyrawstor has `Location.tenants()`/`create_tenant()`/`remove_tenant()`, `Target.transfer()`, `Target.tenant`, `ObjectMeta.tenant` and `DEFAULT_TENANT`.

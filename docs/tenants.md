@@ -4,7 +4,7 @@ A **tenant** is a field of an object: the party that owns it. An object is
 addressed by its id alone (ids are unique on their own), and the tenant is
 what authorization checks against the authenticated caller. In TLS mode the
 certificate identifies the caller's tenant and carries its signed role and
-object restrictions. MDS and OST independently enforce that policy against
+object permission overrides. MDS and OST independently enforce that policy against
 the object's owner. Plaintext `--insecure` has no tenant security boundary. See
 [Authorization](configuration.md#authorization).
 

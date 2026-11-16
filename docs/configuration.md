@@ -170,17 +170,18 @@ rawstor pki issue --ca ca --cert client.crt --key client.key \
   --role manager client 018f4e2a-2222-7000-8000-000000000001 vm-1
 ```
 
-`--role` is required for a client: `reader` reads and lists objects, `writer`
+`--role` is required for a client: `none` grants no default permissions,
+`reader` reads and lists objects, `writer`
 adds writes and discards, and `manager` adds creation, deletion and version
 management. The process role shown as `role=client` is separate from the
 `access_role` shown by `pki show`. Provider `admin` certificates manage tenants,
 objects and ownership; `mds` certificates scan OST metadata. Neither provider
 role may write data, and OST certificates grant no provider permissions.
 
-To restrict particular objects, repeat `--object-permissions UUID:MASK` when issuing
-the certificate (at most 128 entries). The mask intersects the role's permissions:
+To set explicit object permissions, repeat `--object-permissions UUID:MASK` when
+issuing the certificate (at most 128 entries). The mask overrides the role's defaults:
 `read=1`, `write=2`, `discard=4`, `manage=8`; combine bits by addition, or use
-zero to deny the object. Other objects retain the role's permissions. Restrictions
+zero to deny the object. Other objects retain the role's defaults. Object permissions
 apply to the object and all its versions; snapshots remain read-only.
 
 ```sh
@@ -191,6 +192,23 @@ rawstor pki issue --ca ca --cert reader.crt --key reader.key \
   client 018f4e2a-2222-7000-8000-000000000001 vm-2
 rawstor pki show --cert reader.crt
 ```
+
+For a vhost that may access only one object, use `none` and grant that UUID
+read/write/discard (`7`):
+
+```sh
+rawstor pki issue --ca ca --cert vhost.crt --key vhost.key \
+  --role none \
+  --object-permissions 018f4e2a-2222-7000-8000-000000000002:7 \
+  client 018f4e2a-2222-7000-8000-000000000001 vhost-1
+```
+
+All other objects, including ones created later, are denied. The same grant
+covers the object's versions, whose data remains read-only. Use mask `1` and `rawstor-vhost --readonly` for
+a read-only vhost. Mask `7` grants ordinary data I/O, not allocation, removal,
+version management or repair that needs to allocate a replacement member.
+A `none` client uses the supplied object target; tenant-wide `list` is denied.
+MDS control connections may open to resolve an explicitly permitted object.
 
 With admin credentials, create the tenant in MDS before creating its objects:
 
@@ -213,7 +231,7 @@ A configured CRL is checked on new TLS connections.
 
 The C API in `<rawstor/pki.h>` accepts `RawstorPkiPermissions` in
 `rawstor_pki_issue()` and returns it in `RawstorPkiInfo.permissions`.
-Python `pki.issue_client(..., role="manager", object_permissions={UUID: 1})` does
+Python `pki.issue_client(..., role="none", object_permissions={UUID: 7})` does
 the same; `pki.show()` returns `access_role` and `object_permissions`.
 
 An external CA must issue the [authorization extension](protocol.md#authorization)

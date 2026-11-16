@@ -102,13 +102,15 @@ static void issue_usage(void) {
         "  --cert FILE           Where the certificate goes\n"
         "  --key FILE            Where the private key goes\n"
         "  --object-permissions UUID:MASK\n"
-        "                        Restrict one object and its versions "
+        "                        Set permissions for one object and its "
+        "versions "
         "(repeat up to 128 times)\n"
         "                        read=1, write=2, discard=4, manage=8; 0 "
         "denies access.\n"
-        "                        The mask intersects the role; other objects "
+        "                        The mask overrides the role; other objects "
         "keep role permissions.\n"
-        "  --role ROLE           Client access: reader, writer or manager\n"
+        "  --role ROLE           Default access: none, reader, writer or "
+        "manager\n"
         "                        Required for client certificates\n"
         "  --validity DURATION   How long the certificate is valid "
         "(default: 7d)\n" RAWSTOR_CLI_OUTPUT_USAGE "\n"
@@ -433,6 +435,7 @@ static RawstorCliTable* identity_table(const struct RawstorPkiInfo* info) {
         info->permissions.role == RAWSTOR_ROLE_READER    ? "reader"
         : info->permissions.role == RAWSTOR_ROLE_WRITER  ? "writer"
         : info->permissions.role == RAWSTOR_ROLE_MANAGER ? "manager"
+        : !strcmp(role, "client")                        ? "none"
                                                          : "";
     char object_permissions[RAWSTOR_PKI_MAX_OBJECT_PERMISSIONS * 41 + 1] = {0};
     size_t used = 0;
@@ -515,6 +518,7 @@ static int command_issue(int argc, char** argv, int renew) {
     const char* key = NULL;
     unsigned long validity = DEFAULT_VALIDITY;
     struct RawstorPkiPermissions permissions = {0};
+    int role_set = 0;
     optind = 0;
     int c;
     while ((c = getopt_long(argc, argv, "h", longopts, NULL)) != -1) {
@@ -543,14 +547,19 @@ static int command_issue(int argc, char** argv, int renew) {
                 );
                 return EX_USAGE;
             }
-            if (!strcmp(optarg, "reader"))
+            role_set = 1;
+            if (!strcmp(optarg, "none"))
+                permissions.role = RAWSTOR_ROLE_NONE;
+            else if (!strcmp(optarg, "reader"))
                 permissions.role = RAWSTOR_ROLE_READER;
             else if (!strcmp(optarg, "writer"))
                 permissions.role = RAWSTOR_ROLE_WRITER;
             else if (!strcmp(optarg, "manager"))
                 permissions.role = RAWSTOR_ROLE_MANAGER;
             else {
-                fprintf(stderr, "--role must be reader, writer or manager\n");
+                fprintf(
+                    stderr, "--role must be none, reader, writer or manager\n"
+                );
                 return EX_USAGE;
             }
             break;
@@ -633,9 +642,8 @@ static int command_issue(int argc, char** argv, int renew) {
         if (res != 0) {
             return res;
         }
-        if ((role == RAWSTOR_PKI_CLIENT && !permissions.role) ||
-            (role != RAWSTOR_PKI_CLIENT &&
-             (permissions.role || permissions.count))) {
+        if ((role == RAWSTOR_PKI_CLIENT && !role_set) ||
+            (role != RAWSTOR_PKI_CLIENT && (role_set || permissions.count))) {
             fprintf(
                 stderr,
                 "--role is required for a client and applies only to clients\n"

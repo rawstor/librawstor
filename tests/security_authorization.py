@@ -2,7 +2,7 @@
 """End-to-end authorization with real daemons, TLS certificates and CLI clients.
 
 Run from a configured build tree: python3 /source/tests/security_authorization.py .
-Requires built OST/MDS/CLI and OpenSSL; no Python rawstor installation is needed.
+Requires built OST/MDS/CLI/vhost and OpenSSL; no Python rawstor installation is needed.
 """
 from contextlib import ExitStack
 import ctypes
@@ -157,6 +157,33 @@ def main():
                 except OSError:
                     time.sleep(.05)
             raise AssertionError('daemon did not start')
+        def vhost_features(target, who):
+            path = directory / (who + '.sock')
+            log = resources.enter_context(open(directory / (who + '-vhost.log'), 'w+'))
+            files.append(log)
+            process = subprocess.Popen([str(root / 'vhost/src/rawstor-vhost'), '--queue-size', '128',
+                                        '--socket-path', str(path), target],
+                                       env=environment(who), stdout=log, stderr=log)
+            processes.append(process)
+            try:
+                deadline = time.monotonic() + 15
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+                    connection.settimeout(5)
+                    while True:
+                        assert process.poll() is None, 'vhost exited before accepting a connection'
+                        try:
+                            connection.connect(str(path))
+                            break
+                        except (FileNotFoundError, ConnectionRefusedError):
+                            assert time.monotonic() < deadline, 'vhost did not listen'
+                            time.sleep(.05)
+                    connection.sendall(struct.pack('<III', 1, 1, 0))  # VHOST_USER_GET_FEATURES
+                    command, flags, size = struct.unpack('<III', receive(connection, 12))
+                    assert command == 1 and flags & 4 and size == 8, (command, flags, size)
+                    receive(connection, size)
+            finally:
+                process.terminate()
+                process.wait(timeout=10)
         try:
             tenant, other, ost_id, mds_id = map(str, [uuid.uuid4() for _ in range(4)])
             run(['pki', 'init', '--trust-domain', 'cluster.example', directory / 'ca'])
@@ -282,6 +309,39 @@ def main():
             run(['object', 'remove', target], 'restricted', success=False)
             with connect(ost_port, 'restricted') as connection:
                 assert request(connection, 0x05, struct.pack('<16sQ16sQ', object_id, 0, bytes(16), 0))[0] == -errno.EACCES
+            # A vhost certificate has no tenant-wide permissions and only one object grant.
+            blocked_before = run(['object', 'create', location, '--size', '64K', '--chunk-size', '64K',
+                                  '--mirrors', '1', '--format', 'value', '--column', 'target'], 'manager')
+            run(['pki', 'issue', '--ca', directory / 'ca', '--cert', directory / 'scoped.crt',
+                 '--key', directory / 'scoped.key', '--role', 'none', '--object-permissions',
+                 str(uuid.UUID(bytes=object_id)) + ':7', 'client', tenant, 'vhost'])
+            info = json.loads(run(['pki', 'show', '--cert', directory / 'scoped.crt', '--format', 'json']))
+            assert info['access_role'] == 'none', info
+            run(['pki', 'renew', '--ca', directory / 'ca', '--cert', directory / 'scoped.crt',
+                 '--key', directory / 'scoped.key'])
+            renewed = json.loads(run(['pki', 'show', '--cert', directory / 'scoped.crt', '--format', 'json']))
+            assert renewed['access_role'] == 'none' and renewed['object_permissions'] == info['object_permissions'], renewed
+            run(['show', target], 'scoped')
+            run(['testio', target, '--block-size', '4K', '--io-depth', '1', '--count', '2'], 'scoped')
+            connection_probe(root, target, environment('scoped'))
+            direct = f'ost://127.0.0.1:{ost_port}/' + str(uuid.UUID(bytes=object_id))
+            run(['testio', direct, '--block-size', '4K', '--io-depth', '1', '--count', '2'], 'scoped')
+            vhost_features(target, 'scoped')
+            run(['list', location], 'scoped', success=False)
+            run(['list', f'ost://127.0.0.1:{ost_port}'], 'scoped', success=False)
+            run(['object', 'remove', target], 'scoped', success=False)
+            blocked_after = run(['object', 'create', location, '--size', '64K', '--chunk-size', '64K',
+                                 '--mirrors', '1', '--format', 'value', '--column', 'target'], 'manager')
+            for blocked in [blocked_before, blocked_after]:
+                run(['show', blocked], 'scoped', success=False)
+                with connect(ost_port, 'scoped') as connection:
+                    blocked_id = uuid.UUID(blocked.rsplit('/', 1)[1]).bytes
+                    assert request(connection, 0x0c, struct.pack('<16sQ16sQ', blocked_id, 0, bytes(16), 0))[0] == -errno.EACCES
+                run(['object', 'remove', blocked], 'manager')
+            scoped_version = run(['version', 'create', target, '--format', 'value', '--column', 'target'], 'manager')
+            run(['version', 'show', scoped_version], 'scoped')
+            run(['version', 'remove', scoped_version], 'scoped', success=False)
+            run(['version', 'remove', scoped_version], 'manager')
             # A renewed certificate is picked up by reconnecting an open handle.
             run(['pki', 'issue', '--ca', directory / 'ca', '--cert', directory / 'rotating.crt',
                  '--key', directory / 'rotating.key', '--role', 'manager', '--validity', '4s',

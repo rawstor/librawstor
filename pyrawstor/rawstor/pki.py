@@ -128,14 +128,14 @@ def issue_client(
     role: str,
     object_permissions: Optional[Mapping[str, int]] = None,
 ) -> str:
-    """Issue tenant credentials with a reader, writer or manager role.
+    """Issue tenant credentials with a none, reader, writer or manager role.
 
-    Object masks restrict the role for each named UUID, including its versions;
+    Object masks override the role for each named UUID, including its versions;
     zero denies access. Other objects retain the role's permissions.
     """
-    roles = {"reader": 1, "writer": 2, "manager": 3}
+    roles = {"none": 0, "reader": 1, "writer": 2, "manager": 3}
     if role not in roles:
-        raise ValueError("role must be reader, writer or manager")
+        raise ValueError("role must be none, reader, writer or manager")
     return _issue(directory, _CLIENT, tenant, name, cert_file, key_file, validity,
                   roles[role], object_permissions)
 
@@ -166,7 +166,8 @@ def show(cert_file: Path, directory: Optional[Path] = None) -> Info:
         identity,
         datetime.datetime.fromtimestamp(not_after, datetime.timezone.utc),
         issued,
-        {0: None, 1: "reader", 2: "writer", 3: "manager"}[access_role],
+        ({0: "none", 1: "reader", 2: "writer", 3: "manager"}[access_role]
+         if "/tenant/" in identity else None),
         object_permissions,
     )
 

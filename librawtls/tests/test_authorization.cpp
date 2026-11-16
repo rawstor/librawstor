@@ -10,6 +10,7 @@
 #include <cstring>
 #include <memory>
 #include <system_error>
+#include <vector>
 
 namespace {
 const std::string tenant = "018f4e2a-0000-7000-8000-000000000001";
@@ -70,7 +71,7 @@ TEST(
         );
 }
 
-TEST(AuthorizationTest, roles_are_intersected_with_object_masks) {
+TEST(AuthorizationTest, object_masks_override_role_defaults) {
     Connection connection;
     rawtls::Authorization authorization;
     RawstdUUID id{};
@@ -97,13 +98,13 @@ TEST(AuthorizationTest, roles_are_intersected_with_object_masks) {
         authorization.check(
             connection, RAWSTOR_CMD_RELEASE, id.bytes, 0, nullptr
         ),
-        EACCES
+        0
     );
     EXPECT_EQ(
         authorization.check(
             connection, RAWSTOR_CMD_FREEZE, id.bytes, 0, nullptr
         ),
-        EACCES
+        0
     );
     EXPECT_EQ(
         authorization.check(
@@ -242,8 +243,83 @@ TEST(AuthorizationTest, invalid_policy_cannot_be_issued) {
         ),
         std::system_error
     );
-    EXPECT_THROW(
-        rawtls::certificate_permissions(certificate.get(), {0, {{object, 1}}}),
-        std::system_error
+}
+
+TEST(AuthorizationTest, none_grants_only_explicit_object_permissions) {
+    Cert certificate(X509_new(), X509_free);
+    rawtls::certificate_permissions(
+        certificate.get(), {RAWSTOR_ROLE_NONE, {{object, 7}}}
     );
+    auto policy = rawtls::certificate_permissions(certificate.get());
+    EXPECT_EQ(policy.role, RAWSTOR_ROLE_NONE);
+    EXPECT_EQ(policy.mask(), 0u);
+    RawstdUUID id{}, other{};
+    ASSERT_EQ(rawstd_uuid_from_string(&id, object.c_str()), 0);
+    ASSERT_EQ(rawstd_uuid7_init(&other), 0);
+    EXPECT_EQ(policy.mask(id.bytes), 7u);
+    EXPECT_EQ(policy.mask(other.bytes), 0u);
+    Connection connection;
+    connection.identity.permissions(policy);
+    rawtls::Authorization authorization;
+    EXPECT_EQ(
+        authorization.check(connection, RAWSTOR_CMD_READ, id.bytes, 0, nullptr),
+        0
+    );
+    EXPECT_EQ(
+        authorization.check(
+            connection, RAWSTOR_CMD_WRITE, id.bytes, 0, nullptr
+        ),
+        0
+    );
+    EXPECT_EQ(
+        authorization.check(
+            connection, RAWSTOR_CMD_DISCARD, id.bytes, 0, nullptr
+        ),
+        0
+    );
+    EXPECT_EQ(
+        authorization.check(
+            connection, RAWSTOR_CMD_RELEASE, id.bytes, 0, nullptr
+        ),
+        EACCES
+    );
+    EXPECT_EQ(
+        authorization.check(
+            connection, RAWSTOR_CMD_READ, other.bytes, 0, nullptr
+        ),
+        EACCES
+    );
+    EXPECT_EQ(
+        authorization.check(connection, RAWSTOR_CMD_LIST, nullptr, 0, nullptr),
+        EACCES
+    );
+}
+
+TEST(AuthorizationTest, v1_policy_preserves_intersecting_masks) {
+    Cert certificate(X509_new(), X509_free);
+    rawtls::certificate_permissions(
+        certificate.get(), {RAWSTOR_ROLE_READER, {{object, RAWSTOR_PERM_ALL}}}
+    );
+    std::string text = "rawstor-access-v1\n1\n" + object + "=15\n";
+    std::unique_ptr<ASN1_UTF8STRING, decltype(&ASN1_UTF8STRING_free)> value(
+        ASN1_UTF8STRING_new(), ASN1_UTF8STRING_free
+    );
+    ASSERT_EQ(ASN1_STRING_set(value.get(), text.data(), text.size()), 1);
+    int size = i2d_ASN1_UTF8STRING(value.get(), nullptr);
+    ASSERT_GT(size, 0);
+    std::vector<unsigned char> der(size);
+    unsigned char* cursor = der.data();
+    ASSERT_EQ(i2d_ASN1_UTF8STRING(value.get(), &cursor), size);
+    ASSERT_EQ(
+        ASN1_OCTET_STRING_set(
+            X509_EXTENSION_get_data(X509_get_ext(certificate.get(), 0)),
+            der.data(), der.size()
+        ),
+        1
+    );
+    auto policy = rawtls::certificate_permissions(certificate.get());
+    RawstdUUID id{};
+    ASSERT_EQ(rawstd_uuid_from_string(&id, object.c_str()), 0);
+    EXPECT_EQ(policy.mask(id.bytes), RAWSTOR_PERM_READ);
+    EXPECT_EQ(policy.mask(), RAWSTOR_PERM_READ);
 }

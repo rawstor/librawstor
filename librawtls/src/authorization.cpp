@@ -26,13 +26,14 @@ constexpr size_t max_objects = 128;
     );
 }
 
-std::string encode(const rawtls::Permissions& policy) {
-    if (policy.role < RAWSTOR_ROLE_READER ||
+std::string encode(const rawtls::Permissions& policy, bool legacy = false) {
+    if ((legacy && policy.role == RAWSTOR_ROLE_NONE) ||
         policy.role > RAWSTOR_ROLE_MANAGER ||
         policy.objects.size() > max_objects)
         fail(EINVAL);
     std::string text =
-        "rawstor-access-v1\n" + std::to_string(policy.role) + "\n";
+        std::string(legacy ? "rawstor-access-v1\n" : "rawstor-access-v2\n") +
+        std::to_string(policy.role) + "\n";
     for (const auto& [object, mask] : policy.objects) {
         RawstdUUID id{};
         RawstdUUIDString canonical;
@@ -57,7 +58,7 @@ uint32_t role_permissions(uint32_t role) {
         return RAWSTOR_PERM_READ | RAWSTOR_PERM_WRITE | RAWSTOR_PERM_DISCARD;
     case RAWSTOR_ROLE_MANAGER:
         return RAWSTOR_PERM_ALL;
-    case 0:
+    case RAWSTOR_ROLE_NONE:
         return 0;
     default:
         fail(EINVAL);
@@ -128,7 +129,7 @@ uint32_t Permissions::mask(const uint8_t* object) const {
         rawstd_uuid_to_string(&id, &text);
         auto it = objects.find(text);
         if (it != objects.end())
-            result &= it->second;
+            result = it->second;
     }
     return result;
 }
@@ -162,11 +163,14 @@ Permissions certificate_permissions(X509* cert) {
     );
     std::istringstream lines(text);
     std::string line;
-    if (!std::getline(lines, line) || line != "rawstor-access-v1")
+    if (!std::getline(lines, line))
+        fail(EINVAL);
+    bool legacy = line == "rawstor-access-v1";
+    if (!legacy && line != "rawstor-access-v2")
         fail(EINVAL);
     Permissions result;
-    if (!std::getline(lines, line) || line.size() != 1 || line[0] < '1' ||
-        line[0] > '3')
+    if (!std::getline(lines, line) || line.size() != 1 ||
+        line[0] < (legacy ? '1' : '0') || line[0] > '3')
         fail(EINVAL);
     result.role = line[0] - '0';
     while (std::getline(lines, line)) {
@@ -182,8 +186,14 @@ Permissions certificate_permissions(X509* cert) {
             fail(EINVAL);
     }
     // Re-encoding enforces canonical UUIDs, masks, order, and a final newline.
-    if (encode(result) != text)
+    if (encode(result, legacy) != text)
         fail(EINVAL);
+    // Preserve the effective permissions of certificates issued with v1's
+    // intersecting masks; renewing them must not silently grant more access.
+    if (legacy) {
+        for (auto& [object, mask] : result.objects)
+            mask &= role_permissions(result.role);
+    }
     return result;
 }
 

@@ -761,6 +761,12 @@ ObjectStore::Access ObjectStore::authorize(
     result.permissions = peer->permissions().mask(
         rawstd_uuid_is_nil(&object) ? nullptr : object.bytes
     );
+    // SET_OBJECT only acknowledges an MDS control connection. A scoped client
+    // can connect for its permitted objects without tenant-wide permissions.
+    if (command == RAWSTOR_CMD_SET_OBJECT && rawstd_uuid_is_nil(&object)) {
+        for (const auto& entry : peer->permissions().objects)
+            result.permissions |= entry.second;
+    }
     if (!rawstd_uuid_is_nil(&tenant) &&
         rawstd_uuid_cmp(&tenant, &result.tenant))
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
@@ -802,6 +808,7 @@ ObjectStore::Access ObjectStore::authorize(
     uint32_t required = 0;
     switch (command) {
     case RAWSTOR_CMD_SET_OBJECT:
+        break;
     case RAWSTOR_CMD_LIST:
         required = RAWSTOR_PERM_READ;
         break;

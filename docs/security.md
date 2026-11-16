@@ -276,7 +276,7 @@ paths it is entitled to.
   or request a certificate under `/tenant/acme/` can act as `acme`. Only
   the control plane may have that permission; a deployment guide must say so.
 - **The CA signs identity and permissions.** Tenant client certificates carry
-  a reader/writer/manager role and optional per-object restrictions. An external
+  a none/reader/writer/manager role and optional per-object restrictions. An external
   issuer must emit the rawstor policy extension; a bare SPIFFE identity grants
   no tenant access. Only the control plane may request roles and restrictions.
 - **The trust domain and the CA bundle are configuration of every service.**
@@ -293,10 +293,11 @@ in the same certificate. MDS and OST verify the certificate and independently
 apply its policy to commands and the object's owner. OST does not contact MDS
 for authorization, and a client can use a direct OST target while MDS is down.
 
-`reader` grants read; `writer` adds write/discard; `manager` adds structural
-operations. Object masks intersect the role, never widen it, and cover all
-chunks and versions. A zero mask denies the object; unspecified objects retain
-the role. Snapshots remain immutable. See the signed
+`none` grants no default permissions; `reader` grants read; `writer` adds
+write/discard; `manager` adds structural operations. Explicit object masks
+override the role defaults and cover all chunks and versions. A zero mask denies
+the object; unspecified objects retain the role defaults. `none` plus one object
+mask therefore grants access only to that object, including its versions. Snapshots remain immutable. See the signed
 [extension format](protocol.md#authorization) and
 [issuance examples](configuration.md#authorization).
 
@@ -319,10 +320,10 @@ Two kinds of principals, told apart by the path of their SPIFFE ID:
 
 - **Tenant principals** (`/tenant/<id>/client/...`) hold one role inside
   their own tenant, signed into the certificate:
-  `reader` → `read`; `writer` → `read`, `write`, `discard`; `manager` →
+  `none` → no defaults; `reader` → `read`; `writer` → `read`, `write`, `discard`; `manager` →
   those plus `manage` (structural changes: allocate, release, versions,
-  freeze). Permissions on a single object narrower than the role may be granted
-  per object in the certificate.
+  freeze). Explicit object permissions override these defaults. A `none` client
+  has no tenant-wide listing permission and may access only its named objects.
 - **Provider principals**: `mds` (`/mds/...`), `admin` (`/admin/...`). They
   are not tenant-scoped and authorize by their certificate role.
 
@@ -350,10 +351,10 @@ MDS commands:
 | Command | Tenant principal: role | `mds` | `admin` |
 |---|---|---|---|
 | `HANDSHAKE` | any | any | any |
-| `SET_OBJECT` (binds nothing on an MDS) | any | — | role |
+| `SET_OBJECT` (binds nothing on an MDS) | any nonzero default or object permissions | — | role |
 | `RESOLVE` | any nonzero permissions on the object | — | role |
 | `LIST_VERSIONS` | `reader` | — | role |
-| `LIST` | any, answers only the tenant of the certificate | — | role: any tenant or all |
+| `LIST` | default role grants `read`; answers only the certificate tenant | — | role: any tenant or all |
 | `OBJ_CREATE`, `OBJ_RESIZE`, `OBJ_REMOVE`, `OBJ_COMMIT_VERSION`, `OBJ_REMOVE_VERSION` | `manager` | — | role |
 | `ALLOCATE`, `RELEASE`, `META`, `SYNC_PREPARE`, `SYNC_ACCEPT` on a witness hosted by the MDS | as the same command on an OST (`SYNC_*`: `write`), by certificate | — | as on an OST |
 | `LOCATION_INFO` | — | — | role |

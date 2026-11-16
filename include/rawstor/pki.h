@@ -21,6 +21,7 @@ extern "C" {
 #define RAWSTOR_PERM_ALL                                                       \
     (RAWSTOR_PERM_READ | RAWSTOR_PERM_WRITE | RAWSTOR_PERM_DISCARD |           \
      RAWSTOR_PERM_MANAGE)
+#define RAWSTOR_ROLE_NONE 0u
 #define RAWSTOR_ROLE_READER 1u
 #define RAWSTOR_ROLE_WRITER 2u
 #define RAWSTOR_ROLE_MANAGER 3u
@@ -66,7 +67,7 @@ int rawstor_pki_init(
     const char* dir, const char* trust_domain, unsigned long validity
 );
 
-/** Per-object restrictions intersect the role's permissions. Zero denies
+/** Explicit object permissions override the role's defaults. Zero denies
  * access. */
 #define RAWSTOR_PKI_MAX_OBJECT_PERMISSIONS 128
 
@@ -76,8 +77,8 @@ struct RawstorPkiObjectPermissions {
 };
 
 struct RawstorPkiPermissions {
-    unsigned int
-        role; /* RAWSTOR_ROLE_READER, WRITER or MANAGER; 0 grants none */
+    unsigned int role; /* RAWSTOR_ROLE_NONE, READER, WRITER or MANAGER: default
+                          permissions */
     size_t count;
     struct RawstorPkiObjectPermissions
         objects[RAWSTOR_PKI_MAX_OBJECT_PERMISSIONS];
