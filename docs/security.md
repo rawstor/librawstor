@@ -728,7 +728,7 @@ flowchart TD
     s0["0. Benchmark: TLS mode"] --> s2
     s1["1. Protocol groundwork:<br/>HANDSHAKE, owner tenant, crypto_params"] --> s2["2. Transport: mTLS"]
     s1 --> s3
-    s2 --> s3["3. Authorization: tenants, tokens"]
+    s2 --> s3["3. Authorization: certificate permissions"]
     s2 --> s4["4. PKI tooling"]
     s1 --> s6
     s3 --> s6["6. At-rest, client side"]
@@ -789,6 +789,13 @@ require re-doing earlier ones.
 7. **Excluding a compromised OST.** `quarantined` state, epoch-fence,
    member replacement with resync, and the operator procedure above. It depends
    on MDS and mirroring work and can be scheduled independently of stages 2-6.
+
+
+8. **Transfer by mutual tenant consent (planned).** Separate certificate rights
+   for export and import; offer/accept/cancel/status API; durable MDS-coordinated
+   ownership handover with member fencing and crash recovery. Both clients keep
+   access only to their own tenants. Initial scope: objects in the same MDS.
+   See the [implementation plan](tenants.md#planned-transfer-by-mutual-consent).
 
 ## Open questions
 

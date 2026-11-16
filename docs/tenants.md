@@ -22,6 +22,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | `--reconstruct` restores owners and registers their tenants | ✅ | `mds/src/store.cpp` |
 | CLI: `rawstor tenant create/list/remove` | ✅ | `cli/tenant.c` |
 | Transfer of an object to another tenant: `SET_OWNER`, `OBJ_TRANSFER`, `rawstor object transfer` | ✅ | `src/target.cpp`, `src/blk_backend.cpp`, `mds/src/store.cpp` |
+| Transfer by mutual consent of two tenant clients, without admin credentials | ❌ | [Implementation plan](#planned-transfer-by-mutual-consent) |
 | Checking the caller's rights against the owner | ✅ | Independent MDS and OST certificate policy checks |
 | Authentication, binding a tenant to a certificate | ✅ | mTLS SPIFFE identity and signed certificate permissions |
 
@@ -250,6 +251,116 @@ the owner the MDS has, which `OBJ_RESIZE` reports, not for the owner some copy
 records. The old address still finds the object, as every address does, by its
 id. The default tenant can be a source or a destination, and the nil UUID is
 never a destination.
+
+## Planned transfer by mutual consent
+
+Status: planned, not implemented. The existing transfer remains provider-admin
+only. This task adds a separate offer/accept workflow for two clients that
+initially have access only to their own tenants.
+
+### Scope and authorization
+
+- Start with whole objects registered in the same MDS, including every chunk,
+  data copy, witness and version. Cross-MDS and direct-OST transfers are outside
+  the first implementation.
+- A missing tenant in the URI defaults to the certificate identity's tenant.
+  An explicit URI tenant is checked against certificate permissions; naming it
+  grants no access. Neither party needs a certificate for both tenants.
+- Add explicit certificate rights `transfer-out` and `transfer-in`, with PKI
+  CLI/C/Python issuance, inspection and renewal support. Do not grant them
+  implicitly through `manager` or widen the existing `manage` bit. Object
+  restrictions must be able to deny export of a particular object.
+- The sender authorizes export from the current owner tenant to one named
+  destination. The receiver authorizes import into that destination. Neither
+  client receives provider credentials or general `SET_OWNER` permission.
+- A transfer ID identifies an offer; possessing it does not authorize acceptance.
+  Check the accepting client's destination tenant and import right independently.
+
+### Proposed user flow
+
+These commands describe the planned interface; they are not available yet:
+
+```sh
+# Sender, authenticated only for tenant A.
+rawstor object transfer offer TARGET TENANT_B --expires 1h
+# Returns TRANSFER_ID.
+
+# Receiver, authenticated only for tenant B, using the same MDS location.
+rawstor object transfer accept TRANSFER_ID
+
+# Sender, before acceptance starts the handover.
+rawstor object transfer cancel TRANSFER_ID
+
+# Either participant, with access only to its own side of the transfer.
+rawstor object transfer show TRANSFER_ID
+```
+
+Offer management uses `RAWSTOR_LOCATION` when no MDS location is supplied.
+Document the explicit-location syntax when finalizing the CLI and C API.
+Keep `rawstor object transfer TARGET TENANT` as the provider-admin operation.
+
+### Implementation steps
+
+1. **Certificate policy and protocol.** Specify the new rights and their object
+   mask semantics, validation of unknown bits, and renewal behavior. Define
+   offer, accept, cancel and status requests, idempotency keys, error semantics
+   and the metadata needed by OST. Validate authority on both clients' requests;
+   an offer is not an I/O capability.
+2. **Durable MDS offers.** Store a unique transfer ID, object ID, source and
+   destination tenants, initiating identity, source certificate evidence,
+   ownership generation, expiry, state and replay results. Limit expiry by the
+   sender certificate's expiry; revalidate the recorded approval at acceptance
+   against the current trust/revocation policy. Offers leave ownership unchanged.
+   Serialize acceptance, cancellation, expiry and conflicting transfers. Reject
+   stale offers after an ownership change, including transfer away and back.
+3. **MDS-to-OST authority.** Define how each member authenticates the responsible
+   MDS, rather than accepting any tenant or arbitrary MDS as a coordinator.
+   Scope transfer operations to the object, transfer ID, expected owner and
+   ownership generation. The coordinator may update transfer metadata without
+   acquiring data-write privileges. Tenant clients must remain unable to bypass
+   the offer/accept protocol with raw member commands.
+4. **Durable handover.** Let MDS coordinate the operation rather than asking a
+   tenant client to propagate `SET_OWNER`. Persist transfer fences on every
+   member, stop admitting tenant I/O and structural changes, and drain admitted
+   operations before the ownership decision. Ordinary expiring `FREEZE` leases
+   alone are insufficient: a restart or lease expiry must not reopen a partially
+   transferred object. Record the commit decision durably, update all members
+   and versions, then release the fences. Report success only after the required
+   members acknowledge completion; an unavailable member prevents completion.
+5. **Recovery and concurrency.** Persist progress and retry member operations
+   idempotently after disconnects and MDS/OST restarts. Before the durable commit
+   decision, a failed prepare can roll back its fences. After that decision,
+   recovery finishes the committed transfer. Prevent a tenant from clearing a
+   fence through direct OST access, and serialize resize, removal, version
+   mutations, tenant removal and provider-admin transfers with the handover.
+   Invalidate ownership cached by existing data connections.
+6. **Client APIs and documentation.** Implement offer/accept/cancel/status in
+   the C API, Python bindings and CLI. Status exposes details only to the
+   participants or provider admin; it distinguishes pending, preparing,
+   committing, completed, cancelled and expired operations. Document certificate
+   rights, expiry, cancellation, retry behavior and the same-MDS limitation.
+
+### Acceptance tests
+
+- Two certificates, each authorized for just its own tenant, complete a transfer
+  without admin credentials; the object UUID and data are preserved.
+- Missing export/import rights, a forbidden source object, the wrong destination
+  tenant, or a third client with only the transfer ID cannot complete it.
+- Expired, revoked, cancelled and stale approvals cannot be accepted. Replaying
+  requests cannot duplicate a transfer or undo a later ownership change.
+- Cancellation versus acceptance and two offers for one object have one durable
+  outcome. Concurrent resize, deletion, version creation and provider transfer
+  cannot bypass the ownership generation or leave untracked members.
+- After completion, the source loses access and the destination gains access on
+  MDS and direct OST connections, including handles opened before the handover.
+- Unavailable members, lost replies and crashes at every prepare/commit step
+  recover without reporting premature success, losing data, or exposing a copy
+  to the old tenant after the destination has received ownership.
+- Fences cover direct tenant commands as well as MDS-mediated access, persist
+  across OST restart and do not disappear when a write-barrier lease expires.
+- Ordinary reads/writes keep certificate-based authorization and acquire no
+  online dependency on MDS. Existing provider-admin transfers retain their
+  documented interface.
 
 ## CLI
 
