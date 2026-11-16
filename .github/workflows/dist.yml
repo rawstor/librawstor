@@ -195,36 +195,34 @@ jobs:
         RAWSTOR=${GITHUB_WORKSPACE}/${LIBRAWSTOR}/cli/rawstor
         TD=cluster.example
         OST_ID=$(cat /proc/sys/kernel/random/uuid)
-        FILE_ID=$(cat /proc/sys/kernel/random/uuid)
-        MDS_ID=$(cat /proc/sys/kernel/random/uuid)
         TENANT_ID=00000000-0000-0000-0000-000000000001
         # The CA needs no TLS itself, so these run without any settings.
         ${RAWSTOR} pki init --trust-domain ${TD} ca
         ${RAWSTOR} pki issue --ca ca --cert ost.pem --key ost.key ost ${OST_ID}
-        ${RAWSTOR} pki issue --ca ca --cert mds.pem --key mds.key mds ${MDS_ID}
-        ${RAWSTOR} pki issue --ca ca --cert admin.pem --key admin.key admin ci
         ${RAWSTOR} pki issue --ca ca --cert cli.pem --key cli.key --role manager client ${TENANT_ID} ci
-        printf '%s file:///tmp/tls_file_objects 100 data,witness host1\n%s ost://127.0.0.1:7778 100 data,witness host2\n%s ost://127.0.0.1:7779 100 witness host3\n' ${FILE_ID} ${OST_ID} ${MDS_ID} > topology.conf
         ${RAWSTOR} pki renew --ca ca --cert ost.pem --key ost.key
         # A certificate of another CA is not renewed.
         ${RAWSTOR} pki init --trust-domain ${TD} other
         ! ${RAWSTOR} pki renew --ca other --cert ost.pem --key ost.key
-        for who in ost mds admin cli; do
-          echo "RAWSTOR_TLS_TRUST_DOMAIN=${TD} RAWSTOR_TLS_CERT=/tmp/pki/${who}.pem RAWSTOR_TLS_KEY=/tmp/pki/${who}.key RAWSTOR_TLS_CA=/tmp/pki/ca/ca.crt RAWSTOR_TLS_MDS_ID=${MDS_ID}" > ${who}.env
+        for who in ost cli; do
+          echo "RAWSTOR_TLS_TRUST_DOMAIN=${TD} RAWSTOR_TLS_CERT=/tmp/pki/${who}.pem RAWSTOR_TLS_KEY=/tmp/pki/${who}.key RAWSTOR_TLS_CA=/tmp/pki/ca/ca.crt" > ${who}.env
         done
     - name: TLS, start rawstor-ost
       run: |
         env $(cat /tmp/pki/ost.env) ./${LIBRAWSTOR}/ost/src/rawstor-ost --workers 1 --queue-size 128 --bind 127.0.0.1:7778 file:///tmp/tls_ost_objects/ &
         sleep 10
-    - name: TLS, start MDS
-      run: |
-        env $(cat /tmp/pki/mds.env) ./${LIBRAWSTOR}/mds/src/rawstor-mds --workers 1 --queue-size 128 --bind 127.0.0.1:7779 --db /tmp/pki/mds.db --topology /tmp/pki/topology.conf &
-        sleep 5
     - name: TLS, create object and testio file,ost
       run: |
         cli() { env $(cat /tmp/pki/cli.env) ./${LIBRAWSTOR}/cli/rawstor "$@"; }
-        target=$(cli object create mds://127.0.0.1:7779 --size=1G --chunk-size=1G --mirrors=2 --format value --column target)
-        cli object list mds://127.0.0.1:7779
+        target=$(cli object create file:///tmp/tls_file_objects,ost://127.0.0.1:7778 --size=1G --mirrors=2 --format value --column target)
+        cli object list file:///tmp/tls_file_objects,ost://127.0.0.1:7778
+        cli testio ${target} --block-size=4K --io-depth=1 --count=10
+        cli testio ${target} --block-size=4K --io-depth=1 --count=10 --vector-mode
+    - name: TLS, create object and testio ost,file
+      run: |
+        cli() { env $(cat /tmp/pki/cli.env) ./${LIBRAWSTOR}/cli/rawstor "$@"; }
+        target=$(cli object create ost://127.0.0.1:7778,file:///tmp/tls_file_objects --size=1G --mirrors=2 --format value --column target)
+        cli object list ost://127.0.0.1:7778,file:///tmp/tls_file_objects
         cli testio ${target} --block-size=4K --io-depth=1 --count=10
         cli testio ${target} --block-size=4K --io-depth=1 --count=10 --vector-mode
     - name: TLS, a peer without a certificate is refused
@@ -233,10 +231,10 @@ jobs:
         status=0
         ./${LIBRAWSTOR}/cli/rawstor location info ost://127.0.0.1:7778 || status=$?
         test ${status} -eq 78
-    - name: stop TLS services
+    - name: TLS, stop rawstor-ost
       run: |
-        killall rawstor-mds rawstor-ost
-        while pgrep -x rawstor-mds > /dev/null || pgrep -x rawstor-ost > /dev/null; do sleep 0.2; done
+        killall rawstor-ost
+        while pgrep -x rawstor-ost > /dev/null; do sleep 0.2; done
     - name: TLS tenant authorization
       # ctypes loads the ASan-instrumented library into Python. Native unit
       # tests retain leak checks; this process excludes interpreter allocations.
