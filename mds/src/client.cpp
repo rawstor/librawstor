@@ -103,7 +103,6 @@ encode_object_map(const Topology& topology, const ObjectMap& map) {
     std::vector<unsigned char> data(sizeof(descriptor));
     memcpy(data.data(), &descriptor, sizeof(descriptor));
 
-    size_t chunk = 0;
     for (const std::vector<PlacementSlot>& slots : map.chunks) {
         RawstorFrameObjChunkEntry entry{
             .width = static_cast<uint8_t>(slots.size()),
@@ -133,7 +132,6 @@ encode_object_map(const Topology& topology, const ObjectMap& map) {
                 location.size()
             );
         }
-        ++chunk;
     }
 
     return data;
