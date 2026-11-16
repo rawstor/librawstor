@@ -20,7 +20,7 @@ public:
     Server(
         unsigned int queue_size, const std::string& target,
         const std::string& socket_path, bool write_cache_enabled, bool readonly,
-        bool force
+        bool force, bool insecure
     );
     Server(const Server&) = delete;
     Server(Server&&) = delete;

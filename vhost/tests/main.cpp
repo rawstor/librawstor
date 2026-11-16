@@ -20,7 +20,11 @@ int main(int argc, char** argv) {
     // tests/main.cpp for the same pattern; vhost/tests/ only started
     // needing rawstor_initialize() itself once test_virtqueue_worker.cpp
     // started standing up real rawstor objects.
-    int res = rawstor_initialize(nullptr);
+    // These suites talk to a fake or an in-process server without a
+    // certificate, so they run without TLS; the TLS tests set up their own.
+    RawstorOpts opts = {};
+    opts.insecure = 1;
+    int res = rawstor_initialize(&opts);
     if (res < 0) {
         RAWSTD_THROW_SYSTEM_ERROR(-res);
     }

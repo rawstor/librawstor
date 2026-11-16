@@ -4,6 +4,7 @@
 #include "info.h"
 #include "list.h"
 #include "output.h"
+#include "pki.h"
 #include "remove.h"
 #include "resize.h"
 #include "resolve.h"
@@ -48,6 +49,8 @@ static void usage(void) {
         "options:\n"
         "  -h, --help            Show this help message and exit\n"
         "  -v, --version         Rawstor version\n"
+        "  --insecure            Run without TLS: plaintext, and no peer is "
+        "authenticated\n"
         "  -b, --bytes           Show sizes in bytes\n"
         "  -k, --kib             Show sizes in KiB\n"
         "  -m, --mib             Show sizes in MiB\n"
@@ -70,6 +73,7 @@ static void usage(void) {
         "command:\n"
         "  location              Show information about a location\n"
         "  object                Work with rawstor objects\n"
+        "  pki                   Issue the certificates TLS needs\n"
         "  tenant                Work with tenants\n"
         "  testio                Test rawstor IO routines\n"
         "  version               Work with versions of an object\n"
@@ -2079,6 +2083,11 @@ static int run_version(int argc, char** argv) {
 static int run_command(
     const char* command, const struct RawstorOpts* opts, int argc, char** argv
 ) {
+    // The CA makes the certificates TLS needs, so it cannot need TLS itself.
+    if (strcmp(command, "pki") == 0) {
+        return rawstor_cli_pki(argc, argv);
+    }
+
     int res = rawstor_initialize(opts);
     if (res) {
         fprintf(stderr, "rawstor_initialize() failed: %s\n", strerror(-res));
@@ -2119,12 +2128,19 @@ static int run_command(
 int main(int argc, char** argv) {
     const char* optstring = "+hvbkmgtpe";
     struct option longopts[] = {
-        {"help", no_argument, NULL, 'h'},  {"version", no_argument, NULL, 'v'},
-        {"bytes", no_argument, NULL, 'b'}, {"kib", no_argument, NULL, 'k'},
-        {"mib", no_argument, NULL, 'm'},   {"gib", no_argument, NULL, 'g'},
-        {"tib", no_argument, NULL, 't'},   {"pib", no_argument, NULL, 'p'},
-        {"eib", no_argument, NULL, 'e'},   {},
+        {"help", no_argument, NULL, 'h'},
+        {"version", no_argument, NULL, 'v'},
+        {"bytes", no_argument, NULL, 'b'},
+        {"kib", no_argument, NULL, 'k'},
+        {"mib", no_argument, NULL, 'm'},
+        {"gib", no_argument, NULL, 'g'},
+        {"tib", no_argument, NULL, 't'},
+        {"pib", no_argument, NULL, 'p'},
+        {"eib", no_argument, NULL, 'e'},
+        {"insecure", no_argument, NULL, RAWSTOR_CLI_OPT_INSECURE},
+        {},
     };
+    int insecure = 0;
 
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -2154,6 +2170,10 @@ int main(int argc, char** argv) {
             global_unit = (char)c;
             break;
 
+        case RAWSTOR_CLI_OPT_INSECURE:
+            insecure = 1;
+            break;
+
         default:
             return EX_USAGE;
         }
@@ -2165,6 +2185,7 @@ int main(int argc, char** argv) {
     }
 
     struct RawstorOpts opts = {};
+    opts.insecure = insecure ? 1u : 0u;
 
     sact.sa_handler = sact_handler;
     sigemptyset(&sact.sa_mask);

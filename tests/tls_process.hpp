@@ -18,9 +18,13 @@ namespace tests {
 // is issued by `pki`, which a peer must trust to talk to it.
 class TlsProcess {
 private:
-    static void restart() {
+    // Starts rawstor again: with the TLS settings of the environment, or
+    // without TLS, as the rest of the suite runs.
+    static void restart(bool insecure) {
         rawstor_terminate();
-        int res = rawstor_initialize(nullptr);
+        RawstorOpts opts = {};
+        opts.insecure = insecure ? 1 : 0;
+        int res = rawstor_initialize(&opts);
         if (res < 0) {
             RAWSTD_THROW_SYSTEM_ERROR(-res);
         }
@@ -32,7 +36,7 @@ public:
     rawtls::testing::Pki pki;
     rawtls::testing::Identity identity;
 
-    // `mds_id`, if given, is the name of the one MDS this process accepts.
+    // `mds_id`, if given, is the id of the one MDS this process accepts.
     explicit TlsProcess(
         const std::string& uri, const std::string& mds_id = ""
     ) {
@@ -46,7 +50,7 @@ public:
         if (!mds_id.empty()) {
             setenv("RAWSTOR_TLS_MDS_ID", mds_id.c_str(), 1);
         }
-        restart();
+        restart(false);
     }
 
     TlsProcess(const TlsProcess&) = delete;
@@ -58,7 +62,7 @@ public:
         unsetenv("RAWSTOR_TLS_KEY");
         unsetenv("RAWSTOR_TLS_CA");
         unsetenv("RAWSTOR_TLS_MDS_ID");
-        restart();
+        restart(true);
     }
 };
 

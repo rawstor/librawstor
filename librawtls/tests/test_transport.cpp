@@ -330,6 +330,36 @@ TEST_F(TransportTest, CancelReceiveFailsThePendingRead) {
     }
 }
 
+// A stream started while its predecessor is still alive, as when the receive
+// ring of a connection is replaced, is not stopped when the old one goes.
+TEST_F(TransportTest, DestroyingAnOldStreamDoesNotStopTheNewOne) {
+    std::unique_ptr<Transport> client, server;
+    connect_tls(client, server);
+
+    std::unique_ptr<rawio::RecvStream> old_stream =
+        std::make_unique<rawio::RecvStream>(
+            server->recv_multishot(4096, 8, 4, 0)
+        );
+    std::string old_received;
+    rawstd::Task<void> old_read = read_exact(*old_stream, 4, old_received);
+    EXPECT_FALSE(pump(*queue, [&]() { return old_read.done(); }, 50));
+    server->cancel_recv_multishot();
+    ASSERT_TRUE(pump(*queue, [&]() { return old_read.done(); }));
+    EXPECT_THROW(old_read.get(), std::system_error);
+
+    rawio::RecvStream stream = server->recv_multishot(4096, 8, 4, 0);
+    std::string received;
+    rawstd::Task<void> read = read_exact(stream, 4, received);
+    EXPECT_FALSE(pump(*queue, [&]() { return read.done(); }, 50));
+
+    old_stream.reset();
+
+    rawstd::Task<size_t> sent = send_all(*client, "ping");
+    ASSERT_TRUE(pump(*queue, [&]() { return read.done() && sent.done(); }));
+    read.get();
+    EXPECT_EQ(received, "ping");
+}
+
 // A stream does not wait for data of a connection that is gone.
 TEST_F(TransportTest, DestroyingTheTransportEndsItsStream) {
     std::unique_ptr<Transport> plain = Transport::plain(*queue, pair.fds[1]);

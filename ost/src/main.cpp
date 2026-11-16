@@ -80,6 +80,8 @@ public:
 // way.
 std::vector<ScopedFd> wake_write_fds;
 
+constexpr int opt_insecure = 1000;
+
 void usage() {
     std::cout << "Rawstor OST backend " << PACKAGE_VERSION << std::endl
               << std::endl
@@ -97,6 +99,9 @@ void usage() {
               << "  -w, --workers N       "
                  "Number of worker threads (default: "
               << DEFAULT_WORKERS << ")" << std::endl
+              << "  --insecure            "
+                 "Run without TLS: plaintext, and no peer is authenticated"
+              << std::endl
               << "  -v, --version         Rawstor version" << std::endl
               << std::endl
               << "required arguments:" << std::endl
@@ -276,6 +281,7 @@ int main(int argc, char** argv) {
         {"bind", required_argument, nullptr, 'b'},
         {"help", no_argument, nullptr, 'h'},
         {"queue-size", required_argument, nullptr, 'q'},
+        {"insecure", no_argument, nullptr, opt_insecure},
         {"version", no_argument, nullptr, 'v'},
         {"workers", required_argument, nullptr, 'w'},
         {},
@@ -285,6 +291,7 @@ int main(int argc, char** argv) {
     const char* workers_arg = nullptr;
     const char* location_arg = nullptr;
     const char* bind_arg = nullptr;
+    bool insecure = false;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, nullptr);
         if (c == -1) {
@@ -310,6 +317,10 @@ int main(int argc, char** argv) {
 
         case 'w':
             workers_arg = optarg;
+            break;
+
+        case opt_insecure:
+            insecure = true;
             break;
 
         default:
@@ -375,7 +386,9 @@ int main(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    int res = rawstor_initialize(nullptr);
+    RawstorOpts rawstor_opts = {};
+    rawstor_opts.insecure = insecure ? 1 : 0;
+    int res = rawstor_initialize(&rawstor_opts);
     if (res < 0) {
         std::cerr << "Failed to initialize rawstor: " << strerror(-res)
                   << std::endl;

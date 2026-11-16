@@ -12,9 +12,11 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
-librawtls_la_SOURCES = $(top_srcdir)/librawtls/include/rawtls/context.hpp \
+librawtls_la_SOURCES = $(top_srcdir)/librawtls/include/rawtls/ca.hpp \
+                       $(top_srcdir)/librawtls/include/rawtls/context.hpp \
                        $(top_srcdir)/librawtls/include/rawtls/spiffe.hpp \
                        $(top_srcdir)/librawtls/include/rawtls/transport.hpp \
+                       ca.cpp \
                        context.cpp \
                        spiffe.cpp \
                        transport.cpp

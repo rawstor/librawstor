@@ -18,6 +18,7 @@ the placed OSTs directly once it has resolved an object's own chunk map.
 | Option | Description |
 |--------|-------------|
 | `-h, --help` | Show help message and exit. |
+| `--insecure` | Run without TLS: plaintext, and no peer is authenticated. Without it the process needs [TLS settings](configuration.md#tls) and refuses to start without them. |
 | `-b, --bind ADDR` | Bind address in `<ip>[:<port>]` format (e.g., `127.0.0.1:7776`); the port defaults to 7776. |
 | `-d, --db PATH` | SQLite database file holding the chunk map (created if missing). |
 | `-t, --topology PATH` | Static topology config file: one `<uuid> <location> <weight> <role> [[[<dc>/]<row>/]<rack>/]<server>` line per OST (required role: `data`, `witness` or both comma-separated; failure domains from the root down; only `<server>` is required), `<location>` being a single location URI (`ost://host:port`; a client-local one such as `file://` only makes sense on a single host; each `rawstor-ost` serves one backend location) (see [MDS design](mds.md)). |
@@ -33,7 +34,7 @@ cat > topology.conf <<EOF
 018f4e2a-1000-7000-8000-000000000001 ost://host1:7777 100 data,witness dc1/row1/rack1/host1
 018f4e2a-1000-7000-8000-000000000002 ost://host2:7777 100 data,witness dc1/row1/rack1/host2
 EOF
-rawstor-mds -b 0.0.0.0:7776 -d /var/lib/rawstor/mds/mds.db -t topology.conf
+rawstor-mds --insecure -b 0.0.0.0:7776 -d /var/lib/rawstor/mds/mds.db -t topology.conf
 ```
 
 Create and grow an `mds://` object:
@@ -69,6 +70,7 @@ The config is an environment file (`KEY=VALUE` lines):
 | `DB_PATH` | `/var/lib/rawstor/mds/<uuid>/mds.db` | Database; its directory must be writable by `rawstor`. |
 | `QUEUE_SIZE` | `4096` | `--queue-size`. |
 | `WORKERS` | `4` | `--workers`. |
+| `RAWSTOR_TLS_*` | | TLS settings, see [Configuration](configuration.md#tls). |
 | `RAWSTOR_MDS_OPTS_*`, `RAWSTOR_OPTS_*` | | Tuning knobs, see [Configuration](configuration.md). |
 
 The instance runs as the `rawstor` user under `ProtectSystem=strict`;
@@ -82,11 +84,16 @@ Two clusters on one host:
 for C in ${CLUSTER1} ${CLUSTER2}; do
     sudo cp my-${C}.topology /etc/rawstor/mds/${C}.topology
 done
-echo "BIND_ADDR=0.0.0.0:7776" | sudo tee /etc/rawstor/mds/${CLUSTER1}.conf
-echo "BIND_ADDR=0.0.0.0:7786" | sudo tee /etc/rawstor/mds/${CLUSTER2}.conf
+# Each instance has its own certificate, for spiffe://<trust domain>/mds/<mds id>:
+# /etc/rawstor/tls/<cluster>.crt and <cluster>.key, see Configuration for TLS.
+tls() {
+    printf 'RAWSTOR_TLS_TRUST_DOMAIN=cluster.example\nRAWSTOR_TLS_CERT=/etc/rawstor/tls/%s.crt\nRAWSTOR_TLS_KEY=/etc/rawstor/tls/%s.key\nRAWSTOR_TLS_CA=/etc/rawstor/tls/ca.crt\n' $1 $1
+}
+(echo BIND_ADDR=0.0.0.0:7776; tls ${CLUSTER1}) | sudo tee /etc/rawstor/mds/${CLUSTER1}.conf
+(echo BIND_ADDR=0.0.0.0:7786; tls ${CLUSTER2}) | sudo tee /etc/rawstor/mds/${CLUSTER2}.conf
 sudo systemctl enable --now rawstor-mds@${CLUSTER1} rawstor-mds@${CLUSTER2}
 
-rawstor location info mds://127.0.0.1:7776          # serving?
+rawstor location info mds://127.0.0.1:7776   # serving? (with RAWSTOR_TLS_* in the environment)
 # edit /etc/rawstor/mds/${CLUSTER1}.topology, then
 sudo systemctl reload rawstor-mds@${CLUSTER1}
 journalctl -u rawstor-mds@${CLUSTER1} | grep Topology   # applied?

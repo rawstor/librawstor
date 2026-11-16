@@ -40,13 +40,15 @@ document's own numbering (see [Implementation stages](#implementation-stages)).
 | Benchmark: TLS 1.3 / kTLS on the io_uring hot path | 0 | ✅ | [Measurements](#measurements) |
 | `HANDSHAKE`: feature bits, the first request of every connection (no protocol version) | 1 | ✅ | [Protocol](protocol.md) |
 | Owner tenant of an object in the protocol, chunk metadata, `LIST` and the MDS store; tenant registry; a default tenant | 1 | ✅ | [Tenants](tenants.md) |
-| mTLS (OpenSSL) on every port: OST, MDS, witness, client side | 2 | 🟡 | `librawtls`; the client library, `rawstor-ost` and `rawstor-mds` speak it when [configured](configuration.md#tls), and are plaintext when not |
+| mTLS (OpenSSL) on every port: OST, MDS, witness, client side | 2 | ✅ | `librawtls`; the client library and every service speak it, and refuse to start without [TLS settings](configuration.md#tls) unless run with `--insecure` |
+| Limit on concurrent TLS handshakes per listener | 2 | ❌ | planned, see stage 2 |
 | kTLS offload of the data path | 2 | ❌ | optional, off by default (stage 0) |
-| `--insecure`: plaintext, no authentication, per service | 2 | ❌ | TLS is off unless configured; making it the default and naming plaintext `--insecure` is the last step of the stage |
+| `--insecure`: plaintext, no authentication, per process | 2 | ✅ | `--insecure` on every executable, `RawstorOpts::insecure` in a program, never in a systemd unit; [Without TLS](configuration.md#without-tls) |
 | Certificate and CA reload without downtime | 2 | ✅ | `SIGHUP` and `SIGUSR1` in `rawstor-ost` and `rawstor-mds`, `SIGUSR1` in `rawstor-vhost` and `rawstor-vduse`; `rawstor_tls_request_reload()` |
 | Principals and roles in the MDS store, admin API (the tenant registry exists, see stage 1) | 3 | ❌ | — |
 | Capability tokens issued by `RESOLVE`, checked by OST | 3 | ❌ | — |
-| `rawstor pki` helper (own CA), external CA support | 4 | ❌ | — |
+| `rawstor pki` helper (own CA: init, issue, renew), `rawstor_pki_*()`, pyrawstor `rawstor.pki` | 4 | ✅ | [Issuing certificates](configuration.md#issuing-certificates) |
+| External CA support (SPIRE with spiffe-helper, Vault PKI, step-ca, cert-manager) | 4 | ✅ | documentation: [Issuing certificates](#issuing-certificates) |
 | At-rest encryption, server side (ZFS / dm-crypt) | 5 | ❌ | documentation only |
 | At-rest encryption, client side (AES-XTS, wrapped per-object key) | 6 | ❌ | — |
 | `quarantined` OST state in the topology | 7 | ❌ | — |
@@ -117,7 +119,7 @@ format and invents none:
 
 ```text
 spiffe://<trust_domain>/ost/<ost_id>               OST      (provider infrastructure)
-spiffe://<trust_domain>/mds/<name>                 MDS      (provider infrastructure)
+spiffe://<trust_domain>/mds/<mds_id>               MDS      (provider infrastructure)
 spiffe://<trust_domain>/admin/<name>               operator / control plane
 spiffe://<trust_domain>/tenant/<tenant_id>/client/<name>   a tenant's client
 ```
@@ -127,7 +129,8 @@ spiffe://<trust_domain>/tenant/<tenant_id>/client/<name>   a tenant's client
   trust domain, so a certificate from another cluster is rejected even if the
   same CA signed it.
 - Path segments are letters, digits, `.`, `-`, `_`, case-sensitive; the whole
-  ID is at most 2048 bytes. Ids are UUIDs in their canonical text form.
+  ID is at most 2048 bytes. Ids (of an OST, an MDS and a tenant) are UUIDs in
+  their canonical text form.
 - Only clients carry a tenant. OSTs and MDSs belong to the provider, so
   their IDs have none. A tenant's client can never present an ID under
   `/ost/`, `/mds/` or `/admin/`: the issuing side decides the path, the
@@ -136,7 +139,7 @@ spiffe://<trust_domain>/tenant/<tenant_id>/client/<name>   a tenant's client
   name. A certificate with zero or several URI SANs is rejected.
 
 Any CA that can write a URI SAN fits: SPIRE, Vault PKI, step-ca, cert-manager
-or the project's own helper (stage 4). See [Issuing certificates](#issuing-certificates).
+or the project's own helper (`rawstor pki`). See [Issuing certificates](#issuing-certificates).
 The certificate proves *who* the peer is; it carries no permissions (stage 3),
 so rights can change without reissuing it.
 
@@ -145,7 +148,12 @@ Every connection has an **expected server identity** that comes from trusted
 configuration, not from the peer: for an MDS, the identity configured next to
 its address; for an OST, `spiffe://<trust_domain>/ost/<ost_id>` where `ost_id` is
 the one the MDS returns in `RESOLVE` (the topology's OST UUID). A handshake
-whose peer SAN differs fails. The address
+whose peer SAN differs fails. The one exception is the witness an MDS hosts
+on its own port: the topology lists it as an `ost://` location with an id of
+its own, but the server there is the MDS, so a client that was configured with
+that address as an `mds://` one requires an MDS identity (the one named by
+`RAWSTOR_TLS_MDS_ID`, if set) from it instead. The address counts only once it has completed a handshake as an MDS, and it is the
+one the client was given, not one the peer names. The address
 in a location (an IPv4 address or a host name, which is resolved without any
 authentication) takes no part in the check: the certificate carries no DNS
 name that is compared with it, so a spoofed DNS answer can send a client to
@@ -183,8 +191,13 @@ published pages, to be re-checked when the choice is made):
 - **Vault PKI**, **step-ca**, **cert-manager**: issue a certificate with a
   URI SAN on request or by ACME, without attestation. Adequate when the
   deployment tool already knows which process gets which tenant.
-- The project's own `rawstor pki` (stage 4) for installations with none of
-  the above.
+- The project's own `rawstor pki` for installations with none of the above:
+  `init` makes a CA for the trust domain of a cluster in a directory, `issue`
+  makes the certificate and key of one process from its role and name (`ost`,
+  `mds`, `admin` or `client`), `renew` replaces them before they expire. The CA is the one
+  place that holds a signing key, and the helper runs on that one machine; it
+  is a small tool, not an enrolment service, so getting the files to the hosts
+  is up to the operator. See [Configuration](configuration.md#issuing-certificates).
 
 ### Rotation without downtime
 
@@ -605,8 +618,11 @@ integrity of the wire, which XTS does not give, still come from TLS.
 
 ### Insecure mode
 
-`--insecure` (on every server and every client process) turns TLS off for that
-process. Traffic is then **plaintext, and no peer is authenticated**: there is
+`--insecure` (on every server and every client process, or
+`RawstorOpts::insecure` in a program that links librawstor) turns TLS off for
+that process. There is no environment variable and a systemd unit has no way to
+set it. It is the only way: a process that has no TLS
+settings and is not told to go without refuses to start. Traffic is then **plaintext, and no peer is authenticated**: there is
 no certificate to read an identity, a tenant or a role from, so the rights
 table, tokens and tenant isolation do not apply and every peer that can reach
 the port can do everything, as before this design. It is meant for a storage
@@ -616,8 +632,8 @@ tests; the operator takes responsibility for the network.
 - A port is TLS or plaintext, never both and never auto-detected, so a
   client cannot be downgraded: a plaintext client against a TLS server (or
   the reverse) fails the connection.
-- A service refuses to start with `--insecure` and a certificate configured at
-  the same time.
+- `--insecure` and the TLS settings exclude each other: a process that has
+  both, with any one of the settings, complete or not, refuses to start.
 - The service logs the mode loudly at start.
 - It is a per-process choice. Mixing modes inside one cluster is not
   supported except while moving a cluster from one mode to the other (see
@@ -782,19 +798,40 @@ require re-doing earlier ones.
 1. **Protocol groundwork.** Feature bits in `HANDSHAKE`; the owner tenant in
    protocol, MDS store, chunk metadata and `LIST`, with a registry and a
    default tenant (done); `crypto_params` reserved in the object record.
-2. **Transport.** An OpenSSL layer under `rawio` (client and server side),
-   mTLS, identity extraction from the SAN, config options on every service,
-   reload on `SIGHUP`, `--insecure`. kTLS as an option. Service and CLI test
-   suites run over TLS. Every TLS option is both a command-line flag and a
-   `KEY=value` entry of the service's configuration file (the
-   `/etc/rawstor/*/<name>.conf` files that the systemd units and orchestrators
-   already use), and a changed certificate is applied by `systemctl reload`.
+2. **Transport (done).** An OpenSSL layer under `rawio` (client and server
+   side), mTLS, identity extraction from the SAN, reload on `SIGHUP`,
+   `--insecure`. The TLS settings are environment entries, like every other
+   setting of rawstor: `KEY=value` lines of the service's configuration file
+   (the `/etc/rawstor/*/<name>.conf` files that the systemd units and
+   orchestrators already use). `--insecure` is a command-line flag and
+   `RawstorOpts::insecure`, never an environment entry, so a systemd service
+   cannot run without TLS. A changed certificate is applied by `systemctl
+   reload`. The TLS code is tested in process (`librawtls`,
+   `tests/test_tls*.cpp`, with a PKI the tests make) and end to end in CI,
+   where the OST and the CLI are separate processes with certificates of their
+   own made by `rawstor pki`; the other suites talk to fakes and run with
+   `RawstorOpts::insecure`, and pyrawstor's tests run over a CA of their
+   own. kTLS stays an option that is not built (stage 0 measured it).
+
+   Still to do in this stage: a limit on the handshakes a listener has in
+   flight. A handshake that has not completed has no identity yet, so any peer
+   that can reach the port can start one, and the deadline bounds how long each
+   takes but not how many there are at once: the sockets and the TLS state of
+   all of them add up. The listeners of `rawstor-ost` and `rawstor-mds` should
+   count the handshakes in flight and close a new connection, before it is read
+   from, once a configured number is reached; the number is an
+   `RAWSTOR_OPTS_*` setting with a default well above what a cluster's own
+   clients and OSTs open, and a closed connection is logged and counted, since
+   a legitimate peer that retries is told apart from a flood only by the
+   rate.
 3. **Authorization.** Tenants, principals and roles in the MDS store and admin
    API; capability tokens in `RESOLVE`, verified by the OST; per-command rights
    table; `-EACCES` / `-ENOENT` semantics (a foreign object is `-ENOENT`).
-4. **PKI tooling.** `rawstor pki` to run a small CA (init, issue, renew) for
-   deployments that have none; documentation for SPIRE (with spiffe-helper)
-   and other external CAs.
+4. **PKI tooling (done).** `rawstor pki` runs a small CA (init, issue, renew)
+   for deployments that have none, `<rawstor/pki.h>` and pyrawstor's
+   `rawstor.pki` do the same for a program; documentation for SPIRE (with
+   spiffe-helper) and other external CAs is [Issuing
+   certificates](#issuing-certificates).
 5. **At-rest, server side.** Documented ZFS/dm-crypt deployments; checks in
    `LOCATION_INFO` that the backend reports encryption, if useful.
 6. **At-rest, client side.** AES-XTS in the client library, KMS plugin

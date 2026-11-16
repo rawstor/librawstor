@@ -34,9 +34,9 @@ TEST(SpiffeTest, Ost) {
 
 TEST(SpiffeTest, Mds) {
     rawtls::SpiffeId id =
-        rawtls::SpiffeId("spiffe://cluster.example/mds/mds-1");
+        rawtls::SpiffeId("spiffe://cluster.example/mds/" + uuid_a);
     EXPECT_EQ(id.role(), rawtls::Role::mds);
-    EXPECT_EQ(id.name(), "mds-1");
+    EXPECT_EQ(id.name(), uuid_a);
     EXPECT_TRUE(id.is_server());
 }
 
@@ -61,54 +61,54 @@ TEST(SpiffeTest, Client) {
 
 TEST(SpiffeTest, NamesAreCaseSensitive) {
     rawtls::SpiffeId id =
-        rawtls::SpiffeId("spiffe://cluster.example/mds/MDS-One");
-    EXPECT_EQ(id.name(), "MDS-One");
+        rawtls::SpiffeId("spiffe://cluster.example/admin/Ops-One");
+    EXPECT_EQ(id.name(), "Ops-One");
 }
 
 TEST(SpiffeTest, Scheme) {
     expect_rejected("");
-    expect_rejected("cluster.example/mds/a");
-    expect_rejected("https://cluster.example/mds/a");
-    expect_rejected("SPIFFE://cluster.example/mds/a");
-    expect_rejected("spiffe:/cluster.example/mds/a");
+    expect_rejected("cluster.example/admin/a");
+    expect_rejected("https://cluster.example/admin/a");
+    expect_rejected("SPIFFE://cluster.example/admin/a");
+    expect_rejected("spiffe:/cluster.example/admin/a");
 }
 
 TEST(SpiffeTest, TrustDomain) {
-    expect_rejected("spiffe:///mds/a");
+    expect_rejected("spiffe:///admin/a");
     expect_rejected("spiffe://cluster.example");
-    expect_rejected("spiffe://Cluster.Example/mds/a");
-    expect_rejected("spiffe://cluster.example:8080/mds/a");
-    expect_rejected("spiffe://cluster.example:port/mds/a");
-    expect_rejected("spiffe://cluster.example:/mds/a");
-    expect_rejected("spiffe://user:password@cluster.example/mds/a");
-    expect_rejected("spiffe://user@cluster.example/mds/a");
-    expect_rejected("spiffe://cluster example/mds/a");
-    expect_rejected("spiffe://" + std::string(256, 'a') + "/mds/a");
+    expect_rejected("spiffe://Cluster.Example/admin/a");
+    expect_rejected("spiffe://cluster.example:8080/admin/a");
+    expect_rejected("spiffe://cluster.example:port/admin/a");
+    expect_rejected("spiffe://cluster.example:/admin/a");
+    expect_rejected("spiffe://user:password@cluster.example/admin/a");
+    expect_rejected("spiffe://user@cluster.example/admin/a");
+    expect_rejected("spiffe://cluster example/admin/a");
+    expect_rejected("spiffe://" + std::string(256, 'a') + "/admin/a");
     EXPECT_NO_THROW(
-        rawtls::SpiffeId("spiffe://" + std::string(255, 'a') + "/mds/a")
+        rawtls::SpiffeId("spiffe://" + std::string(255, 'a') + "/admin/a")
     );
 }
 
 TEST(SpiffeTest, Path) {
     expect_rejected("spiffe://cluster.example/");
     expect_rejected("spiffe://cluster.example/mds");
-    expect_rejected("spiffe://cluster.example/mds/");
-    expect_rejected("spiffe://cluster.example/mds/a/");
-    expect_rejected("spiffe://cluster.example/mds//a");
-    expect_rejected("spiffe://cluster.example/mds/.");
-    expect_rejected("spiffe://cluster.example/mds/..");
-    expect_rejected("spiffe://cluster.example/mds/a?x=1");
-    expect_rejected("spiffe://cluster.example/mds/a#x");
-    expect_rejected("spiffe://cluster.example/mds/a%20b");
-    expect_rejected("spiffe://cluster.example/mds/a b");
-    expect_rejected(std::string("spiffe://cluster.example/mds/a\0b", 33));
+    expect_rejected("spiffe://cluster.example/admin/");
+    expect_rejected("spiffe://cluster.example/admin/a/");
+    expect_rejected("spiffe://cluster.example/admin//a");
+    expect_rejected("spiffe://cluster.example/admin/.");
+    expect_rejected("spiffe://cluster.example/admin/..");
+    expect_rejected("spiffe://cluster.example/admin/a?x=1");
+    expect_rejected("spiffe://cluster.example/admin/a#x");
+    expect_rejected("spiffe://cluster.example/admin/a%20b");
+    expect_rejected("spiffe://cluster.example/admin/a b");
+    expect_rejected(std::string("spiffe://cluster.example/admin/a\0b", 35));
 }
 
 TEST(SpiffeTest, Shape) {
     expect_rejected("spiffe://cluster.example/user/a");
     expect_rejected("spiffe://cluster.example/ost");
     expect_rejected("spiffe://cluster.example/ost/" + uuid_a + "/extra");
-    expect_rejected("spiffe://cluster.example/mds/a/b");
+    expect_rejected("spiffe://cluster.example/mds/" + uuid_a + "/extra");
     expect_rejected("spiffe://cluster.example/admin/a/b");
     expect_rejected("spiffe://cluster.example/tenant/" + uuid_b);
     expect_rejected("spiffe://cluster.example/tenant/" + uuid_b + "/client");
@@ -122,6 +122,14 @@ TEST(SpiffeTest, Shape) {
 TEST(SpiffeTest, Uuids) {
     expect_rejected("spiffe://cluster.example/ost/not-a-uuid");
     expect_rejected("spiffe://cluster.example/ost/mds-1");
+    expect_rejected("spiffe://cluster.example/mds/mds-1");
+    expect_rejected("spiffe://cluster.example/mds/not-a-uuid");
+    expect_rejected(
+        "spiffe://cluster.example/mds/00000000-0000-0000-0000-000000000000"
+    );
+    expect_rejected(
+        "spiffe://cluster.example/mds/0198F1A2-3B4C-7D5E-8F90-A1B2C3D4E5F6"
+    );
     expect_rejected(
         "spiffe://cluster.example/ost/00000000-0000-0000-0000-000000000000"
     );
@@ -136,7 +144,7 @@ TEST(SpiffeTest, Uuids) {
 }
 
 TEST(SpiffeTest, Length) {
-    std::string prefix = "spiffe://cluster.example/mds/";
+    std::string prefix = "spiffe://cluster.example/admin/";
     EXPECT_NO_THROW(
         rawtls::SpiffeId(prefix + std::string(2048 - prefix.size(), 'a'))
     );

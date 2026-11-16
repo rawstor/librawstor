@@ -42,6 +42,16 @@ struct RawstorOpts {
      * within this time.
      */
     unsigned int mirror_resync_lease;
+    /**
+     * Nonzero runs this process without TLS: its connections are plaintext
+     * and no peer is authenticated, whoever it talks to. Together with any
+     * of the TLS settings (RAWSTOR_TLS_*) rawstor_initialize() fails with
+     * EINVAL. Zero requires TLS: without the settings rawstor_initialize()
+     * fails with EINVAL. There is no environment variable for it, so a
+     * process is insecure because its program says so, never because of
+     * where it runs. See docs/security.md.
+     */
+    unsigned int insecure;
 };
 
 /**

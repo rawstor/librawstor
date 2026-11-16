@@ -23,6 +23,8 @@ namespace {
 
 struct sigaction sact = {};
 
+constexpr int opt_insecure = 1000;
+
 void usage() {
     std::cout << "Rawstor VHOST (qemu libvhost-user backend) "
               << PACKAGE_VERSION << std::endl
@@ -57,6 +59,9 @@ void usage() {
                  "Export the object read-only (VIRTIO_BLK_F_RO); "
                  "required for a version target"
               << std::endl
+              << "  --insecure            "
+                 "Run without TLS: plaintext, and no peer is authenticated"
+              << std::endl
               << "  -v, --version         Rawstor version" << std::endl
               << std::endl
               << "required arguments:" << std::endl
@@ -83,10 +88,11 @@ void sact_handler(int) {
 void server(
     unsigned int queue_size, const std::string& target,
     const std::string& socket_path, bool write_cache_enabled, bool readonly,
-    bool force
+    bool force, bool insecure
 ) {
     rawstor::vhost::Server s(
-        queue_size, target, socket_path, write_cache_enabled, readonly, force
+        queue_size, target, socket_path, write_cache_enabled, readonly, force,
+        insecure
     );
     // Not any earlier: rawstd_info() needs the logging mutex
     // rawstor_initialize() sets up, and that only happens inside Server's
@@ -108,6 +114,7 @@ int main(int argc, char** argv) {
         {"readonly", no_argument, nullptr, 'r'},
         {"socket-path", required_argument, nullptr, 's'},
         {"target", required_argument, nullptr, 't'},
+        {"insecure", no_argument, nullptr, opt_insecure},
         {"version", no_argument, nullptr, 'v'},
         {"write-cache", required_argument, nullptr, 'w'},
         {},
@@ -119,6 +126,7 @@ int main(int argc, char** argv) {
     const char* write_cache_arg = nullptr;
     bool readonly = false;
     bool force = false;
+    bool insecure = false;
     while (1) {
         int c = getopt_long(argc, argv, optstring, longopts, nullptr);
         if (c == -1) {
@@ -156,6 +164,10 @@ int main(int argc, char** argv) {
 
         case 'w':
             write_cache_arg = optarg;
+            break;
+
+        case opt_insecure:
+            insecure = true;
             break;
 
         default:
@@ -235,7 +247,7 @@ int main(int argc, char** argv) {
     try {
         server(
             queue_size, target_arg, socket_path_arg, write_cache_enabled,
-            readonly, force
+            readonly, force, insecure
         );
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;

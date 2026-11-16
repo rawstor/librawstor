@@ -18,15 +18,15 @@ enum class Role {
  * The identity of a peer: a SPIFFE ID in one of the four shapes rawstor uses.
  *
  *   spiffe://<trust_domain>/ost/<ost_id>
- *   spiffe://<trust_domain>/mds/<name>
+ *   spiffe://<trust_domain>/mds/<mds_id>
  *   spiffe://<trust_domain>/admin/<name>
  *   spiffe://<trust_domain>/tenant/<tenant_id>/client/<name>
  *
  * The trust domain is lowercase letters, digits, '.', '-' and '_' (at most 255
  * bytes), a path segment is letters, digits, '.', '-' and '_' (never "." or
- * ".."), the whole ID is at most 2048 bytes, and `ost_id` and `tenant_id` are
- * non-nil UUIDs in their canonical lowercase text form. There is no user
- * information, port, query or fragment.
+ * ".."), the whole ID is at most 2048 bytes, and `ost_id`, `mds_id` and
+ * `tenant_id` are non-nil UUIDs in their canonical lowercase text form. There
+ * is no user information, port, query or fragment.
  */
 class SpiffeId final {
 private:
@@ -50,7 +50,7 @@ public:
     // The tenant of a client, empty for every other role.
     const std::string& tenant() const noexcept { return _tenant; }
 
-    // The OST id of an ost, the name of every other role.
+    // The OST id of an ost, the MDS id of an mds, the name of every other role.
     const std::string& name() const noexcept { return _name; }
 
     // True for the roles that may serve a connection: an OST or an MDS.

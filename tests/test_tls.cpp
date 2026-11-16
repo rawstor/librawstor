@@ -20,6 +20,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cerrno>
 #include <chrono>
 #include <exception>
 #include <filesystem>
@@ -173,6 +174,17 @@ int raw_handshake(
 }
 
 } // namespace
+
+// Without TLS settings a process refuses to start, and goes without TLS only
+// when its program says so.
+TEST(TlsTest, a_process_without_tls_settings_needs_insecure) {
+    rawstor_terminate();
+    EXPECT_EQ(rawstor_initialize(nullptr), -EINVAL);
+
+    RawstorOpts opts = {};
+    opts.insecure = 1;
+    ASSERT_EQ(rawstor_initialize(&opts), 0);
+}
 
 TEST(TlsTest, location_info_over_tls) {
     rawstor::tests::TlsProcess tls(ost_uri(ost_id));

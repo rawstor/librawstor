@@ -21,6 +21,7 @@ extern "C" {
 //     unsigned int io_retry_backoff_jitter;
 //     unsigned int mirror_probe_interval;
 //     unsigned int mirror_resync_lease;
+//     unsigned int insecure;
 // };
 
 int rawstor_opts_initialize(const struct RawstorOpts* opts);
@@ -65,10 +66,15 @@ unsigned int rawstor_opts_mirror_probe_interval(void);
 // without a sign of life before the member it brings back is excluded.
 unsigned int rawstor_opts_mirror_resync_lease(void);
 
+// Whether this process runs without TLS, from RawstorOpts only. It is the only
+// way to run without it, and it excludes the TLS settings:
+// with any of them set rawstor_opts_initialize() fails with EINVAL.
+unsigned int rawstor_opts_insecure(void);
+
 // The TLS settings, read from the environment: RAWSTOR_TLS_TRUST_DOMAIN,
 // RAWSTOR_TLS_CERT, RAWSTOR_TLS_KEY and RAWSTOR_TLS_CA, all four or none,
 // and optionally RAWSTOR_TLS_CRL and RAWSTOR_TLS_MDS_ID. All are NULL when TLS
-// is not configured.
+// is not configured, and when the process is insecure.
 const char* rawstor_opts_tls_trust_domain(void);
 
 const char* rawstor_opts_tls_cert(void);

@@ -137,9 +137,7 @@ private:
     // until the last byte of its records is out.
     rawstd::Semaphore _write_mutex{1};
     std::vector<unsigned char> _out;
-    // The recv in flight, if any, and whether the stream was told to stop.
-    rawio::Event* _inflight = nullptr;
-    bool _cancelled = false;
+    // The stream handed out last, the one cancel_recv_multishot() stops.
     std::weak_ptr<TlsRecv> _recv;
     // Set once a write failed: part of a record may be on the wire, so nothing
     // can follow it, and the sends waiting their turn fail instead of writing
@@ -392,20 +390,6 @@ private:
         co_return total;
     }
 
-    // Stops the recv in flight and makes the next one fail. A cancel that
-    // finds nothing in flight (the reader is between recvs) is remembered for
-    // the next.
-    void _cancel_receive() noexcept {
-        _cancelled = true;
-        if (_inflight != nullptr) {
-            try {
-                _queue.cancel(_inflight);
-            } catch (const std::exception& e) {
-                rawstd_warning("Failed to cancel event: %s\n", e.what());
-            }
-        }
-    }
-
     rawstd::Task<void> _run_handshake() {
         std::vector<unsigned char> in(record_size);
         std::exception_ptr error;
@@ -521,7 +505,7 @@ public:
     rawio::RecvStream
     recv_multishot(size_t, unsigned int, size_t, unsigned int) override;
 
-    void cancel_recv_multishot() noexcept override { _cancel_receive(); }
+    void cancel_recv_multishot() noexcept override;
 
     const rawtls::SpiffeId* peer() const noexcept override { return &*_peer; }
 };
@@ -538,6 +522,15 @@ private:
     // Null once the Transport is gone: the stream may be read, and dropped,
     // after it.
     TlsTransport* _t;
+    rawio::Queue& _queue;
+    // The recv in flight, if any, and whether the stream was told to stop. A
+    // cancel that finds nothing in flight (the reader is between recvs) is
+    // remembered for the next. They belong to this stream, not to the
+    // Transport: the stream that replaces it is not stopped by what is done
+    // to this one, as it is when the receive ring of a connection is replaced
+    // and the old stream is destroyed after the new one is started.
+    rawio::Event* _inflight = nullptr;
+    bool _cancelled = false;
     std::vector<unsigned char> _cipher;
     std::vector<unsigned char> _scratch;
     // The decrypted bytes not yet handed out are _plain[_head..].
@@ -613,7 +606,7 @@ private:
 
     // The part of try_produce() that does not touch the session.
     bool _take(size_t want, rawio::RecvStream::Item& out, int& error) noexcept {
-        if (_t == nullptr || _t->_cancelled) {
+        if (_t == nullptr || _cancelled) {
             _fail(ECANCELED);
         }
         size_t available = _available();
@@ -667,30 +660,28 @@ private:
 
     static rawstd::DetachedTask _run(std::shared_ptr<TlsRecv> self) {
         for (;;) {
-            if (self->_t == nullptr || self->_t->_cancelled) {
+            if (self->_t == nullptr || self->_cancelled) {
                 self->_fail(ECANCELED);
             } else {
                 try {
-                    TlsTransport& s = *self->_t;
-                    rawio::Awaitable<size_t> op = s._queue.recv(
-                        s._fd, self->_cipher.data(), self->_cipher.size(), 0
+                    rawio::Awaitable<size_t> op = self->_queue.recv(
+                        self->_t->_fd, self->_cipher.data(),
+                        self->_cipher.size(), 0
                     );
-                    s._inflight = op.event();
+                    self->_inflight = op.event();
                     size_t n = 0;
                     try {
                         n = co_await op;
                     } catch (...) {
-                        // The Transport may have been destroyed while the
-                        // recv was in flight.
-                        if (self->_t != nullptr) {
-                            self->_t->_inflight = nullptr;
-                        }
+                        self->_inflight = nullptr;
                         throw;
                     }
+                    self->_inflight = nullptr;
+                    // The Transport may have been destroyed while the recv was
+                    // in flight.
                     if (self->_t == nullptr) {
                         self->_fail(ECANCELED);
                     } else {
-                        self->_t->_inflight = nullptr;
                         if (n == 0) {
                             self->_fail(EPIPE);
                         } else {
@@ -717,6 +708,7 @@ private:
 public:
     explicit TlsRecv(TlsTransport& transport) :
         _t(&transport),
+        _queue(transport._queue),
         _cipher(cipher_size),
         _scratch(record_size) {}
 
@@ -747,8 +739,13 @@ public:
     void close() noexcept override { cancel(); }
 
     void cancel() noexcept override {
-        if (_t != nullptr) {
-            _t->_cancel_receive();
+        _cancelled = true;
+        if (_inflight != nullptr) {
+            try {
+                _queue.cancel(_inflight);
+            } catch (const std::exception& e) {
+                rawstd_warning("Failed to cancel event: %s\n", e.what());
+            }
         }
     }
 
@@ -759,18 +756,24 @@ public:
 
 rawio::RecvStream
 TlsTransport::recv_multishot(size_t, unsigned int, size_t, unsigned int) {
-    _cancelled = false;
     std::shared_ptr<TlsRecv> recv = std::make_shared<TlsRecv>(*this);
     _recv = recv;
     return rawio::RecvStream(std::move(recv));
 }
 
+void TlsTransport::cancel_recv_multishot() noexcept {
+    std::shared_ptr<TlsRecv> recv = _recv.lock();
+    if (recv != nullptr) {
+        recv->cancel();
+    }
+}
+
 TlsTransport::~TlsTransport() {
     // The recv in flight, if any, ends on its own; the stream no longer
     // reaches this object.
-    _cancel_receive();
     std::shared_ptr<TlsRecv> recv = _recv.lock();
     if (recv != nullptr) {
+        recv->cancel();
         recv->orphan();
     }
     SSL_free(_ssl);

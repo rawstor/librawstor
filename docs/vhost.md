@@ -16,13 +16,14 @@ multiple in-flight requests on a virtqueue may complete out of order.
 
 ## Usage
 
-`rawstor-vhost [-h] -s SOCKET_PATH TARGET [--queue-size SIZE] [--write-cache on|off] [--readonly] [--force] [-v]`
+`rawstor-vhost [-h] [--insecure] -s SOCKET_PATH TARGET [--queue-size SIZE] [--write-cache on|off] [--readonly] [--force] [-v]`
 
 ## Options
 
 | Option | Description |
 |--------|-------------|
 | `-h, --help` | Show help message and exit. |
+| `--insecure` | Run without TLS: plaintext, and no peer is authenticated. Without it the process needs [TLS settings](configuration.md#tls) and refuses to start without them. |
 | `-s, --socket-path PATH` | Location of the vhost-user Unix domain socket. |
 | `TARGET` | Comma‑separated list of rawstor backend targets (see [Concepts](concepts.md)). |
 | `--queue-size SIZE` | RawIO queue (`io_uring`) depth of each virtqueue's own queue. Default: `4096`. |

@@ -99,7 +99,8 @@ SpiffeId::SpiffeId(const std::string& uri) : _uri(uri), _role(Role::ost) {
     if (segments.size() == 2 && segments[0] == "ost" && is_uuid(segments[1])) {
         _role = Role::ost;
         _name = segments[1];
-    } else if (segments.size() == 2 && segments[0] == "mds") {
+    } else if (segments.size() == 2 && segments[0] == "mds" &&
+               is_uuid(segments[1])) {
         _role = Role::mds;
         _name = segments[1];
     } else if (segments.size() == 2 && segments[0] == "admin") {

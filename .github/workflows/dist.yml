@@ -160,27 +160,69 @@ jobs:
     - name: start rawstor-ost
       run: |
         mkdir /tmp/ost_objects
-        ./${LIBRAWSTOR}/ost/src/rawstor-ost --bind 127.0.0.1:7777 file:///tmp/ost_objects/ &
+        ./${LIBRAWSTOR}/ost/src/rawstor-ost --insecure --bind 127.0.0.1:7777 file:///tmp/ost_objects/ &
         sleep 10
     - name: create object file,ost
       run: |
         mkdir /tmp/file_objects
-        target=$(./${LIBRAWSTOR}/cli/rawstor object create file:///tmp/file_objects,ost://127.0.0.1:7777 --size=1G --mirrors=2 --format value --column target)
+        target=$(./${LIBRAWSTOR}/cli/rawstor --insecure object create file:///tmp/file_objects,ost://127.0.0.1:7777 --size=1G --mirrors=2 --format value --column target)
         echo "TARGET=${target}" >> $GITHUB_ENV
-        ./${LIBRAWSTOR}/cli/rawstor object list file:///tmp/file_objects,ost://127.0.0.1:7777
+        ./${LIBRAWSTOR}/cli/rawstor --insecure object list file:///tmp/file_objects,ost://127.0.0.1:7777
     - name: testio file,ost
       run: |
-        ./${LIBRAWSTOR}/cli/rawstor testio ${TARGET} --block-size=4K --io-depth=1 --count=10
-        ./${LIBRAWSTOR}/cli/rawstor testio ${TARGET} --block-size=4K --io-depth=1 --count=10 --vector-mode
+        ./${LIBRAWSTOR}/cli/rawstor --insecure testio ${TARGET} --block-size=4K --io-depth=1 --count=10
+        ./${LIBRAWSTOR}/cli/rawstor --insecure testio ${TARGET} --block-size=4K --io-depth=1 --count=10 --vector-mode
     - name: create object ost,file
       run: |
-        target=$(./${LIBRAWSTOR}/cli/rawstor object create ost://127.0.0.1:7777,file:///tmp/file_objects --size=1G --mirrors=2 --format value --column target)
+        target=$(./${LIBRAWSTOR}/cli/rawstor --insecure object create ost://127.0.0.1:7777,file:///tmp/file_objects --size=1G --mirrors=2 --format value --column target)
         echo "TARGET=${target}" >> $GITHUB_ENV
-        ./${LIBRAWSTOR}/cli/rawstor object list ost://127.0.0.1:7777,file:///tmp/file_objects
+        ./${LIBRAWSTOR}/cli/rawstor --insecure object list ost://127.0.0.1:7777,file:///tmp/file_objects
     - name: testio ost,file
       run: |
-        ./${LIBRAWSTOR}/cli/rawstor testio ${TARGET} --block-size=4K --io-depth=1 --count=10
-        ./${LIBRAWSTOR}/cli/rawstor testio ${TARGET} --block-size=4K --io-depth=1 --count=10 --vector-mode
+        ./${LIBRAWSTOR}/cli/rawstor --insecure testio ${TARGET} --block-size=4K --io-depth=1 --count=10
+        ./${LIBRAWSTOR}/cli/rawstor --insecure testio ${TARGET} --block-size=4K --io-depth=1 --count=10 --vector-mode
+    - name: stop rawstor-ost
+      # One OST at a time: a second one next to it leaves the queue of the next
+      # client without the memory it needs (rawio_queue_create() fails with
+      # ENOMEM), so the plain one goes before the TLS one starts.
+      run: |
+        killall rawstor-ost
+        while pgrep -x rawstor-ost > /dev/null; do sleep 0.2; done
+    - name: TLS, issue the certificates
+      run: |
+        mkdir /tmp/pki /tmp/tls_ost_objects /tmp/tls_file_objects
+        cd /tmp/pki
+        RAWSTOR=${GITHUB_WORKSPACE}/${LIBRAWSTOR}/cli/rawstor
+        TD=cluster.example
+        OST_ID=$(cat /proc/sys/kernel/random/uuid)
+        # The CA needs no TLS itself, so these run without any settings.
+        ${RAWSTOR} pki init --trust-domain ${TD} ca
+        ${RAWSTOR} pki issue --ca ca --cert ost.pem --key ost.key ost ${OST_ID}
+        ${RAWSTOR} pki issue --ca ca --cert cli.pem --key cli.key admin ci
+        ${RAWSTOR} pki renew --ca ca --cert ost.pem --key ost.key
+        # A certificate of another CA is not renewed.
+        ${RAWSTOR} pki init --trust-domain ${TD} other
+        ! ${RAWSTOR} pki renew --ca other --cert ost.pem --key ost.key
+        for who in ost cli; do
+          echo "RAWSTOR_TLS_TRUST_DOMAIN=${TD} RAWSTOR_TLS_CERT=/tmp/pki/${who}.pem RAWSTOR_TLS_KEY=/tmp/pki/${who}.key RAWSTOR_TLS_CA=/tmp/pki/ca/ca.crt" > ${who}.env
+        done
+    - name: TLS, start rawstor-ost
+      run: |
+        env $(cat /tmp/pki/ost.env) ./${LIBRAWSTOR}/ost/src/rawstor-ost --bind 127.0.0.1:7778 file:///tmp/tls_ost_objects/ &
+        sleep 10
+    - name: TLS, create object and testio file,ost
+      run: |
+        cli() { env $(cat /tmp/pki/cli.env) ./${LIBRAWSTOR}/cli/rawstor "$@"; }
+        target=$(cli object create file:///tmp/tls_file_objects,ost://127.0.0.1:7778 --size=1G --mirrors=2 --format value --column target)
+        cli object list file:///tmp/tls_file_objects,ost://127.0.0.1:7778
+        cli testio ${target} --block-size=4K --io-depth=1 --count=10
+        cli testio ${target} --block-size=4K --io-depth=1 --count=10 --vector-mode
+    - name: TLS, a peer without a certificate is refused
+      run: |
+        ! ./${LIBRAWSTOR}/cli/rawstor --insecure location info ost://127.0.0.1:7778
+        status=0
+        ./${LIBRAWSTOR}/cli/rawstor location info ost://127.0.0.1:7778 || status=$?
+        test ${status} -eq 78
     - name: stop rawstor_ost
       run: killall rawstor-ost
 
@@ -358,12 +400,32 @@ jobs:
       run: sudo apt install -y ./librawstor.deb/librawstor_*.deb
     - name: test-librawstor
       run: rawstor --version
+    - name: issue-certificates
+      # A service has no way to run without TLS, so each one gets a
+      # certificate; the clients below (the rawstor CLI, rawstor-vhost and
+      # python) share one, from the environment. The CA is a throwaway, so
+      # the keys are readable by the rawstor user, which the packages have not
+      # made yet.
+      run: |
+        sudo install -d /etc/rawstor/tls
+        mkdir /tmp/pki
+        cd /tmp/pki
+        rawstor pki init --trust-domain cluster.example ca
+        rawstor pki issue --ca ca --cert ost.crt --key ost.key ost 018f4e2a-1111-7000-8000-000000000001
+        rawstor pki issue --ca ca --cert mds.crt --key mds.key mds 018f4e2a-3333-7000-8000-000000000001
+        rawstor pki issue --ca ca --cert cli.crt --key cli.key admin ci
+        sudo install -m 0644 ca/ca.crt /etc/rawstor/tls/ca.crt
+        for who in ost mds cli; do
+          sudo install -m 0644 ${who}.crt ${who}.key /etc/rawstor/tls/
+          printf 'RAWSTOR_TLS_TRUST_DOMAIN=cluster.example\nRAWSTOR_TLS_CERT=/etc/rawstor/tls/%s.crt\nRAWSTOR_TLS_KEY=/etc/rawstor/tls/%s.key\nRAWSTOR_TLS_CA=/etc/rawstor/tls/ca.crt\n' ${who} ${who} | sudo tee /etc/rawstor/tls/${who}.settings
+        done
+        cat /etc/rawstor/tls/cli.settings >> $GITHUB_ENV
     - name: install-rawstor-ost
       # Installing starts nothing: an instance runs once its
       # /etc/rawstor/ost/<uuid>.conf exists.
       run: |
         sudo apt install -y ./librawstor.deb/rawstor-ost_*.deb
-        echo "BIND_ADDR=127.0.0.1:7777" | sudo tee /etc/rawstor/ost/018f4e2a-1111-7000-8000-000000000001.conf
+        (echo "BIND_ADDR=127.0.0.1:7777"; cat /etc/rawstor/tls/ost.settings) | sudo tee /etc/rawstor/ost/018f4e2a-1111-7000-8000-000000000001.conf
         sudo systemctl enable --now rawstor-ost@018f4e2a-1111-7000-8000-000000000001.service
         sleep 1
     - name: test-rawstor-ost
@@ -377,6 +439,7 @@ jobs:
       run: |
         CREATED=$(rawstor object create --size=1M --mirrors=1 ost://127.0.0.1:7777 --format value --column object_id,target)
         read -r UUID TARGET <<< "${CREATED}"
+        sudo cp /etc/rawstor/tls/cli.settings /etc/rawstor-vhost.conf
         sudo systemctl enable --now rawstor-vhost@${UUID}.service
         sleep 1
         systemctl is-active rawstor-vhost@${UUID}.service
@@ -395,7 +458,7 @@ jobs:
       # there and reload.
       run: |
         sudo apt install -y ./librawstor.deb/rawstor-mds_*.deb
-        echo "BIND_ADDR=127.0.0.1:7776" | sudo tee /etc/rawstor/mds/018f4e2a-3333-7000-8000-000000000001.conf
+        (echo "BIND_ADDR=127.0.0.1:7776"; cat /etc/rawstor/tls/mds.settings) | sudo tee /etc/rawstor/mds/018f4e2a-3333-7000-8000-000000000001.conf
         sudo touch /etc/rawstor/mds/018f4e2a-3333-7000-8000-000000000001.topology
         sudo systemctl enable --now rawstor-mds@018f4e2a-3333-7000-8000-000000000001.service
         sleep 1
@@ -572,6 +635,21 @@ jobs:
       run: dnf -y install ./librawstor.rpm/librawstor-[0-9]*.rpm
     - name: test-librawstor
       run: rawstor --version
+    - name: issue-certificates
+      # The binaries run by hand below, and a process has no way to run without
+      # TLS unless it is told to: each gets a certificate, and the clients (the
+      # rawstor CLI and python) share one, from the environment.
+      run: |
+        mkdir /tmp/pki
+        cd /tmp/pki
+        rawstor pki init --trust-domain cluster.example ca
+        rawstor pki issue --ca ca --cert ost.crt --key ost.key ost 018f4e2a-1111-7000-8000-000000000001
+        rawstor pki issue --ca ca --cert mds.crt --key mds.key mds
+        rawstor pki issue --ca ca --cert cli.crt --key cli.key admin ci
+        for who in ost mds cli; do
+          echo "RAWSTOR_TLS_TRUST_DOMAIN=cluster.example RAWSTOR_TLS_CERT=/tmp/pki/${who}.crt RAWSTOR_TLS_KEY=/tmp/pki/${who}.key RAWSTOR_TLS_CA=/tmp/pki/ca/ca.crt" > ${who}.env
+        done
+        for setting in $(cat cli.env); do echo "${setting}" >> $GITHUB_ENV; done
     - name: install-rawstor-ost
       run: dnf -y install ./librawstor.rpm/rawstor-ost-[0-9]*.rpm
     - name: test-rawstor-ost
@@ -580,7 +658,7 @@ jobs:
       run: |
         rawstor-ost --version
         mkdir -p /var/lib/rawstor/ost/test
-        rawstor-ost --bind=127.0.0.1:7777 file:///var/lib/rawstor/ost/test &
+        env $(cat /tmp/pki/ost.env) rawstor-ost --bind=127.0.0.1:7777 file:///var/lib/rawstor/ost/test &
         OST_PID=$!
         sleep 10
         rawstor object create --size=1M --mirrors=1 ost://127.0.0.1:7777
@@ -610,11 +688,11 @@ jobs:
       run: |
         rawstor-mds --version
         mkdir -p /var/lib/rawstor/ost/test
-        rawstor-ost --bind=127.0.0.1:7777 file:///var/lib/rawstor/ost/test &
+        env $(cat /tmp/pki/ost.env) rawstor-ost --bind=127.0.0.1:7777 file:///var/lib/rawstor/ost/test &
         OST_PID=$!
         sleep 10
         echo "018f4e2a-1111-7000-8000-000000000001 ost://127.0.0.1:7777 100 data,witness dc1/row1/rack1/host1" > /tmp/topology.conf
-        rawstor-mds --bind=127.0.0.1:7776 --db=/tmp/mds.db --topology=/tmp/topology.conf &
+        env $(cat /tmp/pki/mds.env) rawstor-mds --bind=127.0.0.1:7776 --db=/tmp/mds.db --topology=/tmp/topology.conf &
         MDS_PID=$!
         sleep 5
         rawstor object create -t mds://127.0.0.1:7776/018f4e2a-2222-7000-8000-000000000001 --size=1M --chunk-size=1M --mirrors=1
@@ -683,8 +761,8 @@ jobs:
       run: |
         mkdir -p /tmp/wheel-inspect
         python3 -m zipfile -e ${GITHUB_WORKSPACE}/dist/*.whl /tmp/wheel-inspect
-        SO=$(find /tmp/wheel-inspect -name '*.so')
-        DEPS=$(ldd "${SO}" | awk '$2 == "=>" {print $1}')
+        # Every extension of the wheel, not one: there are several.
+        DEPS=$(find /tmp/wheel-inspect -name '*.so' -exec ldd {} + | awk '$2 == "=>" {print $1}' | sort -u)
         ALLOW='^(libc\.so\.|libm\.so\.|libpthread\.so\.|libdl\.so\.|librt\.so\.|libstdc\+\+\.so\.|libgcc_s\.so\.)'
         EXCLUDES=""
         for lib in ${DEPS}; do
@@ -758,8 +836,19 @@ jobs:
     - name: install-python3-rawstor
       run: pip install wheelhouse/*.whl
     - name: test-python3-rawstor
+      # librawstor starts with TLS settings only, so the test makes some with
+      # the wheel's own rawstor.pki, which does not start it.
       run: |
-        mkdir -p /tmp/rawstor-wheel-install-test
+        mkdir -p /tmp/rawstor-wheel-install-test /tmp/pki
+        python -c "
+        from rawstor import pki
+        pki.init('/tmp/pki/ca', 'cluster.example')
+        pki.issue_admin('/tmp/pki/ca', 'ci', '/tmp/pki/cli.crt', '/tmp/pki/cli.key')
+        "
+        export RAWSTOR_TLS_TRUST_DOMAIN=cluster.example
+        export RAWSTOR_TLS_CERT=/tmp/pki/cli.crt
+        export RAWSTOR_TLS_KEY=/tmp/pki/cli.key
+        export RAWSTOR_TLS_CA=/tmp/pki/ca/ca.crt
         python -c "import rawstor; print(list(rawstor.Location('file:///tmp/rawstor-wheel-install-test').objects())); print('OK')"
 
   release:

@@ -113,6 +113,26 @@ static int read_tls_opts(struct TlsOpts* tls) {
     return res;
 }
 
+// A process that is told to go without TLS but has settings for it is
+// misconfigured, and which of the two it means is not for us to guess.
+static int check_tls_unset(void) {
+    static const char* const names[] = {
+        "RAWSTOR_TLS_TRUST_DOMAIN", "RAWSTOR_TLS_CERT", "RAWSTOR_TLS_KEY",
+        "RAWSTOR_TLS_CA",           "RAWSTOR_TLS_CRL",  "RAWSTOR_TLS_MDS_ID",
+    };
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        if (getenv(names[i]) != NULL) {
+            rawstd_error(
+                "Insecure mode conflicts with the TLS settings: %s is set, "
+                "unset it or drop --insecure\n",
+                names[i]
+            );
+            return -EINVAL;
+        }
+    }
+    return 0;
+}
+
 // Millisecond values that get scaled to microseconds in an unsigned int.
 #define RAWSTOR_OPTS_MAX_MS (UINT_MAX / 1000)
 
@@ -197,12 +217,28 @@ int rawstor_opts_initialize(const struct RawstorOpts* opts) {
             res = r;
         }
     }
+    // A switch, not a number, and not an environment setting: a process is
+    // insecure because its program says so.
+    if (given.insecure > 1) {
+        rawstd_error(
+            "Invalid RawstorOpts value %u for insecure: expected 0 or 1\n",
+            given.insecure
+        );
+        res = res != 0 ? res : -EINVAL;
+    }
+    resolved.insecure = given.insecure;
     if (res != 0) {
         return res;
     }
 
+    // Without TLS there must be no TLS settings: a process that has both
+    // does not start.
     struct TlsOpts tls = {};
-    res = read_tls_opts(&tls);
+    if (resolved.insecure) {
+        res = check_tls_unset();
+    } else {
+        res = read_tls_opts(&tls);
+    }
     if (res != 0) {
         return res;
     }
@@ -263,6 +299,10 @@ unsigned int rawstor_opts_mirror_probe_interval(void) {
 
 unsigned int rawstor_opts_mirror_resync_lease(void) {
     return _rawstor_opts.mirror_resync_lease;
+}
+
+unsigned int rawstor_opts_insecure(void) {
+    return _rawstor_opts.insecure;
 }
 
 const char* rawstor_opts_tls_trust_domain(void) {

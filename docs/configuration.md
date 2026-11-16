@@ -33,11 +33,12 @@ exits with `EX_CONFIG` (78), which the shipped systemd units do not restart.
 ## TLS
 
 Every connection between rawstor processes -- a client to an OST or an MDS, an
-OST to another OST -- can run over TLS 1.3 with mutual authentication; see the
-[Security design](security.md). TLS is on when all four of these are set, and
-off when none is: a process that sets some but not all refuses to start with
-`EX_CONFIG`. While it is off the connections are plaintext and no peer is
-authenticated, and the process logs that at start.
+OST to another OST -- runs over TLS 1.3 with mutual authentication; see the
+[Security design](security.md). A process needs the first four of these, and
+refuses to start with `EX_CONFIG` if it has none of them or only some.
+[`rawstor pki`](#issuing-certificates) makes them for a cluster that has no CA.
+The one way to run without TLS is to say so, with `--insecure`: see
+[Without TLS](#without-tls).
 
 | Variable | Description |
 |----------|-------------|
@@ -46,21 +47,21 @@ authenticated, and the process logs that at start.
 | `RAWSTOR_TLS_KEY` | The private key of the certificate, PEM. |
 | `RAWSTOR_TLS_CA` | The CAs a peer's certificate must chain to, PEM; several may be listed. |
 | `RAWSTOR_TLS_CRL` | Optional: a CRL, PEM, checked for the peer's certificate. It must cover the CA. |
-| `RAWSTOR_TLS_MDS_ID` | Optional: the name of the MDS this process connects to, the last segment of its SPIFFE ID (`mds-1` for `spiffe://cluster.example/mds/mds-1`). Every `mds://` connection must then present exactly that ID. |
+| `RAWSTOR_TLS_MDS_ID` | Optional: the id of the MDS this process connects to, a UUID, the last segment of its SPIFFE ID (`0198f1a2-…` for `spiffe://cluster.example/mds/0198f1a2-…`). Every `mds://` connection must then present exactly that ID. |
 
 The SPIFFE ID of a process says what it is:
 
 | ID | Process |
 |----|---------|
 | `spiffe://<trust_domain>/ost/<ost_id>` | an OST, `ost_id` being its id in the MDS topology |
-| `spiffe://<trust_domain>/mds/<name>` | an MDS |
+| `spiffe://<trust_domain>/mds/<mds_id>` | an MDS |
 | `spiffe://<trust_domain>/admin/<name>` | an operator or control plane |
 | `spiffe://<trust_domain>/tenant/<tenant_id>/client/<name>` | a tenant's client |
 
 A client takes a server to be an OST or an MDS by its ID: an `ost://` address
 needs an OST and an `mds://` one an MDS. An OST the MDS has resolved must also
 present the ID the MDS named for it, so one OST cannot answer for another. The
-MDS is held to the name in `RAWSTOR_TLS_MDS_ID` when it is set; without it, as
+MDS is held to the id in `RAWSTOR_TLS_MDS_ID` when it is set; without it, as
 for an `ost://` address the MDS has not named, any server of that role in the
 trust domain is accepted, so set it wherever a client talks to one MDS.
 
@@ -75,3 +76,81 @@ and `SIGUSR1` in `rawstor-ost` and `rawstor-mds`, and on `SIGUSR1` in
 of the object. The connections already open keep the certificate they started
 with. A file that cannot be read is logged and the old certificate stays.
 Session tickets are off, so each connection makes a full handshake.
+
+### Issuing certificates
+
+A cluster that has no CA of its own can make one with `rawstor pki`, which
+needs no TLS settings itself. The CA is a directory with its certificate,
+`ca.crt` (what every process lists as `RAWSTOR_TLS_CA`), and its private key,
+`ca.key`, which stays on the machine that issues certificates:
+
+```
+rawstor pki init --trust-domain cluster.example ca
+rawstor pki issue --ca ca --cert ost.crt --key ost.key ost       # a new id
+rawstor pki issue --ca ca --cert mds.crt --key mds.key mds       # a new id
+rawstor pki issue --ca ca --cert hv1.crt --key hv1.key admin hv1
+rawstor pki issue --ca ca --cert vm.crt --key vm.key client <tenant uuid> vm-1
+rawstor pki renew --ca ca --cert ost.crt --key ost.key
+rawstor pki show --cert ost.crt                                  # what it says
+```
+
+A CA is made for the trust domain of one cluster and keeps it, so every
+certificate it issues is in it. `issue` writes a certificate and a new key
+(mode 0600) for a process, replacing the files. The process is `ost [ID]` (the
+id is the one in the MDS topology, a UUID), `mds [ID]` (the id of the MDS, a UUID
+as well), each with a new id if it is not given, `admin NAME` or
+`client TENANT NAME`. `renew` does the same for the
+process of a certificate this CA issued, over the same files, and the running
+process reads them again on `SIGHUP` or `SIGUSR1`.
+
+`init` prints the CA the same way, with the columns `ca_dir`, `trust_domain`,
+`ca_file` (`<dir>/ca.crt`, what a process lists as `RAWSTOR_TLS_CA`) and
+`not_after` (when the CA expires, UTC).
+
+`issue`, `renew` and `show` print what a certificate says, as the other
+commands print their data (`--format table|json|value`, `--column`):
+`identity` (the SPIFFE ID), `role`, `trust_domain`, `id` (of an OST or an MDS),
+`name` (of an admin or a client), `tenant_id` (of a client), `not_after` (when it
+expires, UTC) and `issued` (whether the CA signed it). The ones the role does
+not have are empty, `null` in json; `--format value --column id` is how a script
+gets the id of a new OST or MDS.
+
+`show` reads a certificate and changes nothing: it is how the id is read from
+a certificate that was issued earlier, and, given the CA with `--ca`, whether
+that CA signed it (`issued` is `yes` or `no`, and empty without `--ca`). It
+takes a certificate whoever issued it, as long as it names a process of
+rawstor.
+
+A certificate is valid for 7 days and a CA for 3650 unless `--validity` says
+otherwise (a number and `s`, `m`, `h` or `d`). Keys are EC P-256. There is no
+revocation beyond expiry and the optional `RAWSTOR_TLS_CRL`, so keep
+certificates short.
+
+The same is available to programs: `rawstor_pki_init()`, `rawstor_pki_issue()`
+`rawstor_pki_renew()` and `rawstor_pki_show()` in `<rawstor/pki.h>`, which need no
+`rawstor_initialize()`, and `rawstor.pki` (`init()`, `issue_ost()`,
+`issue_mds()`, `issue_admin()`, `issue_client()`, `renew()`, `show()`) in
+pyrawstor, which
+does not start rawstor when imported, so a program can make its certificates and
+set `RAWSTOR_TLS_*` before it first uses `Location` or `Target`.
+
+Any other CA that writes the URI SAN fits as well, see
+[Security design](security.md#issuing-certificates).
+
+### Without TLS
+
+`--insecure` on the command line of `rawstor`, `rawstor-ost`, `rawstor-mds`,
+`rawstor-vhost`, `rawstor-vduse` and `rawstor-vhost-qemu` runs a process without
+TLS: its connections are plaintext and **no peer is authenticated**, so every
+peer that can reach a port can do everything. It is a choice of whoever starts
+the process, not of its environment: there is no environment variable for it, and
+a systemd instance cannot run this way, so it needs TLS. A program that links
+librawstor sets `RawstorOpts::insecure`. Use it for a storage network that no
+untrusted party can reach, and for development and tests.
+
+Insecure mode and the TLS settings exclude each other: a process started with
+`--insecure` that has any `RAWSTOR_TLS_*` set, complete or not, refuses to
+start. It logs `INSECURE` at start. A port is TLS or plaintext, never both and
+never detected, so a plaintext process cannot talk to a TLS one, in either
+direction; mixing the two in a cluster is meant only for moving it from one
+mode to the other.

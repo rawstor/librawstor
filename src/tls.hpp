@@ -48,7 +48,9 @@ void expect_ost(const std::string& host, const RawstdUUID& ost_id);
  * (`ost` or `mds`): plain when TLS is off, otherwise the TLS client side of it,
  * after the handshake. The server must be the OST recorded for `host` by
  * expect_ost(); an address with none recorded accepts any server of the
- * scheme's role.
+ * scheme's role. An `ost` address that has completed a handshake as an
+ * `mds` is the witness the MDS hosts on its own port: the server must be that
+ * MDS (the one RAWSTOR_TLS_MDS_ID names, if any), not an OST.
  */
 rawstd::Task<std::unique_ptr<rawtls::Transport>> connect(
     rawio::Queue& queue, int fd, const std::string& scheme,

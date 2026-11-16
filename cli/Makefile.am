@@ -27,6 +27,8 @@ rawstor_SOURCES = chunks.c \
                   main.c \
                   output.cpp \
                   output.h \
+                  pki.c \
+                  pki.h \
                   rawio_sync.c \
                   rawio_sync.h \
                   remove.c \
