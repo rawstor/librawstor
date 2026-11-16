@@ -146,7 +146,12 @@ Every connection has an **expected server identity** that comes from trusted
 configuration, not from the peer: for an MDS, the identity configured next to
 its address; for an OST, `spiffe://<trust_domain>/ost/<ost_id>` where `ost_id` is
 the one the MDS returns in `RESOLVE` (the topology's OST UUID). A handshake
-whose peer SAN differs fails. The address
+whose peer SAN differs fails. The one exception is the witness an MDS hosts
+on its own port: the topology lists it as an `ost://` location with an id of
+its own, but the server there is the MDS, so a client that was configured with
+that address as an `mds://` one requires an MDS identity (the one named by
+`RAWSTOR_TLS_MDS_ID`, if set) from it instead. The address is the one the
+client was given, not one the peer names. The address
 in a location (an IPv4 address or a host name, which is resolved without any
 authentication) takes no part in the check: the certificate carries no DNS
 name that is compared with it, so a spoofed DNS answer can send a client to

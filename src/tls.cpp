@@ -10,6 +10,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 
 namespace {
 
@@ -20,6 +21,10 @@ std::unique_ptr<rawtls::Context> process_context;
 std::string mds_identity;
 // The identity of the OST at each address the MDS has resolved.
 std::map<std::string, std::string> ost_identities;
+// The addresses this process has connected to as an MDS. An MDS hosts a witness
+// on its own port, so an ost:// address among them is that MDS answering as
+// the witness, and it presents its own identity.
+std::set<std::string> mds_hosts;
 // What request_reload() reaches from a signal handler, without the lock.
 std::atomic<rawtls::Context*> signal_context{nullptr};
 
@@ -84,6 +89,7 @@ void terminate() noexcept {
     process_context.reset();
     mds_identity.clear();
     ost_identities.clear();
+    mds_hosts.clear();
 }
 
 void request_reload() noexcept {
@@ -120,16 +126,24 @@ rawstd::Task<std::unique_ptr<rawtls::Transport>> connect(
     std::optional<rawtls::Role> role;
     std::string expected_peer;
     if (scheme == "ost") {
-        role = rawtls::Role::ost;
         std::lock_guard<std::mutex> lock(mutex);
-        std::map<std::string, std::string>::const_iterator it =
-            ost_identities.find(host);
-        if (it != ost_identities.end()) {
-            expected_peer = it->second;
+        if (mds_hosts.count(host) != 0) {
+            // The MDS's own witness: the server is the MDS this process was
+            // configured with, not an OST the MDS named.
+            role = rawtls::Role::mds;
+            expected_peer = mds_identity;
+        } else {
+            role = rawtls::Role::ost;
+            std::map<std::string, std::string>::const_iterator it =
+                ost_identities.find(host);
+            if (it != ost_identities.end()) {
+                expected_peer = it->second;
+            }
         }
     } else if (scheme == "mds") {
         role = rawtls::Role::mds;
         std::lock_guard<std::mutex> lock(mutex);
+        mds_hosts.insert(host);
         expected_peer = mds_identity;
     } else {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);

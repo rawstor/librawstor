@@ -169,3 +169,34 @@ TEST(TlsMdsTest, the_configured_mds_name_is_accepted) {
     RawstorLocationInfo info = {};
     EXPECT_EQ(location_info(*queue, server.location(), &info), 0);
 }
+
+// An MDS hosts a witness on its own port, and the topology lists it as an
+// ost:// location. The server at that address is the MDS, with the identity of
+// an MDS, whatever id the witness has.
+TEST(TlsMdsTest, the_witness_an_mds_hosts_is_accepted_at_its_address) {
+    rawstor::tests::TlsProcess tls(
+        "spiffe://" + rawstor::tests::TlsProcess::trust_domain + "/mds/mds-1"
+    );
+    MdsServer server(8911);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    RawstorLocationInfo info = {};
+    // Not known as an MDS yet, an ost:// address is expected to be an OST.
+    EXPECT_NE(location_info(*queue, "ost://127.0.0.1:8911", &info), 0);
+
+    ASSERT_EQ(location_info(*queue, server.location(), &info), 0);
+    EXPECT_EQ(location_info(*queue, "ost://127.0.0.1:8911", &info), 0);
+}
+
+TEST(TlsMdsTest, the_witness_an_mds_hosts_needs_the_configured_mds_name) {
+    rawstor::tests::TlsProcess tls(
+        "spiffe://" + rawstor::tests::TlsProcess::trust_domain + "/mds/mds-1",
+        "mds-2"
+    );
+    MdsServer server(8912);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    RawstorLocationInfo info = {};
+    EXPECT_NE(location_info(*queue, server.location(), &info), 0);
+    EXPECT_NE(location_info(*queue, "ost://127.0.0.1:8912", &info), 0);
+}

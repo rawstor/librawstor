@@ -138,6 +138,9 @@ set -a; . ./tls.settings; set +a              # for the rawstor CLI
 rawstor location info mds://192.168.0.13               # serving?
 ```
 
+The witness has an id of its own in the topology, but the server at its address
+is the MDS, and a client accepts it with the MDS's certificate, `mds.crt`.
+
 Each member sits on its own server, so a chunk's two copies and its witness
 never share a failure domain.
 
