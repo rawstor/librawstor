@@ -828,10 +828,6 @@ require re-doing earlier ones.
   record layer of our own. Worth doing only if measurements on production
   hardware show the combined cost of XTS and TLS to be unacceptable; the cost
   of XTS alone has not been measured yet.
-- How to move an existing plaintext cluster to TLS without stopping it: a
-  service listening on a TLS and a plaintext port during the transition, or a
-  restart order (MDS, OSTs, then clients) that relies on mirroring and client
-  reconnects.
 - The kernel baseline for kTLS if it is made the default: stage 0 tested only
   7.0, and the zero-copy `send_zc` is not available on a kTLS socket.
 - Whether one TLS connection per chunk slot stays, or stage 2 should coincide
