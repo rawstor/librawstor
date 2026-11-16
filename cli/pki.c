@@ -27,21 +27,20 @@ static void pki_usage(void) {
         "usage: rawstor pki <subcommand> [command_options]\n"
         "\n"
         "A small certificate authority for a cluster that has none: init makes "
-        "it,\n"
-        "issue gives a process its certificate and key, renew replaces them "
-        "before\n"
-        "they expire. The files are what a process lists as RAWSTOR_TLS_CA, "
-        "RAWSTOR_TLS_CERT\n"
-        "and RAWSTOR_TLS_KEY. The CA's own key, DIR/ca.key, must not leave "
-        "the machine\n"
-        "that issues certificates.\n"
+        "it for\n"
+        "the trust domain of the cluster, issue gives a process its "
+        "certificate and key,\n"
+        "renew replaces them before they expire. The files are what a process "
+        "lists as\n"
+        "RAWSTOR_TLS_CA, RAWSTOR_TLS_CERT and RAWSTOR_TLS_KEY. The CA's own "
+        "key,\n"
+        "DIR/ca.key, must not leave the machine that issues certificates.\n"
         "\n"
         "subcommand:\n"
         "  init                  Create a CA in a directory\n"
-        "  issue                 Issue a certificate and a key for an "
-        "identity\n"
+        "  issue                 Issue a certificate and a key for a process\n"
         "  renew                 Issue a new certificate and key for the "
-        "identity of one\n"
+        "process of one\n"
         "\n"
         "Run `rawstor pki <subcommand> --help` to show its usage.\n"
     );
@@ -50,13 +49,19 @@ static void pki_usage(void) {
 static void init_usage(void) {
     fprintf(
         stdout,
-        "usage: rawstor pki init [--name NAME] [--validity DURATION] DIR\n"
+        "usage: rawstor pki init --trust-domain DOMAIN [--validity DURATION] "
+        "DIR\n"
         "\n"
-        "Creates the directory DIR (mode 0700) with a new CA: DIR/ca.crt and "
-        "DIR/ca.key.\n"
+        "Creates the directory DIR (mode 0700) with a new CA for DOMAIN: "
+        "DIR/ca.crt,\n"
+        "DIR/ca.key and DIR/trust_domain. It is the CA of one cluster, and "
+        "every certificate\n"
+        "it issues is in DOMAIN.\n"
         "\n"
         "options:\n"
-        "  --name NAME           Name of the CA (default: rawstor CA)\n"
+        "  --trust-domain DOMAIN The trust domain of the cluster, lowercase "
+        "letters, digits,\n"
+        "                        '.', '-' and '_' (RAWSTOR_TLS_TRUST_DOMAIN)\n"
         "  --validity DURATION   How long the CA is valid (default: 3650d)\n"
         "\n"
         "DURATION is a number with an optional unit: s, m, h or d (seconds "
@@ -68,15 +73,21 @@ static void issue_usage(void) {
     fprintf(
         stdout,
         "usage: rawstor pki issue --ca DIR --cert FILE --key FILE "
-        "[--validity DURATION] IDENTITY\n"
+        "[--validity DURATION] <process>\n"
         "\n"
-        "Issues a certificate and a new private key for IDENTITY, a SPIFFE "
-        "ID:\n"
-        "  spiffe://TRUST_DOMAIN/ost/UUID\n"
-        "  spiffe://TRUST_DOMAIN/mds/NAME\n"
-        "  spiffe://TRUST_DOMAIN/admin/NAME\n"
-        "  spiffe://TRUST_DOMAIN/tenant/UUID/client/NAME\n"
-        "Existing files are replaced; the key is written with mode 0600.\n"
+        "Issues a certificate and a new private key for a process, replacing "
+        "the files; the\n"
+        "key is written with mode 0600. Prints the SPIFFE ID the certificate "
+        "names.\n"
+        "\n"
+        "process:\n"
+        "  ost [ID]              A rawstor-ost. ID is its id in the MDS "
+        "topology, a UUID;\n"
+        "                        a new one is made without it\n"
+        "  mds NAME              A rawstor-mds\n"
+        "  admin NAME            An operator or a control plane\n"
+        "  client TENANT NAME    A tenant's client, such as rawstor-vhost; "
+        "TENANT is a UUID\n"
         "\n"
         "options:\n"
         "  --ca DIR              The CA made by `pki init`\n"
@@ -93,11 +104,11 @@ static void renew_usage(void) {
         "usage: rawstor pki renew --ca DIR --cert FILE --key FILE "
         "[--validity DURATION]\n"
         "\n"
-        "Issues a new certificate and key for the identity of FILE, which the "
-        "CA must\n"
-        "have issued, over the same files. A running process reads them again "
-        "on SIGHUP\n"
-        "(`systemctl reload`).\n"
+        "Issues a new certificate and key for the process FILE was issued "
+        "for, which the CA\n"
+        "must have issued, over the same files. A running process reads them "
+        "again on\n"
+        "SIGHUP (`systemctl reload`). Prints the SPIFFE ID.\n"
         "\n"
         "options:\n"
         "  --ca DIR              The CA made by `pki init`\n"
@@ -135,11 +146,11 @@ static int report(const char* what, int res) {
 static int command_init(int argc, char** argv) {
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
-        {"name", required_argument, NULL, 'n'},
+        {"trust-domain", required_argument, NULL, 'd'},
         {"validity", required_argument, NULL, 'V'},
         {},
     };
-    const char* name = "rawstor CA";
+    const char* trust_domain = NULL;
     unsigned long validity = DEFAULT_CA_VALIDITY;
     optind = 0;
     int c;
@@ -148,8 +159,8 @@ static int command_init(int argc, char** argv) {
         case 'h':
             init_usage();
             return EXIT_SUCCESS;
-        case 'n':
-            name = optarg;
+        case 'd':
+            trust_domain = optarg;
             break;
         case 'V': {
             int res = parse_validity(optarg, &validity);
@@ -162,14 +173,75 @@ static int command_init(int argc, char** argv) {
             return EX_USAGE;
         }
     }
+    if (trust_domain == NULL) {
+        fprintf(stderr, "--trust-domain is required\n");
+        return EX_USAGE;
+    }
     if (optind != argc - 1) {
         fprintf(stderr, "A directory is required\n");
         return EX_USAGE;
     }
     return report(
         "Failed to create the CA",
-        rawstor_pki_init(argv[optind], name, validity)
+        rawstor_pki_init(argv[optind], trust_domain, validity)
     );
+}
+
+/* The role and its names from the arguments after the options: `ost [ID]`,
+ * `mds NAME`, `admin NAME`, `client TENANT NAME`. Returns 0, or EX_USAGE. */
+static int parse_process(
+    int argc, char** argv, enum RawstorPkiRole* role, const char** tenant,
+    const char** name
+) {
+    if (optind == argc) {
+        fprintf(stderr, "A process is required: ost, mds, admin or client\n");
+        return EX_USAGE;
+    }
+    const char* kind = argv[optind++];
+    int rest = argc - optind;
+    *tenant = NULL;
+    *name = NULL;
+    int min;
+    int max;
+    if (strcmp(kind, "ost") == 0) {
+        *role = RAWSTOR_PKI_OST;
+        min = 0;
+        max = 1;
+    } else if (strcmp(kind, "mds") == 0) {
+        *role = RAWSTOR_PKI_MDS;
+        min = max = 1;
+    } else if (strcmp(kind, "admin") == 0) {
+        *role = RAWSTOR_PKI_ADMIN;
+        min = max = 1;
+    } else if (strcmp(kind, "client") == 0) {
+        *role = RAWSTOR_PKI_CLIENT;
+        min = max = 2;
+    } else {
+        fprintf(
+            stderr, "Unknown process: %s (ost, mds, admin or client)\n", kind
+        );
+        return EX_USAGE;
+    }
+    if (rest < min) {
+        fprintf(
+            stderr, "%s needs %s\n", kind,
+            *role == RAWSTOR_PKI_CLIENT ? "a tenant and a name"
+            : *role == RAWSTOR_PKI_OST  ? "nothing or an id"
+                                        : "a name"
+        );
+        return EX_USAGE;
+    }
+    if (rest > max) {
+        fprintf(stderr, "Unexpected argument: %s\n", argv[optind + max]);
+        return EX_USAGE;
+    }
+    if (*role == RAWSTOR_PKI_CLIENT) {
+        *tenant = argv[optind];
+        *name = argv[optind + 1];
+    } else if (rest == 1) {
+        *name = argv[optind];
+    }
+    return 0;
 }
 
 static int command_issue(int argc, char** argv, int renew) {
@@ -220,24 +292,38 @@ static int command_issue(int argc, char** argv, int renew) {
         fprintf(stderr, "--ca, --cert and --key are required\n");
         return EX_USAGE;
     }
+
+    char identity[RAWSTOR_PKI_IDENTITY_SIZE];
+    int res;
     if (renew) {
         if (optind != argc) {
             fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
             return EX_USAGE;
         }
-        return report(
-            "Failed to renew the certificate",
-            rawstor_pki_renew(ca, cert, key, validity)
+        res = rawstor_pki_renew(
+            ca, cert, key, validity, identity, sizeof(identity)
         );
+        if (res != 0) {
+            return report("Failed to renew the certificate", res);
+        }
+    } else {
+        enum RawstorPkiRole role;
+        const char* tenant;
+        const char* name;
+        res = parse_process(argc, argv, &role, &tenant, &name);
+        if (res != 0) {
+            return res;
+        }
+        res = rawstor_pki_issue(
+            ca, role, tenant, name, validity, cert, key, identity,
+            sizeof(identity)
+        );
+        if (res != 0) {
+            return report("Failed to issue the certificate", res);
+        }
     }
-    if (optind != argc - 1) {
-        fprintf(stderr, "An identity is required\n");
-        return EX_USAGE;
-    }
-    return report(
-        "Failed to issue the certificate",
-        rawstor_pki_issue(ca, argv[optind], validity, cert, key)
-    );
+    printf("%s\n", identity);
+    return EXIT_SUCCESS;
 }
 
 int rawstor_cli_pki(int argc, char** argv) {

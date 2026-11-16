@@ -12,8 +12,11 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <system_error>
@@ -24,8 +27,9 @@ namespace {
 
 namespace fs = std::filesystem;
 
-const std::string ost_uri =
-    "spiffe://cluster.example/ost/0198f1a2-3b4c-7d5e-8f90-a1b2c3d4e5f6";
+const std::string ost_id = "0198f1a2-3b4c-7d5e-8f90-a1b2c3d4e5f6";
+const std::string ost_uri = "spiffe://cluster.example/ost/" + ost_id;
+const std::string tenant = "0198f1a2-3b4c-7d5e-8f90-0123456789ab";
 const std::chrono::seconds hour(3600);
 
 class Dir final {
@@ -77,6 +81,13 @@ std::string serial_of(const std::string& file) {
     return s;
 }
 
+std::string read_file(const std::string& file) {
+    std::ifstream in(file, std::ios::binary);
+    return std::string(
+        std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()
+    );
+}
+
 void expect_errno(int expected, const std::function<void()>& call) {
     try {
         call();
@@ -86,135 +97,210 @@ void expect_errno(int expected, const std::function<void()>& call) {
     }
 }
 
+std::string uri_of(const std::string& file) {
+    auto cert = load(file);
+    GENERAL_NAMES* names = static_cast<GENERAL_NAMES*>(
+        X509_get_ext_d2i(cert.get(), NID_subject_alt_name, nullptr, nullptr)
+    );
+    EXPECT_NE(names, nullptr);
+    EXPECT_EQ(sk_GENERAL_NAME_num(names), 1);
+    const GENERAL_NAME* name = sk_GENERAL_NAME_value(names, 0);
+    EXPECT_EQ(name->type, GEN_URI);
+    std::string uri(
+        reinterpret_cast<const char*>(
+            ASN1_STRING_get0_data(name->d.uniformResourceIdentifier)
+        ),
+        static_cast<size_t>(
+            ASN1_STRING_length(name->d.uniformResourceIdentifier)
+        )
+    );
+    GENERAL_NAMES_free(names);
+    return uri;
+}
+
+// A CA in a directory of its own.
+class CATest : public ::testing::Test {
+protected:
+    Dir dir;
+
+    void init() { rawtls::CA::init(dir.path("ca"), "cluster.example", hour); }
+
+    rawtls::Config config(const std::string& name) {
+        rawtls::Config c;
+        c.trust_domain = "cluster.example";
+        c.cert_file = dir.path(name + ".crt");
+        c.key_file = dir.path(name + ".key");
+        c.ca_file = dir.path("ca/ca.crt");
+        return c;
+    }
+};
+
 } // namespace
 
-TEST(CATest, init_makes_a_ca_whose_key_is_private) {
-    Dir dir;
-    rawtls::CA::init(dir.path("ca"), "test CA", hour);
+TEST_F(CATest, init_makes_a_ca_whose_key_is_private) {
+    init();
 
     EXPECT_EQ(mode_of(dir.path("ca")), 0700u);
     EXPECT_EQ(mode_of(dir.path("ca/ca.key")), 0600u);
     EXPECT_EQ(mode_of(dir.path("ca/ca.crt")), 0644u);
-    EXPECT_FALSE(fs::exists(dir.path("ca/ca.key.tmp")));
+    // Nothing is left of the files written aside.
+    size_t files = 0;
+    for ([[maybe_unused]] const auto& entry :
+         fs::directory_iterator(dir.path("ca"))) {
+        ++files;
+    }
+    EXPECT_EQ(files, 3u);
 
     auto cert = load(dir.path("ca/ca.crt"));
     EXPECT_EQ(X509_check_ca(cert.get()), 1);
     EXPECT_EQ(X509_self_signed(cert.get(), 1), 1);
+    EXPECT_EQ(rawtls::CA(dir.path("ca")).trust_domain(), "cluster.example");
 }
 
-TEST(CATest, init_refuses_an_existing_ca) {
-    Dir dir;
-    rawtls::CA::init(dir.path("ca"), "test CA", hour);
+TEST_F(CATest, init_refuses_an_existing_ca) {
+    init();
     std::string before = serial_of(dir.path("ca/ca.crt"));
     expect_errno(EEXIST, [&] {
-        rawtls::CA::init(dir.path("ca"), "other CA", hour);
+        rawtls::CA::init(dir.path("ca"), "other.example", hour);
     });
     EXPECT_EQ(serial_of(dir.path("ca/ca.crt")), before);
+    EXPECT_EQ(rawtls::CA(dir.path("ca")).trust_domain(), "cluster.example");
 }
 
-TEST(CATest, init_rejects_bad_arguments) {
-    Dir dir;
-    expect_errno(EINVAL, [&] { rawtls::CA::init(dir.path("a"), "", hour); });
+TEST_F(CATest, init_rejects_bad_arguments) {
+    for (const char* bad : {"", "Cluster.Example", "a/b", "cluster example"}) {
+        expect_errno(EINVAL, [&] {
+            rawtls::CA::init(dir.path("a"), bad, hour);
+        });
+    }
     expect_errno(EINVAL, [&] {
-        rawtls::CA::init(dir.path("b"), "CA", std::chrono::seconds(0));
+        rawtls::CA::init(
+            dir.path("b"), "cluster.example", std::chrono::seconds(0)
+        );
     });
 }
 
-TEST(CATest, a_missing_ca_is_not_opened) {
-    Dir dir;
+TEST_F(CATest, a_missing_ca_is_not_opened) {
     expect_errno(ENOENT, [&] { rawtls::CA ca(dir.path("nothing")); });
 }
 
-TEST(CATest, issues_a_certificate_a_context_takes) {
-    Dir dir;
-    rawtls::CA::init(dir.path("ca"), "test CA", hour);
+TEST_F(CATest, an_ost_gets_a_certificate_a_context_takes) {
+    init();
     rawtls::CA ca(dir.path("ca"));
-    ca.issue(ost_uri, hour, dir.path("ost.crt"), dir.path("ost.key"));
+    EXPECT_EQ(
+        ca.issue(
+            rawtls::Role::ost, "", ost_id, hour, dir.path("ost.crt"),
+            dir.path("ost.key")
+        ),
+        ost_uri
+    );
 
     EXPECT_EQ(mode_of(dir.path("ost.key")), 0600u);
+    EXPECT_EQ(mode_of(dir.path("ost.crt")), 0644u);
 
     auto cert = load(dir.path("ost.crt"));
     auto root = load(ca.ca_file());
     EXPECT_EQ(X509_check_issued(root.get(), cert.get()), X509_V_OK);
     EXPECT_EQ(X509_check_ca(cert.get()), 0);
-
-    // Exactly one URI SAN, and it is the identity.
-    GENERAL_NAMES* names = static_cast<GENERAL_NAMES*>(
-        X509_get_ext_d2i(cert.get(), NID_subject_alt_name, nullptr, nullptr)
-    );
-    ASSERT_NE(names, nullptr);
-    ASSERT_EQ(sk_GENERAL_NAME_num(names), 1);
-    const GENERAL_NAME* name = sk_GENERAL_NAME_value(names, 0);
-    ASSERT_EQ(name->type, GEN_URI);
-    EXPECT_EQ(
-        std::string(
-            reinterpret_cast<const char*>(
-                ASN1_STRING_get0_data(name->d.uniformResourceIdentifier)
-            ),
-            static_cast<size_t>(
-                ASN1_STRING_length(name->d.uniformResourceIdentifier)
-            )
-        ),
-        ost_uri
-    );
-    GENERAL_NAMES_free(names);
+    EXPECT_EQ(uri_of(dir.path("ost.crt")), ost_uri);
 
     uint32_t xku = X509_get_extended_key_usage(cert.get());
     EXPECT_TRUE(xku & XKU_SSL_SERVER);
     EXPECT_TRUE(xku & XKU_SSL_CLIENT);
 
-    rawtls::Config config;
-    config.trust_domain = "cluster.example";
-    config.cert_file = dir.path("ost.crt");
-    config.key_file = dir.path("ost.key");
-    config.ca_file = ca.ca_file();
-    EXPECT_NO_THROW(rawtls::Context context(config));
+    EXPECT_NO_THROW(rawtls::Context context(config("ost")));
 }
 
-TEST(CATest, issue_checks_the_identity) {
-    Dir dir;
-    rawtls::CA::init(dir.path("ca"), "test CA", hour);
+TEST_F(CATest, an_ost_without_an_id_gets_a_new_one) {
+    init();
     rawtls::CA ca(dir.path("ca"));
-    for (const char* bad :
-         {"", "ost", "https://cluster.example/ost/x",
-          "spiffe://cluster.example/ost/not-a-uuid",
-          "spiffe://cluster.example/nobody/x"}) {
-        expect_errno(EINVAL, [&] {
-            ca.issue(bad, hour, dir.path("x.crt"), dir.path("x.key"));
-        });
+    std::string first = ca.issue(
+        rawtls::Role::ost, "", "", hour, dir.path("a.crt"), dir.path("a.key")
+    );
+    std::string second = ca.issue(
+        rawtls::Role::ost, "", "", hour, dir.path("b.crt"), dir.path("b.key")
+    );
+    EXPECT_NE(first, second);
+    EXPECT_EQ(rawtls::SpiffeId(first).role(), rawtls::Role::ost);
+    EXPECT_EQ(uri_of(dir.path("a.crt")), first);
+}
+
+TEST_F(CATest, every_role_gets_its_shape) {
+    init();
+    rawtls::CA ca(dir.path("ca"));
+    EXPECT_EQ(
+        ca.issue(
+            rawtls::Role::mds, "", "mds-1", hour, dir.path("m.crt"),
+            dir.path("m.key")
+        ),
+        "spiffe://cluster.example/mds/mds-1"
+    );
+    EXPECT_EQ(
+        ca.issue(
+            rawtls::Role::admin, "", "ops", hour, dir.path("a.crt"),
+            dir.path("a.key")
+        ),
+        "spiffe://cluster.example/admin/ops"
+    );
+    EXPECT_EQ(
+        ca.issue(
+            rawtls::Role::client, tenant, "vm-1", hour, dir.path("c.crt"),
+            dir.path("c.key")
+        ),
+        "spiffe://cluster.example/tenant/" + tenant + "/client/vm-1"
+    );
+    for (const char* name : {"m", "a", "c"}) {
+        EXPECT_NO_THROW(rawtls::Context context(config(name)));
     }
+}
+
+TEST_F(CATest, issue_checks_what_it_is_asked) {
+    init();
+    rawtls::CA ca(dir.path("ca"));
+    auto issue = [&](rawtls::Role role, const std::string& t,
+                     const std::string& name) {
+        return [&, role, t, name] {
+            ca.issue(role, t, name, hour, dir.path("x.crt"), dir.path("x.key"));
+        };
+    };
+    expect_errno(EINVAL, issue(rawtls::Role::ost, "", "not-a-uuid"));
+    expect_errno(EINVAL, issue(rawtls::Role::mds, "", ""));
+    expect_errno(EINVAL, issue(rawtls::Role::mds, "", "a/b"));
+    expect_errno(EINVAL, issue(rawtls::Role::admin, tenant, "ops"));
+    expect_errno(EINVAL, issue(rawtls::Role::client, "", "vm"));
+    expect_errno(EINVAL, issue(rawtls::Role::client, tenant, ""));
+    expect_errno(EINVAL, issue(rawtls::Role::client, "not-a-uuid", "vm"));
     EXPECT_FALSE(fs::exists(dir.path("x.crt")));
     EXPECT_FALSE(fs::exists(dir.path("x.key")));
     expect_errno(EINVAL, [&] {
         ca.issue(
-            ost_uri, std::chrono::seconds(-1), dir.path("x.crt"),
-            dir.path("x.key")
+            rawtls::Role::ost, "", ost_id, std::chrono::seconds(-1),
+            dir.path("x.crt"), dir.path("x.key")
         );
     });
 }
 
-TEST(CATest, renew_keeps_the_identity_and_changes_the_rest) {
-    Dir dir;
-    rawtls::CA::init(dir.path("ca"), "test CA", hour);
+TEST_F(CATest, renew_keeps_the_identity_and_changes_the_rest) {
+    init();
     rawtls::CA ca(dir.path("ca"));
-    ca.issue(ost_uri, hour, dir.path("ost.crt"), dir.path("ost.key"));
+    ca.issue(
+        rawtls::Role::ost, "", ost_id, hour, dir.path("ost.crt"),
+        dir.path("ost.key")
+    );
     std::string serial = serial_of(dir.path("ost.crt"));
 
-    ca.renew(dir.path("ost.crt"), dir.path("ost.key"), 2 * hour);
+    EXPECT_EQ(
+        ca.renew(dir.path("ost.crt"), dir.path("ost.key"), 2 * hour), ost_uri
+    );
 
     EXPECT_NE(serial_of(dir.path("ost.crt")), serial);
+    EXPECT_EQ(uri_of(dir.path("ost.crt")), ost_uri);
     EXPECT_EQ(mode_of(dir.path("ost.key")), 0600u);
-    rawtls::Config config;
-    config.trust_domain = "cluster.example";
-    config.cert_file = dir.path("ost.crt");
-    config.key_file = dir.path("ost.key");
-    config.ca_file = ca.ca_file();
-    EXPECT_NO_THROW(rawtls::Context context(config));
+    EXPECT_NO_THROW(rawtls::Context context(config("ost")));
 }
 
-TEST(CATest, renew_refuses_what_another_ca_issued) {
-    Dir dir;
-    rawtls::CA::init(dir.path("ca"), "test CA", hour);
+TEST_F(CATest, renew_refuses_what_another_ca_issued) {
+    init();
     rawtls::CA ca(dir.path("ca"));
 
     rawtls::testing::Pki other;
@@ -227,11 +313,75 @@ TEST(CATest, renew_refuses_what_another_ca_issued) {
     });
 }
 
-TEST(CATest, renew_needs_an_existing_certificate) {
-    Dir dir;
-    rawtls::CA::init(dir.path("ca"), "test CA", hour);
+TEST_F(CATest, renew_needs_an_existing_certificate) {
+    init();
     rawtls::CA ca(dir.path("ca"));
     expect_errno(ENOENT, [&] {
         ca.renew(dir.path("none.crt"), dir.path("none.key"), hour);
     });
+}
+
+// A file or a symlink that somebody put where a temporary file would go is not
+// written through: the key of the CA must not end up in a file of theirs.
+TEST_F(CATest, a_planted_symlink_is_not_followed) {
+    fs::create_directories(dir.path("ca"));
+    std::string victim = dir.path("victim");
+    {
+        FILE* f = fopen(victim.c_str(), "w");
+        ASSERT_NE(f, nullptr);
+        fputs("precious", f);
+        fclose(f);
+    }
+    for (const char* name :
+         {"ca.key.tmp", "ca.crt.tmp", ".ca.key.tmp", ".ca.key.XXXXXX",
+          "trust_domain.tmp"}) {
+        fs::create_symlink(victim, dir.path(std::string("ca/") + name));
+    }
+    init();
+
+    FILE* f = fopen(victim.c_str(), "r");
+    ASSERT_NE(f, nullptr);
+    char buffer[16] = {};
+    EXPECT_EQ(fread(buffer, 1, sizeof(buffer) - 1, f), 8u);
+    fclose(f);
+    EXPECT_EQ(std::string(buffer), "precious");
+
+    // And an output that is itself a symlink is replaced, not written through.
+    fs::create_symlink(victim, dir.path("ost.key"));
+    rawtls::CA ca(dir.path("ca"));
+    ca.issue(
+        rawtls::Role::ost, "", ost_id, hour, dir.path("ost.crt"),
+        dir.path("ost.key")
+    );
+    EXPECT_FALSE(fs::is_symlink(dir.path("ost.key")));
+    f = fopen(victim.c_str(), "r");
+    ASSERT_NE(f, nullptr);
+    memset(buffer, 0, sizeof(buffer));
+    EXPECT_EQ(fread(buffer, 1, sizeof(buffer) - 1, f), 8u);
+    fclose(f);
+    EXPECT_EQ(std::string(buffer), "precious");
+}
+
+// A certificate that cannot be written leaves the key it was issued with out
+// too: the pair that was there stays.
+TEST_F(CATest, a_failed_write_leaves_the_old_pair) {
+    init();
+    rawtls::CA ca(dir.path("ca"));
+    ca.issue(
+        rawtls::Role::ost, "", ost_id, hour, dir.path("ost.crt"),
+        dir.path("ost.key")
+    );
+    std::string key = read_file(dir.path("ost.key"));
+    std::string cert = read_file(dir.path("ost.crt"));
+
+    // The certificate goes where nothing can be written.
+    expect_errno(ENOENT, [&] {
+        ca.issue(
+            rawtls::Role::ost, "", ost_id, hour, dir.path("nowhere/ost.crt"),
+            dir.path("ost.key")
+        );
+    });
+
+    EXPECT_EQ(read_file(dir.path("ost.key")), key);
+    EXPECT_EQ(read_file(dir.path("ost.crt")), cert);
 }

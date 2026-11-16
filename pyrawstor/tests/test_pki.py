@@ -10,7 +10,8 @@ from pathlib import Path
 
 from rawstor import pki
 
-OST = "spiffe://cluster.example/ost/0198f1a2-3b4c-7d5e-8f90-a1b2c3d4e5f6"
+OST = "0198f1a2-3b4c-7d5e-8f90-a1b2c3d4e5f6"
+TENANT = "0198f1a2-3b4c-7d5e-8f90-0123456789ab"
 
 
 class TestPki(unittest.TestCase):
@@ -21,7 +22,7 @@ class TestPki(unittest.TestCase):
         self.ca = self.dir / "ca"
 
     def test_init(self):
-        pki.init(self.ca, "test CA", datetime.timedelta(days=1))
+        pki.init(self.ca, "cluster.example", datetime.timedelta(days=1))
 
         self.assertEqual(stat.S_IMODE(os.stat(self.ca).st_mode), 0o700)
         self.assertEqual(
@@ -31,33 +32,62 @@ class TestPki(unittest.TestCase):
         self.assertTrue((self.ca / "ca.crt").exists())
 
     def test_init_twice(self):
-        pki.init(self.ca)
+        pki.init(self.ca, "cluster.example")
         with self.assertRaises(FileExistsError):
-            pki.init(self.ca)
+            pki.init(self.ca, "cluster.example")
+
+    def test_bad_trust_domain(self):
+        with self.assertRaises(OSError) as raised:
+            pki.init(self.ca, "Not A Domain")
+        self.assertEqual(raised.exception.errno, errno.EINVAL)
 
     def test_issue_and_renew(self):
-        pki.init(self.ca)
+        pki.init(self.ca, "cluster.example")
         cert = self.dir / "ost.crt"
         key = self.dir / "ost.key"
 
-        pki.issue(self.ca, OST, cert, key, validity=3600)
+        identity = pki.issue_ost(self.ca, cert, key, OST, validity=3600)
+        self.assertEqual(identity, f"spiffe://cluster.example/ost/{OST}")
         self.assertEqual(stat.S_IMODE(os.stat(key).st_mode), 0o600)
         old_key = key.read_bytes()
 
-        pki.renew(self.ca, cert, key, datetime.timedelta(hours=2))
+        renewed = pki.renew(self.ca, cert, key, datetime.timedelta(hours=2))
+        self.assertEqual(renewed, identity)
         self.assertNotEqual(key.read_bytes(), old_key)
+
+    def test_ost_without_an_id(self):
+        pki.init(self.ca, "cluster.example")
+        first = pki.issue_ost(self.ca, self.dir / "a.crt", self.dir / "a.key")
+        second = pki.issue_ost(self.ca, self.dir / "b.crt", self.dir / "b.key")
+        self.assertTrue(first.startswith("spiffe://cluster.example/ost/"))
+        self.assertNotEqual(first, second)
+
+    def test_roles(self):
+        pki.init(self.ca, "cluster.example")
+        crt = self.dir / "x.crt"
+        key = self.dir / "x.key"
+        self.assertEqual(
+            pki.issue_mds(self.ca, "mds-1", crt, key),
+            "spiffe://cluster.example/mds/mds-1",
+        )
+        self.assertEqual(
+            pki.issue_admin(self.ca, "ops", crt, key),
+            "spiffe://cluster.example/admin/ops",
+        )
+        self.assertEqual(
+            pki.issue_client(self.ca, TENANT, "vm-1", crt, key),
+            f"spiffe://cluster.example/tenant/{TENANT}/client/vm-1",
+        )
 
     def test_missing_ca(self):
         with self.assertRaises(FileNotFoundError):
-            pki.issue(
-                self.ca, OST, self.dir / "a.crt", self.dir / "a.key"
-            )
+            pki.issue_ost(self.ca, self.dir / "a.crt", self.dir / "a.key", OST)
 
-    def test_bad_identity(self):
-        pki.init(self.ca)
+    def test_bad_name(self):
+        pki.init(self.ca, "cluster.example")
         with self.assertRaises(OSError) as raised:
-            pki.issue(
-                self.ca, "nobody", self.dir / "a.crt", self.dir / "a.key"
+            pki.issue_ost(
+                self.ca, self.dir / "a.crt", self.dir / "a.key", "nobody"
             )
         self.assertEqual(raised.exception.errno, errno.EINVAL)
         self.assertIn("nobody", str(raised.exception))
@@ -65,16 +95,16 @@ class TestPki(unittest.TestCase):
 
     def test_bad_validity(self):
         with self.assertRaises(OSError) as raised:
-            pki.init(self.ca, validity=0)
+            pki.init(self.ca, "cluster.example", validity=0)
         self.assertEqual(raised.exception.errno, errno.EINVAL)
 
     def test_renew_foreign_certificate(self):
-        pki.init(self.ca)
+        pki.init(self.ca, "cluster.example")
         other = self.dir / "other"
-        pki.init(other)
+        pki.init(other, "cluster.example")
         cert = self.dir / "ost.crt"
         key = self.dir / "ost.key"
-        pki.issue(other, OST, cert, key)
+        pki.issue_ost(other, cert, key, OST)
 
         with self.assertRaises(OSError) as raised:
             pki.renew(self.ca, cert, key)

@@ -24,14 +24,14 @@ static PyObject* pki_error(int res) {
 
 static PyObject* py_pki_init(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* dir;
-    const char* name;
+    const char* trust_domain;
     unsigned long validity;
-    if (!PyArg_ParseTuple(args, "ssk", &dir, &name, &validity)) {
+    if (!PyArg_ParseTuple(args, "ssk", &dir, &trust_domain, &validity)) {
         return NULL;
     }
     int res;
     Py_BEGIN_ALLOW_THREADS;
-    res = rawstor_pki_init(dir, name, validity);
+    res = rawstor_pki_init(dir, trust_domain, validity);
     Py_END_ALLOW_THREADS;
     if (res < 0) {
         return pki_error(res);
@@ -39,25 +39,35 @@ static PyObject* py_pki_init(PyObject* Py_UNUSED(self), PyObject* args) {
     Py_RETURN_NONE;
 }
 
+/* issue(dir, role, tenant, name, validity, cert_file, key_file) -> identity,
+ * the role being the RawstorPkiRole as an int and tenant and name None where
+ * the role has none. */
 static PyObject* py_pki_issue(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* dir;
-    const char* identity;
+    int role;
+    const char* tenant;
+    const char* name;
     unsigned long validity;
     const char* cert_file;
     const char* key_file;
     if (!PyArg_ParseTuple(
-            args, "sskss", &dir, &identity, &validity, &cert_file, &key_file
+            args, "sizzkss", &dir, &role, &tenant, &name, &validity, &cert_file,
+            &key_file
         )) {
         return NULL;
     }
+    char identity[RAWSTOR_PKI_IDENTITY_SIZE];
     int res;
     Py_BEGIN_ALLOW_THREADS;
-    res = rawstor_pki_issue(dir, identity, validity, cert_file, key_file);
+    res = rawstor_pki_issue(
+        dir, (enum RawstorPkiRole)role, tenant, name, validity, cert_file,
+        key_file, identity, sizeof(identity)
+    );
     Py_END_ALLOW_THREADS;
     if (res < 0) {
         return pki_error(res);
     }
-    Py_RETURN_NONE;
+    return PyUnicode_FromString(identity);
 }
 
 static PyObject* py_pki_renew(PyObject* Py_UNUSED(self), PyObject* args) {
@@ -70,14 +80,17 @@ static PyObject* py_pki_renew(PyObject* Py_UNUSED(self), PyObject* args) {
         )) {
         return NULL;
     }
+    char identity[RAWSTOR_PKI_IDENTITY_SIZE];
     int res;
     Py_BEGIN_ALLOW_THREADS;
-    res = rawstor_pki_renew(dir, cert_file, key_file, validity);
+    res = rawstor_pki_renew(
+        dir, cert_file, key_file, validity, identity, sizeof(identity)
+    );
     Py_END_ALLOW_THREADS;
     if (res < 0) {
         return pki_error(res);
     }
-    Py_RETURN_NONE;
+    return PyUnicode_FromString(identity);
 }
 
 static PyMethodDef libpki_methods[] = {

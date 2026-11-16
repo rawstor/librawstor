@@ -2,6 +2,8 @@
 
 #include <rawtls/spiffe.hpp>
 
+#include <rawstd/uuid.h>
+
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
@@ -165,57 +167,118 @@ Cert build(
     return cert;
 }
 
-// Writes `file` through a temporary one in the same directory, so a process
-// that reads it never sees half of it. `mode` is the mode of the new file.
-template <typename Write>
-void write_file(const std::string& file, mode_t mode, Write write) {
-    std::string tmp = file + ".tmp";
-    int fd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, mode);
-    if (fd < 0) {
-        raise(errno, "Cannot write " + file);
-    }
-    // umask may have taken bits off: a key must not end up with more than
-    // asked, and a leftover file from an earlier run may have had more.
-    if (fchmod(fd, mode) != 0) {
-        int errsv = errno;
-        close(fd);
-        unlink(tmp.c_str());
-        raise(errsv, "Cannot write " + file);
-    }
-    FILE* f = fdopen(fd, "w");
-    if (f == nullptr) {
-        int errsv = errno;
-        close(fd);
-        unlink(tmp.c_str());
-        raise(errsv, "Cannot write " + file);
-    }
-    bool ok = write(f) && fflush(f) == 0 && fsync(fileno(f)) == 0;
-    int errsv = ok ? 0 : (errno != 0 ? errno : EIO);
-    if (fclose(f) != 0 && ok) {
-        ok = false;
-        errsv = errno;
-    }
-    if (!ok || rename(tmp.c_str(), file.c_str()) != 0) {
-        if (ok) {
+// A file written aside, next to the one it is going to replace, and renamed
+// over it by commit(). The name of the temporary file is made by mkstemp(),
+// which creates it exclusively, so a file or a symlink that somebody put in the
+// directory beforehand is never written through; rename() replaces a symlink
+// at `file` instead of following it. What is not committed is removed.
+class Staged final {
+private:
+    std::string _file;
+    std::string _tmp;
+
+public:
+    Staged() = default;
+
+    // `mode` is the mode of the new file: a key must not end up with more than
+    // asked, whatever the umask is.
+    template <typename Write>
+    Staged(const std::string& file, mode_t mode, Write write) : _file(file) {
+        std::filesystem::path path(file);
+        std::filesystem::path dir = path.parent_path();
+        if (dir.empty()) {
+            dir = ".";
+        }
+        std::string pattern =
+            (dir / ("." + path.filename().string() + ".XXXXXX")).string();
+        int fd = mkostemp(pattern.data(), O_CLOEXEC);
+        if (fd < 0) {
+            raise(errno, "Cannot write " + file);
+        }
+        _tmp = pattern;
+        if (fchmod(fd, mode) != 0) {
+            int errsv = errno;
+            close(fd);
+            raise(errsv, "Cannot write " + file);
+        }
+        FILE* f = fdopen(fd, "w");
+        if (f == nullptr) {
+            int errsv = errno;
+            close(fd);
+            raise(errsv, "Cannot write " + file);
+        }
+        errno = 0;
+        bool ok = write(f) && fflush(f) == 0 && fsync(fileno(f)) == 0;
+        int errsv = ok ? 0 : (errno != 0 ? errno : EIO);
+        if (fclose(f) != 0 && ok) {
+            ok = false;
             errsv = errno;
         }
-        unlink(tmp.c_str());
-        raise(errsv, "Cannot write " + file);
+        if (!ok) {
+            raise(errsv, "Cannot write " + file);
+        }
     }
-}
 
-void write_cert(const std::string& file, X509* cert) {
-    write_file(file, 0644, [&](FILE* f) {
+    Staged(Staged&& other) noexcept :
+        _file(std::move(other._file)),
+        _tmp(std::move(other._tmp)) {
+        other._tmp.clear();
+    }
+
+    Staged& operator=(Staged&&) = delete;
+    Staged(const Staged&) = delete;
+    Staged& operator=(const Staged&) = delete;
+
+    ~Staged() {
+        if (!_tmp.empty()) {
+            unlink(_tmp.c_str());
+        }
+    }
+
+    void commit() {
+        if (rename(_tmp.c_str(), _file.c_str()) != 0) {
+            raise(errno, "Cannot write " + _file);
+        }
+        _tmp.clear();
+    }
+};
+
+Staged stage_cert(const std::string& file, X509* cert) {
+    return Staged(file, 0644, [&](FILE* f) {
         return PEM_write_X509(f, cert) == 1;
     });
 }
 
-void write_key(const std::string& file, EVP_PKEY* key) {
-    write_file(file, 0600, [&](FILE* f) {
+Staged stage_key(const std::string& file, EVP_PKEY* key) {
+    return Staged(file, 0600, [&](FILE* f) {
         return PEM_write_PrivateKey(
                    f, key, nullptr, nullptr, 0, nullptr, nullptr
                ) == 1;
     });
+}
+
+Staged stage_text(const std::string& file, const std::string& text) {
+    return Staged(file, 0644, [&](FILE* f) {
+        return fwrite(text.data(), 1, text.size(), f) == text.size();
+    });
+}
+
+std::string read_text(const std::string& file) {
+    FILE* f = fopen(file.c_str(), "r");
+    if (f == nullptr) {
+        raise(errno, "Cannot open " + file);
+    }
+    std::string text;
+    char buffer[256];
+    size_t n;
+    while ((n = fread(buffer, 1, sizeof(buffer), f)) > 0) {
+        text.append(buffer, n);
+    }
+    fclose(f);
+    while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) {
+        text.pop_back();
+    }
+    return text;
 }
 
 Cert read_cert(const std::string& file) {
@@ -292,14 +355,36 @@ void make_dir(const std::string& dir) {
 
 namespace rawtls {
 
+namespace {
+
+// Only a name that makes a SPIFFE ID of rawstor in this trust domain.
+void check_trust_domain(const std::string& trust_domain) {
+    try {
+        static_cast<void>(SpiffeId("spiffe://" + trust_domain + "/mds/x"));
+    } catch (const std::system_error&) {
+        raise(EINVAL, "Not a trust domain of rawstor: " + trust_domain);
+    }
+}
+
+std::string new_ost_id() {
+    RawstdUUID id;
+    int res = rawstd_uuid7_init(&id);
+    if (res < 0) {
+        raise(-res, "Cannot generate an OST id");
+    }
+    RawstdUUIDString text;
+    rawstd_uuid_to_string(&id, &text);
+    return text;
+}
+
+} // namespace
+
 void CA::init(
-    const std::string& dir, const std::string& common_name,
+    const std::string& dir, const std::string& trust_domain,
     std::chrono::seconds validity
 ) {
     ERR_clear_error();
-    if (common_name.empty()) {
-        raise(EINVAL, "The CA needs a name");
-    }
+    check_trust_domain(trust_domain);
     make_dir(dir);
     if (access(join(dir, "ca.key").c_str(), F_OK) == 0 ||
         access(join(dir, "ca.crt").c_str(), F_OK) == 0) {
@@ -307,12 +392,17 @@ void CA::init(
     }
     Key key = new_key();
     Cert cert = build(
-        Profile{true, common_name, ""}, key.get(), nullptr, nullptr, validity
+        Profile{true, "rawstor CA", ""}, key.get(), nullptr, nullptr, validity
     );
-    // The key first: a CA certificate without its key is useless, a key
-    // without a certificate is only a leftover.
-    write_key(join(dir, "ca.key"), key.get());
-    write_cert(join(dir, "ca.crt"), cert.get());
+    Staged key_file = stage_key(join(dir, "ca.key"), key.get());
+    Staged domain_file =
+        stage_text(join(dir, "trust_domain"), trust_domain + "\n");
+    Staged cert_file = stage_cert(join(dir, "ca.crt"), cert.get());
+    // The certificate last: a CA exists once it is there, and a failure before
+    // leaves no CA, only files a second init replaces.
+    key_file.commit();
+    domain_file.commit();
+    cert_file.commit();
 }
 
 CA::CA(const std::string& dir) : _dir(dir) {
@@ -321,28 +411,34 @@ CA::CA(const std::string& dir) : _dir(dir) {
         access(join(dir, "ca.key").c_str(), R_OK) != 0) {
         raise(errno, "No CA in " + dir);
     }
+    _trust_domain = read_text(join(dir, "trust_domain"));
+    check_trust_domain(_trust_domain);
 }
 
 std::string CA::ca_file() const {
     return join(_dir, "ca.crt");
 }
 
-void CA::issue(
-    const std::string& uri, std::chrono::seconds validity,
+std::string CA::issue_id(
+    const std::string& id, std::chrono::seconds validity,
     const std::string& cert_file, const std::string& key_file
 ) const {
-    ERR_clear_error();
     // The shape is the one a process is going to be checked against. The
     // identity is the SAN alone; the subject only has to be something to read
     // in a listing, and a common name is at most 64 bytes.
     std::unique_ptr<SpiffeId> parsed;
     try {
-        parsed = std::make_unique<SpiffeId>(uri);
+        parsed = std::make_unique<SpiffeId>(id);
     } catch (const std::system_error&) {
-        raise(EINVAL, "Not a SPIFFE ID of rawstor: " + uri);
+        raise(EINVAL, "Not a SPIFFE ID of rawstor: " + id);
     }
-    const SpiffeId& id = *parsed;
-    std::string common_name = id.name().substr(0, 64);
+    if (parsed->trust_domain() != _trust_domain) {
+        raise(
+            EINVAL,
+            id + " is not in the trust domain " + _trust_domain + " of this CA"
+        );
+    }
+    std::string common_name = parsed->name().substr(0, 64);
 
     Cert ca = read_cert(join(_dir, "ca.crt"));
     Key ca_key = read_key(join(_dir, "ca.key"));
@@ -352,16 +448,51 @@ void CA::issue(
 
     Key key = new_key();
     Cert cert = build(
-        Profile{false, common_name, uri}, key.get(), ca.get(), ca_key.get(),
+        Profile{false, common_name, id}, key.get(), ca.get(), ca_key.get(),
         validity
     );
-    // The key first: a process that reads the pair in between sees the new
-    // key with the old certificate, which it refuses and retries.
-    write_key(key_file, key.get());
-    write_cert(cert_file, cert.get());
+    // Both aside before either is replaced: a failure to write leaves the old
+    // pair. Only a failure of the second rename can leave a new key with the
+    // old certificate, which a process refuses and keeps what it has.
+    Staged staged_key = stage_key(key_file, key.get());
+    Staged staged_cert = stage_cert(cert_file, cert.get());
+    staged_key.commit();
+    staged_cert.commit();
+    return id;
 }
 
-void CA::renew(
+std::string CA::issue(
+    Role role, const std::string& tenant, const std::string& name,
+    std::chrono::seconds validity, const std::string& cert_file,
+    const std::string& key_file
+) const {
+    ERR_clear_error();
+    std::string id = "spiffe://" + _trust_domain;
+    if (role != Role::client && !tenant.empty()) {
+        raise(EINVAL, "Only a client has a tenant");
+    }
+    switch (role) {
+    case Role::ost:
+        id += "/ost/" + (name.empty() ? new_ost_id() : name);
+        break;
+    case Role::mds:
+    case Role::admin:
+        if (name.empty()) {
+            raise(EINVAL, "A name is required");
+        }
+        id += (role == Role::mds ? "/mds/" : "/admin/") + name;
+        break;
+    case Role::client:
+        if (tenant.empty() || name.empty()) {
+            raise(EINVAL, "A client needs a tenant and a name");
+        }
+        id += "/tenant/" + tenant + "/client/" + name;
+        break;
+    }
+    return issue_id(id, validity, cert_file, key_file);
+}
+
+std::string CA::renew(
     const std::string& cert_file, const std::string& key_file,
     std::chrono::seconds validity
 ) const {
@@ -375,7 +506,9 @@ void CA::renew(
         ERR_clear_error();
         raise(EINVAL, cert_file + " was not issued by this CA");
     }
-    issue(identity_of(old.get(), cert_file), validity, cert_file, key_file);
+    return issue_id(
+        identity_of(old.get(), cert_file), validity, cert_file, key_file
+    );
 }
 
 } // namespace rawtls

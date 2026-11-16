@@ -4,6 +4,7 @@
 
 #include <cerrno>
 #include <chrono>
+#include <cstring>
 #include <exception>
 #include <new>
 #include <string>
@@ -39,31 +40,81 @@ std::chrono::seconds seconds(unsigned long validity) {
     );
 }
 
+std::string text(const char* s) {
+    return s != nullptr ? s : "";
+}
+
+void check_room(char* identity, size_t size) {
+    if (identity != nullptr && size < RAWSTOR_PKI_IDENTITY_SIZE) {
+        last_error = "The identity buffer is too small";
+        throw std::system_error(EINVAL, std::generic_category(), last_error);
+    }
+}
+
+void give(const std::string& id, char* identity) {
+    if (identity != nullptr) {
+        std::memcpy(identity, id.c_str(), id.size() + 1);
+    }
+}
+
 } // namespace
 
 extern "C" {
 
 int rawstor_pki_init(
-    const char* dir, const char* name, unsigned long validity
+    const char* dir, const char* trust_domain, unsigned long validity
 ) {
-    return guarded([&] { rawtls::CA::init(dir, name, seconds(validity)); });
+    return guarded([&] {
+        rawtls::CA::init(dir, trust_domain, seconds(validity));
+    });
 }
 
 int rawstor_pki_issue(
-    const char* dir, const char* identity, unsigned long validity,
-    const char* cert_file, const char* key_file
+    const char* dir, enum RawstorPkiRole role, const char* tenant,
+    const char* name, unsigned long validity, const char* cert_file,
+    const char* key_file, char* identity, size_t size
 ) {
     return guarded([&] {
-        rawtls::CA(dir).issue(identity, seconds(validity), cert_file, key_file);
+        check_room(identity, size);
+        rawtls::Role r;
+        switch (role) {
+        case RAWSTOR_PKI_OST:
+            r = rawtls::Role::ost;
+            break;
+        case RAWSTOR_PKI_MDS:
+            r = rawtls::Role::mds;
+            break;
+        case RAWSTOR_PKI_ADMIN:
+            r = rawtls::Role::admin;
+            break;
+        case RAWSTOR_PKI_CLIENT:
+            r = rawtls::Role::client;
+            break;
+        default:
+            throw std::system_error(
+                EINVAL, std::generic_category(), "Unknown role"
+            );
+        }
+        give(
+            rawtls::CA(dir).issue(
+                r, text(tenant), text(name), seconds(validity), cert_file,
+                key_file
+            ),
+            identity
+        );
     });
 }
 
 int rawstor_pki_renew(
     const char* dir, const char* cert_file, const char* key_file,
-    unsigned long validity
+    unsigned long validity, char* identity, size_t size
 ) {
     return guarded([&] {
-        rawtls::CA(dir).renew(cert_file, key_file, seconds(validity));
+        check_room(identity, size);
+        give(
+            rawtls::CA(dir).renew(cert_file, key_file, seconds(validity)),
+            identity
+        );
     });
 }
 
