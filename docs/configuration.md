@@ -95,15 +95,22 @@ rawstor pki renew --ca ca --cert ost.crt --key ost.key
 
 A CA is made for the trust domain of one cluster and keeps it, so every
 certificate it issues is in it. `issue` writes a certificate and a new key
-(mode 0600) for a process, replacing the files, and prints the SPIFFE ID the
-certificate names: `ost [ID]` (the id is the one in the MDS topology, a UUID;
-without it a new one is made), `mds NAME`, `admin NAME` or
-`client TENANT NAME`. `renew` does the same for the process of a certificate this
-CA issued, over the same files, and the running process reads them again on
-`SIGHUP` or `SIGUSR1`. A certificate is valid for 7 days and a CA for 3650
-unless `--validity` says otherwise (a number and `s`, `m`, `h` or `d`). Keys are
-EC P-256. There is no revocation beyond expiry and the optional
-`RAWSTOR_TLS_CRL`, so keep certificates short.
+(mode 0600) for a process, replacing the files. The process is `ost [ID]` (the
+id is the one in the MDS topology, a UUID; without it a new one is made),
+`mds NAME`, `admin NAME` or `client TENANT NAME`. `renew` does the same for the
+process of a certificate this CA issued, over the same files, and the running
+process reads them again on `SIGHUP` or `SIGUSR1`.
+
+Both print what the certificate names, as the other commands print their data
+(`--format table|json|value`, `--column`): `identity` (the SPIFFE ID), `role`,
+`trust_domain`, `name`, `ost_id` and `tenant_id`. The ones the role does not
+have are empty, `null` in json; `--format value --column ost_id` is how a
+script gets the id of a new OST.
+
+A certificate is valid for 7 days and a CA for 3650 unless `--validity` says
+otherwise (a number and `s`, `m`, `h` or `d`). Keys are EC P-256. There is no
+revocation beyond expiry and the optional `RAWSTOR_TLS_CRL`, so keep
+certificates short.
 
 The same is available to programs: `rawstor_pki_init()`, `rawstor_pki_issue()`
 and `rawstor_pki_renew()` in `<rawstor/pki.h>`, which need no
