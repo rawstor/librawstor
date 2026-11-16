@@ -850,6 +850,7 @@ static inline int rawstor_frame_allocate_encode(
     out->member_role = (uint8_t)role;
     return 0;
 }
+
 static inline int rawstor_frame_allocate_decode(
     const struct RawstorFrameAllocatePayload* in, struct RawstorObjectSpec* out,
     enum RawstorMemberRole* role

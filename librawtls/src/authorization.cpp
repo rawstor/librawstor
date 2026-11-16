@@ -62,6 +62,7 @@ uint32_t role_permissions(uint32_t role) {
         fail(EINVAL);
     }
 }
+
 uint32_t member_permission(RawstorCommandType command, uint64_t flags) {
     switch (command) {
     case RAWSTOR_CMD_SET_OBJECT:
@@ -93,6 +94,7 @@ uint32_t member_permission(RawstorCommandType command, uint64_t flags) {
         return 0;
     }
 }
+
 bool provider_member(Role role, RawstorCommandType command) {
     switch (command) {
     case RAWSTOR_CMD_HANDSHAKE:
