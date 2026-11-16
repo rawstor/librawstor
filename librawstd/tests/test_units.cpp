@@ -36,6 +36,59 @@ TEST(UnitsTest, size_to_bytes_basics) {
     EXPECT_EQ(out, 5ull << 60);
 }
 
+TEST(UnitsTest, duration_to_seconds) {
+    uint64_t out = 0;
+
+    EXPECT_EQ(rawstd_duration_to_seconds("0", &out), 0);
+    EXPECT_EQ(out, 0u);
+
+    EXPECT_EQ(rawstd_duration_to_seconds("90", &out), 0);
+    EXPECT_EQ(out, 90u);
+
+    EXPECT_EQ(rawstd_duration_to_seconds("90s", &out), 0);
+    EXPECT_EQ(out, 90u);
+
+    EXPECT_EQ(rawstd_duration_to_seconds("15m", &out), 0);
+    EXPECT_EQ(out, 900u);
+
+    EXPECT_EQ(rawstd_duration_to_seconds("12h", &out), 0);
+    EXPECT_EQ(out, 43200u);
+
+    EXPECT_EQ(rawstd_duration_to_seconds("30d", &out), 0);
+    EXPECT_EQ(out, 2592000u);
+
+    EXPECT_EQ(rawstd_duration_to_seconds("2H", &out), 0);
+    EXPECT_EQ(out, 7200u);
+}
+
+TEST(UnitsTest, duration_to_seconds_rejects_garbage) {
+    uint64_t out = 7;
+
+    for (const char* bad :
+         {"", "h", "-1s", "+1s", " 1s", "1 s", "1x", "1y", "1hh", "1h ", "1.5h",
+          "1ms"}) {
+        EXPECT_EQ(rawstd_duration_to_seconds(bad, &out), -EINVAL) << bad;
+    }
+    EXPECT_EQ(out, 7u);
+}
+
+TEST(UnitsTest, duration_to_seconds_overflow) {
+    uint64_t out = 7;
+
+    EXPECT_EQ(rawstd_duration_to_seconds("18446744073709551615", &out), 0);
+    EXPECT_EQ(out, UINT64_MAX);
+    EXPECT_EQ(
+        rawstd_duration_to_seconds("18446744073709551616", &out), -EOVERFLOW
+    );
+    EXPECT_EQ(
+        rawstd_duration_to_seconds("18446744073709551615m", &out), -EOVERFLOW
+    );
+    // The largest number of days that fits, and one more.
+    EXPECT_EQ(rawstd_duration_to_seconds("213503982334601d", &out), 0);
+    EXPECT_EQ(rawstd_duration_to_seconds("213503982334602d", &out), -EOVERFLOW);
+    EXPECT_EQ(out, 213503982334601ull * 86400);
+}
+
 TEST(UnitsTest, size_to_bytes_case_insensitive) {
     uint64_t out = 0;
 

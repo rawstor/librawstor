@@ -33,6 +33,51 @@ static int unit_to_shift(const char unit) {
     }
 }
 
+int rawstd_duration_to_seconds(const char* s, uint64_t* out) {
+    // Digits first, as for sizes: no whitespace and no sign.
+    if (*s < '0' || *s > '9') {
+        return -EINVAL;
+    }
+    char* end;
+    errno = 0;
+    unsigned long long value = strtoull(s, &end, 10);
+    if (errno == ERANGE) {
+        return -EOVERFLOW;
+    }
+    uint64_t unit = 1;
+    if (end[0] != '\0') {
+        // Exactly one unit character, nothing after it.
+        if (end[1] != '\0') {
+            return -EINVAL;
+        }
+        switch (end[0]) {
+        case 's':
+        case 'S':
+            unit = 1;
+            break;
+        case 'm':
+        case 'M':
+            unit = 60;
+            break;
+        case 'h':
+        case 'H':
+            unit = 3600;
+            break;
+        case 'd':
+        case 'D':
+            unit = 86400;
+            break;
+        default:
+            return -EINVAL;
+        }
+    }
+    if (value > UINT64_MAX / unit) {
+        return -EOVERFLOW;
+    }
+    *out = value * unit;
+    return 0;
+}
+
 int rawstd_size_to_bytes(const char* s, uint64_t* out) {
     // Digits first: strtoull() would also skip whitespace and accept a
     // sign, wrapping "-1B" around to 2^64-1.

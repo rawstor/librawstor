@@ -16,6 +16,14 @@ extern "C" {
 int rawstd_size_to_bytes(const char* s, uint64_t* out);
 
 /**
+ * Parses a duration like "12h" (a decimal number, optionally followed by
+ * exactly one of "sSmMhHdD": seconds, minutes, hours, days) into seconds. A
+ * bare number is seconds, so "90" and "90s" are the same. Returns -EINVAL for
+ * anything else, and -EOVERFLOW for a value that does not fit in 64 bits.
+ */
+int rawstd_duration_to_seconds(const char* s, uint64_t* out);
+
+/**
  * Format value in the largest unit that holds it exactly, e.g. "256M". Bytes
  * have no unit character: "1023".
  */

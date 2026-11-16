@@ -5,11 +5,12 @@
 #include <rawstor.h>
 
 #include <rawstd/exitcode.h>
+#include <rawstd/units.h>
 
-#include <ctype.h>
 #include <errno.h>
 #include <getopt.h>
 #include <limits.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -108,46 +109,18 @@ static void renew_usage(void) {
     );
 }
 
-/* "90", "90s", "15m", "12h", "30d" into seconds. Returns 0, or EX_USAGE. */
+/* A validity in seconds from "90", "90s", "15m", "12h" or "30d". Returns 0, or
+ * EX_USAGE. */
 static int parse_validity(const char* text, unsigned long* seconds) {
-    char* end;
-    errno = 0;
-    unsigned long long value = strtoull(text, &end, 10);
-    if (end == text || errno != 0 || !isdigit((unsigned char)text[0])) {
-        fprintf(stderr, "Invalid validity: %s\n", text);
+    uint64_t value;
+    int res = rawstd_duration_to_seconds(text, &value);
+    if (res != 0 || value == 0 || value > ULONG_MAX) {
+        fprintf(
+            stderr, "Invalid validity: %s (a number, then s, m, h or d)\n", text
+        );
         return EX_USAGE;
     }
-    unsigned long long unit = 1;
-    if (*end != '\0') {
-        switch (*end) {
-        case 's':
-            unit = 1;
-            break;
-        case 'm':
-            unit = 60;
-            break;
-        case 'h':
-            unit = 3600;
-            break;
-        case 'd':
-            unit = 86400;
-            break;
-        default:
-            unit = 0;
-        }
-        if (unit == 0 || end[1] != '\0') {
-            fprintf(
-                stderr, "Invalid validity: %s (a number, then s, m, h or d)\n",
-                text
-            );
-            return EX_USAGE;
-        }
-    }
-    if (value == 0 || value > ULONG_MAX / unit) {
-        fprintf(stderr, "Invalid validity: %s\n", text);
-        return EX_USAGE;
-    }
-    *seconds = (unsigned long)(value * unit);
+    *seconds = (unsigned long)value;
     return 0;
 }
 
