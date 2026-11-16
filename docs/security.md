@@ -388,6 +388,13 @@ Rules that apply to every row:
   an object or touches the registry, so a tenant cannot give an object away
   or create a tenant.
 
+Initial allocation has a known unresolved namespace gap: a tenant-wide client
+certificate does not prove global ownership of a UUID when the requested OST
+member has no local metadata. A manager can occupy another tenant's future
+member key. See the [allocation namespace plan](tenants.md#planned-allocation-namespace-isolation)
+for the impact, architectural alternatives and acceptance criteria. This is
+separate from intentional direct OST access and resource quotas.
+
 ## Tenants
 
 A tenant is the unit of isolation, ownership and (later) quota. MDS stores the
@@ -799,6 +806,14 @@ require re-doing earlier ones.
    ownership handover with member fencing and crash recovery. Both clients keep
    access only to their own tenants. Initial scope: objects in the same MDS.
    See the [implementation plan](tenants.md#planned-transfer-by-mutual-consent).
+
+
+9. **Allocation namespace isolation (open problem, planned).** Prevent a tenant
+   from obstructing another tenant's missing members through UUID reuse during
+   direct allocation. Decide between tenant-scoped physical keys and trusted
+   global ownership evidence; cover repair, reconstruction and transfer. No
+   runtime fix is implemented. See the
+   [problem and plan](tenants.md#planned-allocation-namespace-isolation).
 
 ## Open questions
 

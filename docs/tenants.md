@@ -24,6 +24,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | Transfer of an object to another tenant: `SET_OWNER`, `OBJ_TRANSFER`, `rawstor object transfer` | ✅ | `src/target.cpp`, `src/blk_backend.cpp`, `mds/src/store.cpp` |
 | Transfer by mutual consent of two tenant clients, without admin credentials | ❌ | [Implementation plan](#planned-transfer-by-mutual-consent) |
 | Checking the caller's permissions against the owner | ✅ | Independent MDS and OST certificate policy checks |
+| Protection against cross-tenant UUID/member squatting on initial allocation | ❌ | [Open allocation namespace problem](#planned-allocation-namespace-isolation) |
 | Authentication, binding a tenant to a certificate | ✅ | mTLS SPIFFE identity and signed certificate permissions |
 
 ## Model
@@ -254,6 +255,78 @@ the owner the MDS has, which `OBJ_RESIZE` reports, not for the owner some copy
 records. The old address still finds the object, as every address does, by its
 id. The default tenant can be a source or a destination, and the nil UUID is
 never a destination.
+
+## Planned allocation namespace isolation
+
+Status: confirmed architectural problem, unresolved and deferred. No runtime
+fix is included in this plan. Review references:
+[foreign object ID allocation](https://github.com/rawstor/librawstor/pull/761#discussion_r4589291539)
+and [direct allocation without MDS placement](https://github.com/rawstor/librawstor/pull/761#discussion_r4589291550).
+
+### Problem and impact
+
+A tenant manager may create a missing member directly on an OST. Its
+certificate authorizes operations in its tenant, but does not establish global
+ownership of an arbitrary object UUID. The local metadata check proves an
+existing member's owner; it cannot prove who owns a missing member elsewhere.
+
+For example, tenant A owns object X. Tenant B can request `ALLOCATE` for X at
+an unused offset or on an OST that has not seen X, recording B as that member's
+owner. With the current physical key `(object UUID, offset)`, this can obstruct
+A's subsequent placement, resize or recovery. Existing-member ownership checks
+still prevent reading A's recorded data; the confirmed issue is cross-tenant
+namespace interference and availability.
+
+### Constraints
+
+- Preserve certificate-based authorization and direct OST operation without an
+  online MDS dependency on ordinary I/O. Direct allocation under `manage` is
+  intentional; absence of an MDS placement alone is not an authorization defect.
+- Tenant selection still defaults to the certificate identity; an explicit URI
+  tenant must be authorized. Naming a UUID or tenant grants no ownership.
+- Decide whether UUID uniqueness is a global ownership guarantee or a logical
+  convention backed by tenant-isolated physical storage. The current global
+  namespace claim cannot be enforced for first allocation from a tenant-wide
+  certificate alone.
+- Resource quotas and limits on legitimate direct allocations are separate work;
+  solving them does not establish the rightful owner of a UUID.
+
+### Decisions and implementation work
+
+1. **Choose the ownership model.** Evaluate tenant-scoped physical keys
+   `(tenant, object UUID, offset)` against a global namespace backed by trusted,
+   verifiable object-ownership evidence. In the first model, choosing another
+   tenant's UUID cannot occupy that tenant's storage key. In the second, define
+   who establishes ownership, how an OST verifies it on first allocation, and
+   how transfer and revocation update it without requiring MDS on every I/O.
+   Neither option is selected or implemented yet.
+2. **Define the scope of local hardening.** An object-level owner record on an
+   OST can prevent allocation of a foreign offset when that OST already knows
+   the object. Document that this alone does not protect an OST that has never
+   seen the UUID, and do not treat it as a complete global-namespace fix.
+3. **Update the affected contracts.** Cover allocation, lookup, listing,
+   versions, deletion, mirror repair, reconstruction and provider operations.
+   Define explicit tenant context for privileged requests and compatibility
+   with existing stored objects. Review protocol and backend metadata layouts.
+4. **Coordinate with ownership transfer.** Reconcile the chosen keys/evidence
+   with the [mutual-consent transfer plan](#planned-transfer-by-mutual-consent),
+   including fencing, durable ownership generations and recovery. Tenant-scoped
+   physical keys require a safe key transition when ownership changes.
+
+### Acceptance tests
+
+- Tenant B cannot obstruct A by allocating A's UUID at a missing offset or on a
+  different OST before A's legitimate allocation arrives. With isolated keys,
+  B's own object may exist independently without occupying A's key.
+- Verify the same behavior when the attacked OST has no local record of A's
+  object; checking other local offsets is not sufficient coverage.
+- Concurrent first allocations, UUID reuse, partial deletion, repair and restart
+  preserve the selected ownership model and cannot switch another tenant's data.
+- Provider operations select the intended tenant unambiguously; listing and
+  reconstruction preserve ownership even if isolated namespaces reuse a UUID.
+- Direct OST I/O continues with valid certificates while MDS is unavailable.
+- Document residual capacity-exhaustion risks separately from UUID ownership;
+  keep this issue open until the chosen namespace protection is implemented.
 
 ## Planned transfer by mutual consent
 
