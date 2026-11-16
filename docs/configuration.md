@@ -101,7 +101,12 @@ id is the one in the MDS topology, a UUID; without it a new one is made),
 process of a certificate this CA issued, over the same files, and the running
 process reads them again on `SIGHUP` or `SIGUSR1`.
 
-Both print what the certificate names, as the other commands print their data
+`init` prints the CA the same way, with the columns `ca_dir`, `trust_domain`,
+`ca_file` (`<dir>/ca.crt`, what a process lists as `RAWSTOR_TLS_CA`) and
+`not_after` (when the CA expires, UTC).
+
+`issue` and `renew` print what the certificate names, as the other commands
+print their data
 (`--format table|json|value`, `--column`): `identity` (the SPIFFE ID), `role`,
 `trust_domain`, `name`, `ost_id` and `tenant_id`. The ones the role does not
 have are empty, `null` in json; `--format value --column ost_id` is how a

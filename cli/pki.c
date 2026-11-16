@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sysexits.h>
+#include <time.h>
 
 #define DEFAULT_CA_VALIDITY (3650UL * 86400UL)
 #define DEFAULT_VALIDITY (7UL * 86400UL)
@@ -66,7 +67,10 @@ static void init_usage(void) {
         "  --validity DURATION   How long the CA is valid (default: 3650d)\n"
         "\n"
         "DURATION is a number with an optional unit: s, m, h or d (seconds "
-        "without one).\n"
+        "without one).\n" RAWSTOR_CLI_OUTPUT_USAGE "\n"
+        "Columns: ca_dir, trust_domain, ca_file (DIR/ca.crt, what a process "
+        "lists as\n"
+        "RAWSTOR_TLS_CA) and not_after (when the CA expires, UTC).\n"
     );
 }
 
@@ -152,13 +156,30 @@ static int report(const char* what, int res) {
     return res == -EINVAL ? EX_USAGE : rawstd_exitcode_for_errno(-res);
 }
 
+static const char* const ca_columns[] = {
+    "ca_dir",
+    "trust_domain",
+    "ca_file",
+    "not_after",
+};
+static const enum RawstorCliColumnType ca_types[] = {
+    RAWSTOR_CLI_COLUMN_STRING,
+    RAWSTOR_CLI_COLUMN_STRING,
+    RAWSTOR_CLI_COLUMN_STRING,
+    RAWSTOR_CLI_COLUMN_STRING,
+};
+#define CA_NCOLUMNS (sizeof(ca_columns) / sizeof(ca_columns[0]))
+
 static int command_init(int argc, char** argv) {
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
         {"trust-domain", required_argument, NULL, 'd'},
         {"validity", required_argument, NULL, 'V'},
+        {"format", required_argument, NULL, RAWSTOR_CLI_OPT_FORMAT},
+        {"column", required_argument, NULL, RAWSTOR_CLI_OPT_COLUMN},
         {},
     };
+    RawstorCliOutput output = {};
     const char* trust_domain = NULL;
     unsigned long validity = DEFAULT_CA_VALIDITY;
     optind = 0;
@@ -178,6 +199,18 @@ static int command_init(int argc, char** argv) {
             }
             break;
         }
+        case RAWSTOR_CLI_OPT_FORMAT:
+            if (rawstor_cli_output_set_format(&output, optarg) != 0) {
+                fprintf(
+                    stderr, "Unknown format: %s (table, json or value)\n",
+                    optarg
+                );
+                return EX_USAGE;
+            }
+            break;
+        case RAWSTOR_CLI_OPT_COLUMN:
+            output.columns = optarg;
+            break;
         default:
             return EX_USAGE;
         }
@@ -190,10 +223,52 @@ static int command_init(int argc, char** argv) {
         fprintf(stderr, "A directory is required\n");
         return EX_USAGE;
     }
-    return report(
-        "Failed to create the CA",
-        rawstor_pki_init(argv[optind], trust_domain, validity)
-    );
+    const char* dir = argv[optind];
+
+    /* A bad --column is refused before the CA is made, not after. */
+    RawstorCliTable* table =
+        rawstor_cli_record_create("pki", ca_columns, ca_types, CA_NCOLUMNS);
+    if (table == NULL) {
+        fprintf(stderr, "Out of memory\n");
+        return EXIT_FAILURE;
+    }
+    int checked = rawstor_cli_output_check(&output, &table, 1);
+    if (checked != EXIT_SUCCESS) {
+        rawstor_cli_table_delete(table);
+        return checked;
+    }
+
+    time_t now = time(NULL);
+    int res = rawstor_pki_init(dir, trust_domain, validity);
+    if (res != 0) {
+        rawstor_cli_table_delete(table);
+        return report("Failed to create the CA", res);
+    }
+
+    /* The CA is valid from now for `validity` seconds, to the second. */
+    char not_after[32] = "";
+    time_t end = now + (time_t)validity;
+    struct tm utc;
+    if (gmtime_r(&end, &utc) != NULL) {
+        strftime(not_after, sizeof(not_after), "%Y-%m-%dT%H:%M:%SZ", &utc);
+    }
+    char ca_file[4096];
+    snprintf(ca_file, sizeof(ca_file), "%s/ca.crt", dir);
+
+    RawstorCliCell cells[] = {
+        rawstor_cli_cell_string(dir),
+        rawstor_cli_cell_string(trust_domain),
+        rawstor_cli_cell_string(ca_file),
+        rawstor_cli_cell_optional(not_after),
+    };
+    int ret = EXIT_FAILURE;
+    if (rawstor_cli_table_add_row(table, cells) < 0) {
+        fprintf(stderr, "Out of memory\n");
+    } else {
+        ret = rawstor_cli_output_print(&output, &table, 1);
+    }
+    rawstor_cli_table_delete(table);
+    return ret;
 }
 
 /* The role and its names from the arguments after the options: `ost [ID]`,
