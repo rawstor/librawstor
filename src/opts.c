@@ -113,23 +113,24 @@ static int read_tls_opts(struct TlsOpts* tls) {
     return res;
 }
 
-// A process that is told to go without TLS but has settings for it is most
-// likely misconfigured: say so, once.
-static void warn_tls_ignored(void) {
+// A process that is told to go without TLS but has settings for it is
+// misconfigured, and which of the two it means is not for us to guess.
+static int check_tls_unset(void) {
     static const char* const names[] = {
         "RAWSTOR_TLS_TRUST_DOMAIN", "RAWSTOR_TLS_CERT", "RAWSTOR_TLS_KEY",
         "RAWSTOR_TLS_CA",           "RAWSTOR_TLS_CRL",  "RAWSTOR_TLS_MDS_ID",
     };
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
         if (getenv(names[i]) != NULL) {
-            rawstd_warning(
-                "Running without TLS: the TLS settings, %s among them, are "
-                "ignored\n",
+            rawstd_error(
+                "Insecure mode conflicts with the TLS settings: %s is set, "
+                "unset it or drop --insecure (RAWSTOR_INSECURE)\n",
                 names[i]
             );
-            return;
+            return -EINVAL;
         }
     }
+    return 0;
 }
 
 // Millisecond values that get scaled to microseconds in an unsigned int.
@@ -222,16 +223,16 @@ int rawstor_opts_initialize(const struct RawstorOpts* opts) {
         return res;
     }
 
-    // Without TLS the settings of TLS are not looked at, so a broken one
-    // cannot stop a process that was told to go without.
+    // Without TLS there must be no TLS settings: a process that has both
+    // does not start.
     struct TlsOpts tls = {};
     if (resolved.insecure) {
-        warn_tls_ignored();
+        res = check_tls_unset();
     } else {
         res = read_tls_opts(&tls);
-        if (res != 0) {
-            return res;
-        }
+    }
+    if (res != 0) {
+        return res;
     }
 
     free_tls_opts(&_rawstor_tls);

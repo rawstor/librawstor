@@ -617,8 +617,8 @@ tests; the operator takes responsibility for the network.
 - A port is TLS or plaintext, never both and never auto-detected, so a
   client cannot be downgraded: a plaintext client against a TLS server (or
   the reverse) fails the connection.
-- `--insecure` wins over the TLS settings: they are not looked at, complete or
-  not, and the process warns if it has some.
+- `--insecure` and the TLS settings exclude each other: a process that has
+  both, with any one of the settings, complete or not, refuses to start.
 - The service logs the mode loudly at start.
 - It is a per-process choice. Mixing modes inside one cluster is not
   supported except while moving a cluster from one mode to the other (see

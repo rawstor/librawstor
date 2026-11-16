@@ -149,16 +149,27 @@ TEST(OptsTest, insecure_is_a_switch) {
     EXPECT_EQ(rawstor_opts_initialize(&opts), -EINVAL);
 }
 
-// A process that goes without TLS does not look at the settings of TLS: a
-// half-set or a broken one cannot stop it, and none is taken.
-TEST(OptsTest, insecure_does_not_look_at_the_tls_settings) {
+// A process that goes without TLS and has settings for it is misconfigured:
+// any one of them, complete or not, stops it.
+TEST(OptsTest, insecure_with_tls_settings_fails) {
     ScopedEnv insecure("RAWSTOR_INSECURE", "1");
-    ScopedEnv cert("RAWSTOR_TLS_CERT", "/etc/rawstor/tls/cert.pem");
-    ScopedEnv mds("RAWSTOR_TLS_MDS_ID", "mds-1");
+    {
+        ScopedEnv cert("RAWSTOR_TLS_CERT", "/etc/rawstor/tls/cert.pem");
+        EXPECT_EQ(rawstor_opts_initialize(nullptr), -EINVAL);
+    }
+    {
+        ScopedEnv mds("RAWSTOR_TLS_MDS_ID", "mds-1");
+        EXPECT_EQ(rawstor_opts_initialize(nullptr), -EINVAL);
+    }
+    {
+        ScopedEnv env("RAWSTOR_INSECURE", "0");
+        RawstorOpts opts{};
+        opts.insecure = 1;
+        ScopedEnv cert("RAWSTOR_TLS_CERT", "/etc/rawstor/tls/cert.pem");
+        EXPECT_EQ(rawstor_opts_initialize(&opts), -EINVAL);
+    }
     EXPECT_EQ(rawstor_opts_initialize(nullptr), 0);
-    EXPECT_EQ(rawstor_opts_tls_cert(), nullptr);
     EXPECT_EQ(rawstor_opts_tls_trust_domain(), nullptr);
-    EXPECT_EQ(rawstor_opts_tls_mds_id(), nullptr);
 }
 
 TEST(OptsTest, invalid_struct_values_fail) {

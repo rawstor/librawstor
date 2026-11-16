@@ -91,9 +91,9 @@ development and tests.
 |----------|-------------|
 | `RAWSTOR_INSECURE` | `1` runs the process without TLS, `0` (the default) does not. The command-line flag, or `RawstorOpts::insecure`, wins over it. |
 
-The TLS settings are not looked at in this mode: a process started with
-`--insecure` ignores them, complete or not, and warns that it does when it has
-some. It logs `INSECURE` at start. A port is TLS or plaintext, never both and
+Insecure mode and the TLS settings exclude each other: a process started with
+`--insecure` that has any `RAWSTOR_TLS_*` set, complete or not, refuses to
+start. It logs `INSECURE` at start. A port is TLS or plaintext, never both and
 never detected, so a plaintext process cannot talk to a TLS one, in either
 direction; mixing the two in a cluster is meant only for moving it from one
 mode to the other.

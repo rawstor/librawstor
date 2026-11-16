@@ -44,8 +44,9 @@ struct RawstorOpts {
     unsigned int mirror_resync_lease;
     /**
      * Nonzero runs this process without TLS: its connections are plaintext
-     * and no peer is authenticated, whoever it talks to. The TLS settings
-     * (RAWSTOR_TLS_*) are then not looked at. Zero leaves it to the
+     * and no peer is authenticated, whoever it talks to. Together with any
+     * of the TLS settings (RAWSTOR_TLS_*) rawstor_initialize() fails with
+     * EINVAL. Zero leaves it to the
      * environment (RAWSTOR_INSECURE=1); without either, rawstor_initialize()
      * fails with EINVAL unless TLS is configured. See docs/security.md.
      */
