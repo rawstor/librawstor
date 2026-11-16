@@ -4,6 +4,7 @@
 #include "info.h"
 #include "list.h"
 #include "output.h"
+#include "pki.h"
 #include "remove.h"
 #include "resize.h"
 #include "resolve.h"
@@ -72,6 +73,7 @@ static void usage(void) {
         "command:\n"
         "  location              Show information about a location\n"
         "  object                Work with rawstor objects\n"
+        "  pki                   Issue the certificates TLS needs\n"
         "  tenant                Work with tenants\n"
         "  testio                Test rawstor IO routines\n"
         "  version               Work with versions of an object\n"
@@ -2081,6 +2083,11 @@ static int run_version(int argc, char** argv) {
 static int run_command(
     const char* command, const struct RawstorOpts* opts, int argc, char** argv
 ) {
+    // The CA makes the certificates TLS needs, so it cannot need TLS itself.
+    if (strcmp(command, "pki") == 0) {
+        return rawstor_cli_pki(argc, argv);
+    }
+
     int res = rawstor_initialize(opts);
     if (res) {
         fprintf(stderr, "rawstor_initialize() failed: %s\n", strerror(-res));

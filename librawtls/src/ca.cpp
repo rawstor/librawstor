@@ -12,6 +12,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <system_error>
@@ -272,6 +273,16 @@ std::string identity_of(X509* cert, const std::string& file) {
 }
 
 void make_dir(const std::string& dir) {
+    // The parents the way `mkdir -p` makes them; the directory of the CA is
+    // the one that holds its key, so only it is private.
+    std::filesystem::path parent = std::filesystem::path(dir).parent_path();
+    if (!parent.empty()) {
+        std::error_code ec;
+        std::filesystem::create_directories(parent, ec);
+        if (ec) {
+            raise(ec.value(), "Cannot create " + parent.string());
+        }
+    }
     if (mkdir(dir.c_str(), 0700) != 0 && errno != EEXIST) {
         raise(errno, "Cannot create " + dir);
     }
