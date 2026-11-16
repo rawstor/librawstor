@@ -150,8 +150,8 @@ whose peer SAN differs fails. The one exception is the witness an MDS hosts
 on its own port: the topology lists it as an `ost://` location with an id of
 its own, but the server there is the MDS, so a client that was configured with
 that address as an `mds://` one requires an MDS identity (the one named by
-`RAWSTOR_TLS_MDS_ID`, if set) from it instead. The address is the one the
-client was given, not one the peer names. The address
+`RAWSTOR_TLS_MDS_ID`, if set) from it instead. The address counts only once it has completed a handshake as an MDS, and it is the
+one the client was given, not one the peer names. The address
 in a location (an IPv4 address or a host name, which is resolved without any
 authentication) takes no part in the check: the certificate carries no DNS
 name that is compared with it, so a spoofed DNS answer can send a client to

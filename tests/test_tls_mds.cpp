@@ -200,3 +200,20 @@ TEST(TlsMdsTest, the_witness_an_mds_hosts_needs_the_configured_mds_name) {
     EXPECT_NE(location_info(*queue, server.location(), &info), 0);
     EXPECT_NE(location_info(*queue, "ost://127.0.0.1:8912", &info), 0);
 }
+
+// An address that was tried as an MDS and refused is not one: an ost://
+// connection to it is still expected to be an OST.
+TEST(TlsMdsTest, an_address_refused_as_an_mds_stays_an_ost_address) {
+    // The server presents an OST's certificate, so it is no MDS.
+    rawstor::tests::TlsProcess tls(
+        "spiffe://" + rawstor::tests::TlsProcess::trust_domain +
+        "/ost/018f4e2a-0000-7000-8000-0000000000aa"
+    );
+    MdsServer server(8913);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
+
+    RawstorLocationInfo info = {};
+    EXPECT_NE(location_info(*queue, server.location(), &info), 0);
+    // It was refused as an MDS, so as an OST address it takes an OST.
+    EXPECT_EQ(location_info(*queue, "ost://127.0.0.1:8913", &info), 0);
+}

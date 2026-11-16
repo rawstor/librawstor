@@ -21,9 +21,9 @@ std::unique_ptr<rawtls::Context> process_context;
 std::string mds_identity;
 // The identity of the OST at each address the MDS has resolved.
 std::map<std::string, std::string> ost_identities;
-// The addresses this process has connected to as an MDS. An MDS hosts a witness
-// on its own port, so an ost:// address among them is that MDS answering as
-// the witness, and it presents its own identity.
+// The addresses that have completed a handshake as an MDS. An MDS hosts a
+// witness on its own port, so an ost:// address among them is that MDS
+// answering as the witness, and it presents its own identity.
 std::set<std::string> mds_hosts;
 // What request_reload() reaches from a signal handler, without the lock.
 std::atomic<rawtls::Context*> signal_context{nullptr};
@@ -143,14 +143,21 @@ rawstd::Task<std::unique_ptr<rawtls::Transport>> connect(
     } else if (scheme == "mds") {
         role = rawtls::Role::mds;
         std::lock_guard<std::mutex> lock(mutex);
-        mds_hosts.insert(host);
         expected_peer = mds_identity;
     } else {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-    co_return co_await rawtls::Transport::tls(
-        queue, fd, *c, rawtls::Mode::client, expected_peer, role
-    );
+    std::unique_ptr<rawtls::Transport> transport =
+        co_await rawtls::Transport::tls(
+            queue, fd, *c, rawtls::Mode::client, expected_peer, role
+        );
+    if (scheme == "mds") {
+        // Only an address that has answered as an MDS is one: a refused
+        // handshake, or a server of another role, does not make it so.
+        std::lock_guard<std::mutex> lock(mutex);
+        mds_hosts.insert(host);
+    }
+    co_return transport;
 }
 
 rawstd::Task<std::unique_ptr<rawtls::Transport>>
