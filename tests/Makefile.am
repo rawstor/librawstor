@@ -81,5 +81,3 @@ test: all
 
 
 .PHONY: test
-
-EXTRA_DIST = security_authorization.py

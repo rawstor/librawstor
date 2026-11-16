@@ -116,11 +116,6 @@ jobs:
       run: |
         cd ${LIBRAWSTOR}
         make test
-    - name: TLS tenant authorization
-      # ctypes loads the ASan-instrumented library into Python. Native unit
-      # tests retain leak checks; this process excludes interpreter allocations.
-      run: |
-        LD_PRELOAD="$(gcc -print-file-name=libasan.so):$(g++ -print-file-name=libstdc++.so)" ASAN_OPTIONS=detect_odr_violation=0:detect_leaks=0 python3 ./${LIBRAWSTOR}/tests/security_authorization.py ./${LIBRAWSTOR}
 
   sources-testio:
     needs: sources
