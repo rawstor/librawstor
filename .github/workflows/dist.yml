@@ -185,23 +185,19 @@ jobs:
       run: |
         mkdir /tmp/pki /tmp/tls_ost_objects /tmp/tls_file_objects
         cd /tmp/pki
+        RAWSTOR=${GITHUB_WORKSPACE}/${LIBRAWSTOR}/cli/rawstor
         TD=cluster.example
         OST_ID=$(cat /proc/sys/kernel/random/uuid)
-        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
-          -keyout ca.key -out ca.pem -days 1 -subj "/CN=rawstor ci ca" \
-          -addext "basicConstraints=critical,CA:TRUE" \
-          -addext "keyUsage=critical,keyCertSign,cRLSign"
-        issue() {
-          openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
-            -keyout $1.key -out $1.csr -subj "/CN=$1"
-          printf "basicConstraints=CA:FALSE\nkeyUsage=digitalSignature\nextendedKeyUsage=serverAuth,clientAuth\nsubjectAltName=URI:%s\n" "$2" > $1.ext
-          openssl x509 -req -in $1.csr -CA ca.pem -CAkey ca.key -CAcreateserial \
-            -out $1.pem -days 1 -extfile $1.ext
-        }
-        issue ost "spiffe://${TD}/ost/${OST_ID}"
-        issue cli "spiffe://${TD}/admin/ci"
+        # The CA needs no TLS itself, so these run without any settings.
+        ${RAWSTOR} pki init ca
+        ${RAWSTOR} pki issue --ca ca --cert ost.pem --key ost.key "spiffe://${TD}/ost/${OST_ID}"
+        ${RAWSTOR} pki issue --ca ca --cert cli.pem --key cli.key "spiffe://${TD}/admin/ci"
+        ${RAWSTOR} pki renew --ca ca --cert ost.pem --key ost.key
+        # A certificate of another CA is not renewed.
+        ${RAWSTOR} pki init other
+        ! ${RAWSTOR} pki renew --ca other --cert ost.pem --key ost.key
         for who in ost cli; do
-          echo "RAWSTOR_TLS_TRUST_DOMAIN=${TD} RAWSTOR_TLS_CERT=/tmp/pki/${who}.pem RAWSTOR_TLS_KEY=/tmp/pki/${who}.key RAWSTOR_TLS_CA=/tmp/pki/ca.pem" > ${who}.env
+          echo "RAWSTOR_TLS_TRUST_DOMAIN=${TD} RAWSTOR_TLS_CERT=/tmp/pki/${who}.pem RAWSTOR_TLS_KEY=/tmp/pki/${who}.key RAWSTOR_TLS_CA=/tmp/pki/ca/ca.crt" > ${who}.env
         done
     - name: TLS, start rawstor-ost
       run: |

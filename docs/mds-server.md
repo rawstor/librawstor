@@ -71,7 +71,6 @@ The config is an environment file (`KEY=VALUE` lines):
 | `QUEUE_SIZE` | `4096` | `--queue-size`. |
 | `WORKERS` | `4` | `--workers`. |
 | `RAWSTOR_TLS_*` | | TLS settings, see [Configuration](configuration.md#tls). |
-| `RAWSTOR_INSECURE` | `0` | `1` runs the instance without TLS. Without it, and without `RAWSTOR_TLS_*`, the instance refuses to start. |
 | `RAWSTOR_MDS_OPTS_*`, `RAWSTOR_OPTS_*` | | Tuning knobs, see [Configuration](configuration.md). |
 
 The instance runs as the `rawstor` user under `ProtectSystem=strict`;
@@ -85,12 +84,16 @@ Two clusters on one host:
 for C in ${CLUSTER1} ${CLUSTER2}; do
     sudo cp my-${C}.topology /etc/rawstor/mds/${C}.topology
 done
-# without TLS, to keep the example short: see Configuration for TLS
-printf 'BIND_ADDR=0.0.0.0:7776\nRAWSTOR_INSECURE=1\n' | sudo tee /etc/rawstor/mds/${CLUSTER1}.conf
-printf 'BIND_ADDR=0.0.0.0:7786\nRAWSTOR_INSECURE=1\n' | sudo tee /etc/rawstor/mds/${CLUSTER2}.conf
+# Each instance has its own certificate, for spiffe://<trust domain>/mds/<name>:
+# /etc/rawstor/tls/<cluster>.crt and <cluster>.key, see Configuration for TLS.
+tls() {
+    printf 'RAWSTOR_TLS_TRUST_DOMAIN=cluster.example\nRAWSTOR_TLS_CERT=/etc/rawstor/tls/%s.crt\nRAWSTOR_TLS_KEY=/etc/rawstor/tls/%s.key\nRAWSTOR_TLS_CA=/etc/rawstor/tls/ca.crt\n' $1 $1
+}
+(echo BIND_ADDR=0.0.0.0:7776; tls ${CLUSTER1}) | sudo tee /etc/rawstor/mds/${CLUSTER1}.conf
+(echo BIND_ADDR=0.0.0.0:7786; tls ${CLUSTER2}) | sudo tee /etc/rawstor/mds/${CLUSTER2}.conf
 sudo systemctl enable --now rawstor-mds@${CLUSTER1} rawstor-mds@${CLUSTER2}
 
-RAWSTOR_INSECURE=1 rawstor location info mds://127.0.0.1:7776   # serving?
+rawstor location info mds://127.0.0.1:7776   # serving? (with RAWSTOR_TLS_* in the environment)
 # edit /etc/rawstor/mds/${CLUSTER1}.topology, then
 sudo systemctl reload rawstor-mds@${CLUSTER1}
 journalctl -u rawstor-mds@${CLUSTER1} | grep Topology   # applied?

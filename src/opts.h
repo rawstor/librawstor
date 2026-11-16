@@ -66,8 +66,8 @@ unsigned int rawstor_opts_mirror_probe_interval(void);
 // without a sign of life before the member it brings back is excluded.
 unsigned int rawstor_opts_mirror_resync_lease(void);
 
-// Whether this process runs without TLS, from RawstorOpts or RAWSTOR_INSECURE.
-// It is the only way to run without it, and it excludes the TLS settings:
+// Whether this process runs without TLS, from RawstorOpts only. It is the only
+// way to run without it, and it excludes the TLS settings:
 // with any of them set rawstor_opts_initialize() fails with EINVAL.
 unsigned int rawstor_opts_insecure(void);
 

@@ -41,7 +41,7 @@ void initialize() {
         rawstd_error(
             "TLS is not configured: set RAWSTOR_TLS_TRUST_DOMAIN, "
             "RAWSTOR_TLS_CERT, RAWSTOR_TLS_KEY and RAWSTOR_TLS_CA, or run "
-            "without TLS with --insecure (RAWSTOR_INSECURE=1)\n"
+            "without TLS with --insecure\n"
         );
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }

@@ -22,12 +22,10 @@
 
 #include <cerrno>
 #include <chrono>
-#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <future>
 #include <memory>
-#include <optional>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -178,27 +176,14 @@ int raw_handshake(
 } // namespace
 
 // Without TLS settings a process refuses to start, and goes without TLS only
-// when it is told to.
+// when its program says so.
 TEST(TlsTest, a_process_without_tls_settings_needs_insecure) {
-    std::optional<std::string> saved;
-    if (const char* old = getenv("RAWSTOR_INSECURE")) {
-        saved = old;
-    }
-
     rawstor_terminate();
-    setenv("RAWSTOR_INSECURE", "0", 1);
     EXPECT_EQ(rawstor_initialize(nullptr), -EINVAL);
 
-    setenv("RAWSTOR_INSECURE", "1", 1);
-    EXPECT_EQ(rawstor_initialize(nullptr), 0);
-    rawstor_terminate();
-
-    if (saved) {
-        setenv("RAWSTOR_INSECURE", saved->c_str(), 1);
-    } else {
-        unsetenv("RAWSTOR_INSECURE");
-    }
-    ASSERT_EQ(rawstor_initialize(nullptr), 0);
+    RawstorOpts opts = {};
+    opts.insecure = 1;
+    ASSERT_EQ(rawstor_initialize(&opts), 0);
 }
 
 TEST(TlsTest, location_info_over_tls) {

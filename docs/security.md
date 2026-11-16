@@ -42,11 +42,12 @@ document's own numbering (see [Implementation stages](#implementation-stages)).
 | Owner tenant of an object in the protocol, chunk metadata, `LIST` and the MDS store; tenant registry; a default tenant | 1 | ✅ | [Tenants](tenants.md) |
 | mTLS (OpenSSL) on every port: OST, MDS, witness, client side | 2 | ✅ | `librawtls`; the client library and every service speak it, and refuse to start without [TLS settings](configuration.md#tls) unless run with `--insecure` |
 | kTLS offload of the data path | 2 | ❌ | optional, off by default (stage 0) |
-| `--insecure`: plaintext, no authentication, per process | 2 | ✅ | `--insecure` or `RAWSTOR_INSECURE=1` on every executable; [Without TLS](configuration.md#without-tls) |
+| `--insecure`: plaintext, no authentication, per process | 2 | ✅ | `--insecure` on every executable, `RawstorOpts::insecure` in a program, never in a systemd unit; [Without TLS](configuration.md#without-tls) |
 | Certificate and CA reload without downtime | 2 | ✅ | `SIGHUP` and `SIGUSR1` in `rawstor-ost` and `rawstor-mds`, `SIGUSR1` in `rawstor-vhost` and `rawstor-vduse`; `rawstor_tls_request_reload()` |
 | Principals and roles in the MDS store, admin API (the tenant registry exists, see stage 1) | 3 | ❌ | — |
 | Capability tokens issued by `RESOLVE`, checked by OST | 3 | ❌ | — |
-| `rawstor pki` helper (own CA), external CA support | 4 | ❌ | — |
+| `rawstor pki` helper (own CA: init, issue, renew), `rawstor_pki_*()`, pyrawstor `rawstor.pki` | 4 | ✅ | [Issuing certificates](configuration.md#issuing-certificates) |
+| External CA support (SPIRE with spiffe-helper, Vault PKI, step-ca, cert-manager) | 4 | ✅ | documentation: [Issuing certificates](#issuing-certificates) |
 | At-rest encryption, server side (ZFS / dm-crypt) | 5 | ❌ | documentation only |
 | At-rest encryption, client side (AES-XTS, wrapped per-object key) | 6 | ❌ | — |
 | `quarantined` OST state in the topology | 7 | ❌ | — |
@@ -136,7 +137,7 @@ spiffe://<trust_domain>/tenant/<tenant_id>/client/<name>   a tenant's client
   name. A certificate with zero or several URI SANs is rejected.
 
 Any CA that can write a URI SAN fits: SPIRE, Vault PKI, step-ca, cert-manager
-or the project's own helper (stage 4). See [Issuing certificates](#issuing-certificates).
+or the project's own helper (`rawstor pki`). See [Issuing certificates](#issuing-certificates).
 The certificate proves *who* the peer is; it carries no permissions (stage 3),
 so rights can change without reissuing it.
 
@@ -183,8 +184,12 @@ published pages, to be re-checked when the choice is made):
 - **Vault PKI**, **step-ca**, **cert-manager**: issue a certificate with a
   URI SAN on request or by ACME, without attestation. Adequate when the
   deployment tool already knows which process gets which tenant.
-- The project's own `rawstor pki` (stage 4) for installations with none of
-  the above.
+- The project's own `rawstor pki` for installations with none of the above:
+  `init` makes a CA in a directory, `issue` makes the certificate and key of
+  one identity, `renew` replaces them before they expire. The CA is the one
+  place that holds a signing key, and the helper runs on that one machine; it
+  is a small tool, not an enrolment service, so getting the files to the hosts
+  is up to the operator. See [Configuration](configuration.md#issuing-certificates).
 
 ### Rotation without downtime
 
@@ -605,8 +610,10 @@ integrity of the wire, which XTS does not give, still come from TLS.
 
 ### Insecure mode
 
-`--insecure` (on every server and every client process, or `RAWSTOR_INSECURE=1`)
-turns TLS off for that process. It is the only way: a process that has no TLS
+`--insecure` (on every server and every client process, or
+`RawstorOpts::insecure` in a program that links librawstor) turns TLS off for
+that process. There is no environment variable and a systemd unit has no way to
+set it. It is the only way: a process that has no TLS
 settings and is not told to go without refuses to start. Traffic is then **plaintext, and no peer is authenticated**: there is
 no certificate to read an identity, a tenant or a role from, so the rights
 table, tokens and tenant isolation do not apply and every peer that can reach
@@ -788,19 +795,23 @@ require re-doing earlier ones.
    `--insecure`. The TLS settings are environment entries, like every other
    setting of rawstor: `KEY=value` lines of the service's configuration file
    (the `/etc/rawstor/*/<name>.conf` files that the systemd units and
-   orchestrators already use); only `--insecure` is also a command-line flag.
-   A changed certificate is applied by `systemctl reload`. The TLS code is
-   tested in process (`librawtls`, `tests/test_tls*.cpp`, with a PKI the tests
-   make) and end to end in CI, where the OST and the CLI are separate
-   processes with certificates of their own; the other suites talk to fakes
-   and run with `--insecure`. kTLS stays an option that is not built (stage 0
-   measured it).
+   orchestrators already use). `--insecure` is a command-line flag and
+   `RawstorOpts::insecure`, never an environment entry, so a systemd service
+   cannot run without TLS. A changed certificate is applied by `systemctl
+   reload`. The TLS code is tested in process (`librawtls`,
+   `tests/test_tls*.cpp`, with a PKI the tests make) and end to end in CI,
+   where the OST and the CLI are separate processes with certificates of their
+   own made by `rawstor pki`; the other suites talk to fakes and run with
+   `RawstorOpts::insecure`, and pyrawstor's tests run over a CA of their
+   own. kTLS stays an option that is not built (stage 0 measured it).
 3. **Authorization.** Tenants, principals and roles in the MDS store and admin
    API; capability tokens in `RESOLVE`, verified by the OST; per-command rights
    table; `-EACCES` / `-ENOENT` semantics (a foreign object is `-ENOENT`).
-4. **PKI tooling.** `rawstor pki` to run a small CA (init, issue, renew) for
-   deployments that have none; documentation for SPIRE (with spiffe-helper)
-   and other external CAs.
+4. **PKI tooling (done).** `rawstor pki` runs a small CA (init, issue, renew)
+   for deployments that have none, `<rawstor/pki.h>` and pyrawstor's
+   `rawstor.pki` do the same for a program; documentation for SPIRE (with
+   spiffe-helper) and other external CAs is [Issuing
+   certificates](#issuing-certificates).
 5. **At-rest, server side.** Documented ZFS/dm-crypt deployments; checks in
    `LOCATION_INFO` that the backend reports encryption, if useful.
 6. **At-rest, client side.** AES-XTS in the client library, KMS plugin

@@ -79,14 +79,18 @@ Two OSTs on one host:
 ```bash
 OST1=$(cat /proc/sys/kernel/random/uuid)
 OST2=$(cat /proc/sys/kernel/random/uuid)
-# without TLS, to keep the example short: see Configuration for TLS
-printf 'BIND_ADDR=0.0.0.0:7777\nRAWSTOR_INSECURE=1\n' | sudo tee /etc/rawstor/ost/${OST1}.conf
-printf 'BIND_ADDR=0.0.0.0:7778\nRAWSTOR_INSECURE=1\n' | sudo tee /etc/rawstor/ost/${OST2}.conf
+# Each instance has its own certificate, for spiffe://<trust domain>/ost/<id>:
+# /etc/rawstor/tls/<id>.crt and <id>.key, see Configuration for TLS.
+tls() {
+    printf 'RAWSTOR_TLS_TRUST_DOMAIN=cluster.example\nRAWSTOR_TLS_CERT=/etc/rawstor/tls/%s.crt\nRAWSTOR_TLS_KEY=/etc/rawstor/tls/%s.key\nRAWSTOR_TLS_CA=/etc/rawstor/tls/ca.crt\n' $1 $1
+}
+(echo BIND_ADDR=0.0.0.0:7777; tls ${OST1}) | sudo tee /etc/rawstor/ost/${OST1}.conf
+(echo BIND_ADDR=0.0.0.0:7778; tls ${OST2}) | sudo tee /etc/rawstor/ost/${OST2}.conf
 sudo systemctl enable --now rawstor-ost@${OST1} rawstor-ost@${OST2}
 
 systemctl status rawstor-ost@${OST1}       # state
 journalctl -u rawstor-ost@${OST1}          # log
-RAWSTOR_INSECURE=1 rawstor location info ost://127.0.0.1:7777   # serving?
+rawstor location info ost://127.0.0.1:7777   # serving? (with RAWSTOR_TLS_* in the environment)
 sudo systemctl restart rawstor-ost@${OST1}
 ```
 

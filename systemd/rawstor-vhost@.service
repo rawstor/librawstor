@@ -69,13 +69,12 @@ Environment=WRITE_CACHE=on
 #Environment=RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT=128
 #Environment=RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY=256M
 # TLS (docs/configuration.md#tls): the instance needs these, set here or in the
-# file below, and exits with EX_CONFIG without them. A service never runs without
-# TLS: RAWSTOR_INSECURE is unset for it, whatever the files say.
+# file below, and exits with EX_CONFIG without them. A service has no way to run
+# without TLS.
 #Environment=RAWSTOR_TLS_TRUST_DOMAIN=cluster.example
 #Environment=RAWSTOR_TLS_CERT=/etc/rawstor/tls/cert.pem
 #Environment=RAWSTOR_TLS_KEY=/etc/rawstor/tls/key.pem
 #Environment=RAWSTOR_TLS_CA=/etc/rawstor/tls/ca.pem
-UnsetEnvironment=RAWSTOR_INSECURE
 EnvironmentFile=-/etc/rawstor-vhost.conf
 ExecStart=/usr/bin/rawstor-vhost --socket-path=/run/rawstor/%i.sock --write-cache=${WRITE_CACHE} ${LOCATION}/%i
 # Reads the TLS certificate, key and CAs again for the connections made after

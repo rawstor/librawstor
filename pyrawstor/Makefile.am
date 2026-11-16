@@ -98,7 +98,7 @@ test: $(builddir)/build-stamp
 	fi; \
 	LD_LIBRARY_PATH=$(top_srcdir)/src/.libs:$(LD_LIBRARY_PATH) \
 	DYLD_LIBRARY_PATH=$(top_srcdir)/src/.libs:$(DYLD_LIBRARY_PATH) \
-	$(PYTHON) -m unittest discover -s $(builddir)/tests
+	$(PYTHON) -m unittest discover -s $(builddir)/tests -t $(builddir)
 endif
 
 clean-local:

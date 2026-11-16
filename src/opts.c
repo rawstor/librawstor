@@ -124,7 +124,7 @@ static int check_tls_unset(void) {
         if (getenv(names[i]) != NULL) {
             rawstd_error(
                 "Insecure mode conflicts with the TLS settings: %s is set, "
-                "unset it or drop --insecure (RAWSTOR_INSECURE)\n",
+                "unset it or drop --insecure\n",
                 names[i]
             );
             return -EINVAL;
@@ -205,8 +205,6 @@ int rawstor_opts_initialize(const struct RawstorOpts* opts) {
         {given.mirror_resync_lease, "RAWSTOR_OPTS_MIRROR_RESYNC_LEASE", 0,
          RAWSTOR_OPTS_MIRROR_RESYNC_LEASE, 1, RAWSTOR_OPTS_MAX_MS,
          &resolved.mirror_resync_lease},
-        // A switch, not a number: 0 or 1.
-        {given.insecure, "RAWSTOR_INSECURE", 0, 0, 0, 1, &resolved.insecure},
     };
     // Every option is checked, so one run reports every invalid one.
     int res = 0;
@@ -219,6 +217,16 @@ int rawstor_opts_initialize(const struct RawstorOpts* opts) {
             res = r;
         }
     }
+    // A switch, not a number, and not an environment setting: a process is
+    // insecure because its program says so.
+    if (given.insecure > 1) {
+        rawstd_error(
+            "Invalid RawstorOpts value %u for insecure: expected 0 or 1\n",
+            given.insecure
+        );
+        res = res != 0 ? res : -EINVAL;
+    }
+    resolved.insecure = given.insecure;
     if (res != 0) {
         return res;
     }

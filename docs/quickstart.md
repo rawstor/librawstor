@@ -21,11 +21,8 @@ mirror's state, and the MDS can host it, so no fifth machine is needed. With
 it, the disk stays available when either storage host goes down.
 
 Every connection runs over TLS, and a process without TLS settings refuses to
-start. To keep the commands short this guide runs everything **without TLS**:
-each config file below sets `RAWSTOR_INSECURE=1`, and the `rawstor` commands
-run with it exported. Nothing is authenticated that way, so use it only on a
-network no untrusted party can reach; a real deployment sets up TLS instead,
-see [Configuration](configuration.md#tls).
+start, so the guide begins with [certificates](#certificates): a small CA of
+its own, made with `rawstor pki`, and a certificate for each service.
 
 Download the packages from [Downloads](downloads.md). Every host needs
 `librawstor` (the library and the `rawstor` CLI) next to its own package:
@@ -47,19 +44,71 @@ Installing a package starts nothing. Each server is a systemd template unit,
 one instance per OST or cluster, named after its id and configured by an
 environment file in `/etc/rawstor/`.
 
-## Storage hosts
+## Certificates
 
-On each of the two storage hosts, start an OST that stores its data in
-`/var/lib/rawstor/ost/<id>` (created on start and owned by the `rawstor`
-user), and note its id, the metadata host needs it:
+A certificate names the process it belongs to by a SPIFFE ID,
+`spiffe://<trust domain>/<role>/<name>`, and a peer is accepted only if its ID
+is in the trust domain of the cluster and has the role it is expected to have:
+an OST's is `ost/<its id>`, an MDS's `mds/<name>`. Make the CA, and every
+certificate, on one machine of yours that is not a storage host (it needs only
+`librawstor`). The CA's private key, `ca/ca.key`, never leaves it; `rawstor pki`
+needs no TLS settings itself.
 
 ```
-OST=$(cat /proc/sys/kernel/random/uuid)
-printf 'BIND_ADDR=0.0.0.0\nRAWSTOR_INSECURE=1\n' | sudo tee /etc/rawstor/ost/${OST}.conf
+TD=cluster.example
+OST1=$(cat /proc/sys/kernel/random/uuid)
+OST2=$(cat /proc/sys/kernel/random/uuid)
+CLUSTER=$(cat /proc/sys/kernel/random/uuid)
+
+rawstor pki init ca
+rawstor pki issue --ca ca --cert ost1.crt --key ost1.key spiffe://${TD}/ost/${OST1}
+rawstor pki issue --ca ca --cert ost2.crt --key ost2.key spiffe://${TD}/ost/${OST2}
+rawstor pki issue --ca ca --cert mds.crt --key mds.key spiffe://${TD}/mds/${CLUSTER}
+rawstor pki issue --ca ca --cert hv1.crt --key hv1.key spiffe://${TD}/admin/hv1
+```
+
+Certificates are valid for 7 days (`--validity`, `30d`, `12h`, ...). Before
+they expire, `rawstor pki renew --ca ca --cert ost1.crt --key ost1.key`
+replaces a certificate and its key with new ones for the same identity, and
+`sudo systemctl reload rawstor-ost@${OST1}` makes the running service use them.
+
+Each host gets the CA certificate, `ca/ca.crt`, and its own certificate and
+key, in a directory the `rawstor` user can read, with the key private to it.
+On storage host 1, with the files copied there:
+
+```
+sudo install -d /etc/rawstor/tls
+sudo install -o rawstor -g rawstor -m 0644 ca.crt /etc/rawstor/tls/ca.crt
+sudo install -o rawstor -g rawstor -m 0644 ost1.crt /etc/rawstor/tls/cert.crt
+sudo install -o rawstor -g rawstor -m 0600 ost1.key /etc/rawstor/tls/cert.key
+```
+
+and the same on every other host with its own pair. The settings are four
+lines, `KEY=VALUE`, that go into each service's config file and, for the
+`rawstor` CLI, into the environment:
+
+```
+cat > tls.settings <<EOF
+RAWSTOR_TLS_TRUST_DOMAIN=${TD}
+RAWSTOR_TLS_CERT=/etc/rawstor/tls/cert.crt
+RAWSTOR_TLS_KEY=/etc/rawstor/tls/cert.key
+RAWSTOR_TLS_CA=/etc/rawstor/tls/ca.crt
+EOF
+```
+
+## Storage hosts
+
+On each of the two storage hosts, start the OST whose id the certificate
+names (`OST1` here, `OST2` on the other), storing its data in
+`/var/lib/rawstor/ost/<id>` (created on start and owned by the `rawstor`
+user). The metadata host needs both ids:
+
+```
+OST=${OST1}
+(echo 'BIND_ADDR=0.0.0.0'; cat tls.settings) | sudo tee /etc/rawstor/ost/${OST}.conf
 sudo systemctl enable --now rawstor-ost@${OST}
 
-echo ${OST}                                   # for the topology below
-export RAWSTOR_INSECURE=1                     # for the rawstor CLI
+set -a; . ./tls.settings; set +a              # for the rawstor CLI
 rawstor location info ost://192.168.0.11               # serving? (.12 on the other)
 journalctl -u rawstor-ost@${OST}              # log
 ```
@@ -74,19 +123,18 @@ the witness subset of the OST protocol on its own port, so its location is an
 `ost://` one with the MDS's port, `7776`, and it needs an id of its own:
 
 ```
-OST1=<the id printed on storage host 1>
-OST2=<the id printed on storage host 2>
+# OST1, OST2 and CLUSTER are the ids the certificates were made with
 WITNESS=$(cat /proc/sys/kernel/random/uuid)
-CLUSTER=$(cat /proc/sys/kernel/random/uuid)
 
 sudo tee /etc/rawstor/mds/${CLUSTER}.topology <<EOF
 ${OST1} ost://192.168.0.11 100 data dc1/row1/rack1/host1
 ${OST2} ost://192.168.0.12 100 data dc1/row1/rack2/host2
 ${WITNESS} ost://192.168.0.13:7776 100 witness dc1/row1/rack3/host3
 EOF
-printf 'BIND_ADDR=0.0.0.0\nRAWSTOR_INSECURE=1\n' | sudo tee /etc/rawstor/mds/${CLUSTER}.conf
+(echo 'BIND_ADDR=0.0.0.0'; cat tls.settings) | sudo tee /etc/rawstor/mds/${CLUSTER}.conf
 sudo systemctl enable --now rawstor-mds@${CLUSTER}
 
+set -a; . ./tls.settings; set +a              # for the rawstor CLI
 rawstor location info mds://192.168.0.13               # serving?
 ```
 
@@ -98,6 +146,9 @@ After editing the topology file later, apply it with
 commented example in `/usr/share/doc/rawstor-mds/topology.conf`.
 
 ## Hypervisor
+
+Copy `ca.crt`, `hv1.crt` and `hv1.key` here like on the other hosts, and the
+`rawstor` commands below take `tls.settings` from the environment as above.
 
 Create a 10 GiB mirrored object, split into 256 MiB chunks. For every chunk
 the MDS places two copies on the two OSTs and, since the number of copies is
@@ -118,7 +169,7 @@ opens `${LOCATION}/<object>`, with `LOCATION` taken from
 `/etc/rawstor-vhost.conf`, so point it at the MDS:
 
 ```
-printf 'LOCATION=mds://192.168.0.13\nRAWSTOR_INSECURE=1\n' | sudo tee /etc/rawstor-vhost.conf
+(echo 'LOCATION=mds://192.168.0.13'; cat tls.settings) | sudo tee /etc/rawstor-vhost.conf
 sudo systemctl enable --now rawstor-vhost@${OBJECT}
 ```
 

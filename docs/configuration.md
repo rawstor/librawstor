@@ -35,9 +35,10 @@ exits with `EX_CONFIG` (78), which the shipped systemd units do not restart.
 Every connection between rawstor processes -- a client to an OST or an MDS, an
 OST to another OST -- runs over TLS 1.3 with mutual authentication; see the
 [Security design](security.md). A process needs the first four of these, and
-refuses to start with `EX_CONFIG` if it has none of them or only some. The one
-way to run without TLS is to say so, with `--insecure` or `RAWSTOR_INSECURE=1`:
-see [Without TLS](#without-tls).
+refuses to start with `EX_CONFIG` if it has none of them or only some.
+[`rawstor pki`](#issuing-certificates) makes them for a cluster that has no CA.
+The one way to run without TLS is to say so, with `--insecure`: see
+[Without TLS](#without-tls).
 
 | Variable | Description |
 |----------|-------------|
@@ -76,21 +77,48 @@ of the object. The connections already open keep the certificate they started
 with. A file that cannot be read is logged and the old certificate stays.
 Session tickets are off, so each connection makes a full handshake.
 
+### Issuing certificates
+
+A cluster that has no CA of its own can make one with `rawstor pki`, which
+needs no TLS settings itself. The CA is a directory with its certificate,
+`ca.crt` (what every process lists as `RAWSTOR_TLS_CA`), and its private key,
+`ca.key`, which stays on the machine that issues certificates:
+
+```
+rawstor pki init ca
+rawstor pki issue --ca ca --cert ost.crt --key ost.key \
+    spiffe://cluster.example/ost/0198f1a2-3b4c-7d5e-8f90-a1b2c3d4e5f6
+rawstor pki renew --ca ca --cert ost.crt --key ost.key
+```
+
+`issue` writes a certificate and a new key (mode 0600) for a SPIFFE ID of one
+of the four shapes above, replacing the files; `renew` does the same for the
+identity of a certificate this CA issued, over the same files, and the running
+process reads them again on `SIGHUP` or `SIGUSR1`. A certificate is valid for 7
+days and a CA for 3650 unless `--validity` says otherwise (a number and `s`,
+`m`, `h` or `d`). Keys are EC P-256. There is no revocation beyond expiry and
+the optional `RAWSTOR_TLS_CRL`, so keep certificates short.
+
+The same is available to programs: `rawstor_pki_init()`, `rawstor_pki_issue()`
+and `rawstor_pki_renew()` in `<rawstor/pki.h>`, which need no
+`rawstor_initialize()`, and `rawstor.pki` (`init()`, `issue()`, `renew()`) in
+pyrawstor, which does not start rawstor when imported, so a program can make its
+certificates and set `RAWSTOR_TLS_*` before it first uses `Location` or
+`Target`.
+
+Any other CA that writes the URI SAN fits as well, see
+[Security design](security.md#issuing-certificates).
+
 ### Without TLS
 
 `--insecure` on the command line of `rawstor`, `rawstor-ost`, `rawstor-mds`,
-`rawstor-vhost`, `rawstor-vduse` and `rawstor-vhost-qemu`, or `RAWSTOR_INSECURE=1`
-in the environment, runs a process without TLS: its connections are plaintext
-and **no peer is authenticated**, so every peer that can reach a port can do
-everything. A systemd instance cannot run this way: its unit unsets the
-variable, so it needs TLS. A program that links librawstor sets
-`RawstorOpts::insecure` or the variable.
-Use it for a storage network that no untrusted party can reach, and for
-development and tests.
-
-| Variable | Description |
-|----------|-------------|
-| `RAWSTOR_INSECURE` | `1` runs the process without TLS, `0` (the default) does not. The command-line flag, or `RawstorOpts::insecure`, wins over it. |
+`rawstor-vhost`, `rawstor-vduse` and `rawstor-vhost-qemu` runs a process without
+TLS: its connections are plaintext and **no peer is authenticated**, so every
+peer that can reach a port can do everything. It is a choice of whoever starts
+the process, not of its environment: there is no environment variable for it, and
+a systemd instance cannot run this way, so it needs TLS. A program that links
+librawstor sets `RawstorOpts::insecure`. Use it for a storage network that no
+untrusted party can reach, and for development and tests.
 
 Insecure mode and the TLS settings exclude each other: a process started with
 `--insecure` that has any `RAWSTOR_TLS_*` set, complete or not, refuses to

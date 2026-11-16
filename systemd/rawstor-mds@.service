@@ -49,13 +49,12 @@ Environment=WORKERS=4
 #Environment=RAWSTOR_OPTS_SO_RCVTIMEO=5000
 #Environment=RAWSTOR_OPTS_TCP_USER_TIMEOUT=5000
 # TLS (docs/configuration.md#tls): the instance needs these, set here or in the
-# file below, and exits with EX_CONFIG without them. A service never runs without
-# TLS: RAWSTOR_INSECURE is unset for it, whatever the files say.
+# file below, and exits with EX_CONFIG without them. A service has no way to run
+# without TLS.
 #Environment=RAWSTOR_TLS_TRUST_DOMAIN=cluster.example
 #Environment=RAWSTOR_TLS_CERT=/etc/rawstor/tls/cert.pem
 #Environment=RAWSTOR_TLS_KEY=/etc/rawstor/tls/key.pem
 #Environment=RAWSTOR_TLS_CA=/etc/rawstor/tls/ca.pem
-UnsetEnvironment=RAWSTOR_INSECURE
 EnvironmentFile=/etc/rawstor/mds/%i.conf
 ExecStart=/usr/bin/rawstor-mds --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --workers=${WORKERS} --db=${DB_PATH} --topology=${TOPOLOGY_PATH}
 # Re-reads TOPOLOGY_PATH without a restart (SIGHUP), keeping every client
