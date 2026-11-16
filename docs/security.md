@@ -45,8 +45,8 @@ document's own numbering (see [Implementation stages](#implementation-stages)).
 | kTLS offload of the data path | 2 | ❌ | optional, off by default (stage 0) |
 | `--insecure`: plaintext, no authentication, per process | 2 | ✅ | `--insecure` on every executable, `RawstorOpts::insecure` in a program, never in a systemd unit; [Without TLS](configuration.md#without-tls) |
 | Certificate and CA reload without downtime | 2 | ✅ | `SIGHUP` and `SIGUSR1` in `rawstor-ost` and `rawstor-mds`, `SIGUSR1` in `rawstor-vhost` and `rawstor-vduse`; `rawstor_tls_request_reload()` |
-| Principals and roles in the MDS store, admin API (the tenant registry exists, see stage 1) | 3 | ❌ | — |
-| Capability tokens issued by `RESOLVE`, checked by OST | 3 | ❌ | — |
+| Principals and roles in the MDS store, admin API (the tenant registry exists, see stage 1) | 3 | ✅ | MDS principals/object restrictions, `<rawstor/principal.h>`, `rawstor principal` |
+| Capability tokens issued by `RESOLVE`, checked by OST | 3 | ✅ | Ed25519, certificate/tenant/object/version/chunk/server binding, `RENEW`, closed rights table |
 | `rawstor pki` helper (own CA: init, issue, renew), `rawstor_pki_*()`, pyrawstor `rawstor.pki` | 4 | ✅ | [Issuing certificates](configuration.md#issuing-certificates) |
 | External CA support (SPIRE with spiffe-helper, Vault PKI, step-ca, cert-manager) | 4 | ✅ | documentation: [Issuing certificates](#issuing-certificates) |
 | At-rest encryption, server side (ZFS / dm-crypt) | 5 | ❌ | documentation only |
@@ -149,8 +149,8 @@ configuration, not from the peer: for an MDS, the identity configured next to
 its address; for an OST, `spiffe://<trust_domain>/ost/<ost_id>` where `ost_id` is
 the one the MDS returns in `RESOLVE` (the topology's OST UUID). A handshake
 whose peer SAN differs fails. The one exception is the witness an MDS hosts
-on its own port: the topology lists it as an `ost://` location with an id of
-its own, but the server there is the MDS, so a client that was configured with
+on its own port: the topology lists it as an `ost://` location whose UUID
+matches the MDS certificate ID, and the server there is the MDS, so a client that was configured with
 that address as an `mds://` one requires an MDS identity (the one named by
 `RAWSTOR_TLS_MDS_ID`, if set) from it instead. The address counts only once it has completed a handshake as an MDS, and it is the
 one the client was given, not one the peer names. The address
@@ -297,7 +297,7 @@ MDS on the IO path.
 2. `RESOLVE` returns, with each chunk location, a **token**:
    `{tenant_id, object_id, rights (read | write | discard | manage),
    not_after, client certificate fingerprint}`, signed by the MDS.
-3. The client sends the token in `SET_OBJECT` to the OST. The OST verifies the
+3. The client installs the token with `RENEW` before `SET_OBJECT` on the OST. The OST verifies the
    signature, the expiry, that the fingerprint equals that of the connection's
    TLS peer, and that the `object_id` of the token is the one in the
    `SET_OBJECT` (an object id is unique on its own, the tenant is the owner
@@ -325,7 +325,7 @@ sequenceDiagram
     M->>M: principal's tenant and role vs object's tenant
     M-->>C: chunk locations + signed token per chunk
     C->>O: mTLS handshake (client verifies spiffe://.../ost/ost_id)
-    C->>O: SET_OBJECT(object, token)
+    C->>O: RENEW(token), SET_OBJECT(object)
     O->>O: signature, expiry, certificate fingerprint, object, tenant vs certificate
     O-->>C: ok, rights cached in the Slot
     loop IO
@@ -343,8 +343,7 @@ Choices:
 - **Binding to the connection's certificate** makes a leaked token useless
   without the matching private key.
 - **Short lifetime** (minutes). Long-lived connections renew by sending a new
-  token in a fresh `SET_OBJECT`-like command (`RENEW`, to be defined in the
-  protocol page); an expired token on an open connection fails new
+  token in `RENEW` ([wire format](protocol.md#authorization-extension-feature-bit-0)); an expired token on an open connection fails new
   commands with `-EACCES` and the client re-resolves.
 - `FREEZE`/`THAW` and the other lease holders keep their own tokens; they
   additionally require the `manage` right.
@@ -411,8 +410,7 @@ Rules that apply to every row:
 
 - The tenant is taken from the certificate, never from the request. A tenant
   principal whose request names another `tenant_id` (the owner in `LIST` or
-  `OBJ_CREATE`) is refused as if the object did not exist. Until stage 3 the
-  tenant a caller names is asserted by the caller ([Tenants](tenants.md)).
+  `OBJ_CREATE`) is refused as if the object did not exist. A tenant location without user information uses the certificate tenant.
 - An object of another tenant is `-ENOENT`, in every command, so a tenant
   cannot probe for ids. A known object of its own tenant that the role does
   not allow is `-EACCES`.
@@ -824,7 +822,7 @@ require re-doing earlier ones.
    clients and OSTs open, and a closed connection is logged and counted, since
    a legitimate peer that retries is told apart from a flood only by the
    rate.
-3. **Authorization.** Tenants, principals and roles in the MDS store and admin
+3. **Authorization (done).** Tenants, principals and roles in the MDS store and admin
    API; capability tokens in `RESOLVE`, verified by the OST; per-command rights
    table; `-EACCES` / `-ENOENT` semantics (a foreign object is `-ENOENT`).
 4. **PKI tooling (done).** `rawstor pki` runs a small CA (init, issue, renew)

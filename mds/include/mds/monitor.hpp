@@ -40,6 +40,7 @@ private:
 
     ObjectStore& _store;
     Opts _opts;
+    RawstdUUID _local_witness;
     rawstd::Pipe _wake;
     Clock::time_point _epoch;
     std::unique_ptr<rawio::Queue> _queue;
@@ -91,7 +92,9 @@ public:
         Clock::duration interval, Clock::time_point completed
     );
 
-    Monitor(ObjectStore& store, Opts opts);
+    // A witness with this MDS's own identity is local metadata, not a remote
+    // data backend to probe through the provider protocol.
+    Monitor(ObjectStore& store, Opts opts, RawstdUUID local_witness = {});
     Monitor(const Monitor&) = delete;
     Monitor& operator=(const Monitor&) = delete;
 

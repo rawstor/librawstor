@@ -2,6 +2,7 @@
 #define RAWSTOR_MDS_STORE_HPP
 
 #include <optional>
+#include <rawtls/spiffe.hpp>
 
 #include "placement.hpp"
 #include "topology.hpp"
@@ -97,7 +98,7 @@ class ObjectStore final {
 private:
     // Serializes every public call: one SQLite connection shared by every
     // worker thread, and the topology swapped by set_topology().
-    std::mutex _mutex;
+    std::recursive_mutex _mutex;
     sqlite3* _db;
     // Swapped whole, never modified in place: a caller of topology()
     // keeps using the one it got even across a concurrent
@@ -125,6 +126,25 @@ private:
     );
 
 public:
+    struct Access {
+        std::unique_lock<std::recursive_mutex> lock;
+        uint32_t rights;
+        RawstdUUID tenant;
+    };
+    // Holds ownership/principal state stable through the synchronous operation.
+    Access authorize(
+        const rawtls::SpiffeId* peer, RawstorCommandType command,
+        const RawstdUUID& object = {}, const RawstdUUID& tenant = {},
+        const RawstdUUID& mutation = {}
+    );
+    void set_principal(
+        const std::string& identity, uint32_t role, const RawstdUUID& object,
+        uint32_t rights
+    );
+    void
+    remove_principal(const std::string& identity, const RawstdUUID& object);
+    std::vector<RawstorFramePrincipalPayload> list_principals();
+
     ObjectStore(const std::string& path, Topology topology);
     ObjectStore(const ObjectStore&) = delete;
     ObjectStore(ObjectStore&&) = delete;

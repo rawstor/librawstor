@@ -40,6 +40,14 @@ private:
 
     // The capabilities the server accepted in the handshake.
     uint64_t _features = 0;
+    RawstdUUID _bound_object{}, _bound_version{};
+    uint64_t _bound_offset = 0;
+    RawstorCapability _capability{};
+    rawstd::Semaphore _authorization_lock{1};
+    rawstd::Task<void> _authorize(
+        const RawstdUUID& object, uint64_t offset,
+        const RawstdUUID& version = {}
+    );
 
     // The connection's bytes, plain or through TLS; set by _wire_connect() and
     // gone after _wire_close().
@@ -212,6 +220,7 @@ protected:
     _wire_thaw(const RawstdUUID& id, uint64_t offset, const RawstdUUID& token);
 
 public:
+    uint64_t features() const noexcept { return _features; }
     // Encoded object commands use the same CID dispatcher as member requests.
     // max_size bounds the response body before allocation.
     rawstd::Task<std::vector<unsigned char>> exchange(

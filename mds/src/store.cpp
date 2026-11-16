@@ -1,6 +1,7 @@
 #include <mds/store.hpp>
 #include <rawstor/location.h>
 #include <rawstor/protocol.h>
+#include <rawtls/authorization.hpp>
 
 #include <rawstd/caspaxos.hpp>
 #include <rawstd/gpp.hpp>
@@ -34,6 +35,15 @@ constexpr const char* SCHEMA =
     "CREATE TABLE IF NOT EXISTS tenants ("
     " id BLOB PRIMARY KEY, created_at INTEGER NOT NULL"
     ") WITHOUT ROWID;"
+    "CREATE TABLE IF NOT EXISTS principals ("
+    " identity TEXT PRIMARY KEY, tenant_id BLOB NOT NULL REFERENCES "
+    "tenants(id), role INTEGER NOT NULL"
+    ");"
+    "CREATE TABLE IF NOT EXISTS principal_objects ("
+    " identity TEXT NOT NULL REFERENCES principals(identity) ON DELETE CASCADE,"
+    " object_id BLOB NOT NULL, rights INTEGER NOT NULL, PRIMARY KEY(identity, "
+    "object_id)"
+    ");"
     "CREATE TABLE IF NOT EXISTS witnesses ("
     " id BLOB NOT NULL, chunk_offset INTEGER NOT NULL, record BLOB NOT NULL,"
     " tenant_id BLOB NOT NULL,"
@@ -93,6 +103,11 @@ constexpr const char* SCHEMA =
     "  id BLOB NOT NULL,"
     "  result BLOB NOT NULL,"
     "  created_at INTEGER NOT NULL"
+    ") WITHOUT ROWID;"
+    "CREATE TABLE IF NOT EXISTS removed_owners ("
+    " idempotency_key BLOB PRIMARY KEY REFERENCES "
+    "applied_mutations(idempotency_key) ON DELETE CASCADE,"
+    " id BLOB NOT NULL, tenant_id BLOB NOT NULL"
     ") WITHOUT ROWID;";
 
 [[noreturn]] void throw_sqlite(sqlite3* db, const char* what) {
@@ -584,7 +599,7 @@ void ObjectStore::create_witness(
     if (int error = rawstor_frame_meta_encode(&record, &meta)) {
         RAWSTD_THROW_SYSTEM_ERROR(error);
     }
-    std::lock_guard<std::mutex> guard(_mutex);
+    std::lock_guard<std::recursive_mutex> guard(_mutex);
     Stmt stmt(
         _db, "INSERT INTO witnesses(id,chunk_offset,record,tenant_id) "
              "VALUES(?,?,?,?)"
@@ -636,7 +651,7 @@ void ObjectStore::_store_witness(
 
 RawstorObjectMeta
 ObjectStore::witness_meta(const RawstdUUID& id, uint64_t offset) {
-    std::lock_guard<std::mutex> guard(_mutex);
+    std::lock_guard<std::recursive_mutex> guard(_mutex);
     return _load_witness(id, offset);
 }
 
@@ -644,7 +659,7 @@ RawstorObjectMeta ObjectStore::sync_prepare(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
     bool& ok
 ) {
-    std::lock_guard<std::mutex> guard(_mutex);
+    std::lock_guard<std::recursive_mutex> guard(_mutex);
     Transaction tx(_db);
     RawstorObjectMeta meta = _load_witness(id, offset);
     rawstd::caspaxos::Acceptor<RawstorObjectConfig> state{
@@ -668,7 +683,7 @@ RawstorObjectMeta ObjectStore::sync_accept(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectBallot& ballot,
     const RawstorObjectBallot& next, const RawstorObjectConfig& config, bool& ok
 ) {
-    std::lock_guard<std::mutex> guard(_mutex);
+    std::lock_guard<std::recursive_mutex> guard(_mutex);
     Transaction tx(_db);
     RawstorObjectMeta meta = _load_witness(id, offset);
     rawstd::caspaxos::Acceptor<RawstorObjectConfig> state{
@@ -694,7 +709,7 @@ RawstorObjectMeta ObjectStore::sync_accept(
 }
 
 void ObjectStore::remove_witness(const RawstdUUID& id, uint64_t offset) {
-    std::lock_guard<std::mutex> guard(_mutex);
+    std::lock_guard<std::recursive_mutex> guard(_mutex);
     Stmt stmt(_db, "DELETE FROM witnesses WHERE id=? AND chunk_offset=?");
     stmt.bind_blob(1, id.bytes, sizeof(id.bytes)).bind_int64(2, offset).step();
     if (sqlite3_changes(_db) == 0) {
@@ -713,6 +728,216 @@ static RawstdUUID object_owner(sqlite3* db, const RawstdUUID& id) {
     return ret;
 }
 
+ObjectStore::Access ObjectStore::authorize(
+    const rawtls::SpiffeId* peer, RawstorCommandType command,
+    const RawstdUUID& object, const RawstdUUID& tenant,
+    const RawstdUUID& mutation
+) {
+    Access result{
+        std::unique_lock<std::recursive_mutex>(_mutex), RAWSTOR_RIGHT_ALL, {}
+    };
+    if (!peer)
+        return result;
+    if (peer->role() == rawtls::Role::admin) {
+        switch (command) {
+        case RAWSTOR_CMD_SET_OBJECT:
+        case RAWSTOR_CMD_RESOLVE:
+        case RAWSTOR_CMD_LIST:
+        case RAWSTOR_CMD_LIST_VERSIONS:
+        case RAWSTOR_CMD_OBJ_CREATE:
+        case RAWSTOR_CMD_OBJ_RESIZE:
+        case RAWSTOR_CMD_OBJ_REMOVE:
+        case RAWSTOR_CMD_OBJ_COMMIT_VERSION:
+        case RAWSTOR_CMD_OBJ_REMOVE_VERSION:
+        case RAWSTOR_CMD_LOCATION_INFO:
+        case RAWSTOR_CMD_LIST_TENANTS:
+        case RAWSTOR_CMD_TENANT_CREATE:
+        case RAWSTOR_CMD_TENANT_REMOVE:
+        case RAWSTOR_CMD_OBJ_TRANSFER:
+        case RAWSTOR_CMD_SET_OWNER:
+        case RAWSTOR_CMD_PRINCIPAL_SET:
+        case RAWSTOR_CMD_PRINCIPAL_REMOVE:
+        case RAWSTOR_CMD_PRINCIPAL_LIST:
+        case RAWSTOR_CMD_ALLOCATE:
+        case RAWSTOR_CMD_RELEASE:
+        case RAWSTOR_CMD_META:
+            return result;
+        default:
+            RAWSTD_THROW_SYSTEM_ERROR(EACCES);
+        }
+    }
+    if (peer->role() != rawtls::Role::client)
+        RAWSTD_THROW_SYSTEM_ERROR(EACCES);
+    rawstd_uuid_from_string(&result.tenant, peer->tenant().c_str());
+    Stmt principal(
+        _db, "SELECT tenant_id,role FROM principals WHERE identity=?;"
+    );
+    principal.bind_text(1, peer->uri().str());
+    if (!principal.step())
+        RAWSTD_THROW_SYSTEM_ERROR(EACCES);
+    RawstdUUID registered{};
+    principal.column_uuid(0, &registered);
+    if (rawstd_uuid_cmp(&registered, &result.tenant))
+        RAWSTD_THROW_SYSTEM_ERROR(EACCES);
+    result.rights =
+        rawtls::role_rights(static_cast<uint32_t>(principal.column_int64(1)));
+    if (!rawstd_uuid_is_nil(&tenant) &&
+        rawstd_uuid_cmp(&tenant, &result.tenant))
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    if (rawstd_uuid_is_nil(&object)) {
+        switch (command) {
+        case RAWSTOR_CMD_RESOLVE:
+        case RAWSTOR_CMD_LIST_VERSIONS:
+        case RAWSTOR_CMD_OBJ_RESIZE:
+        case RAWSTOR_CMD_OBJ_REMOVE:
+        case RAWSTOR_CMD_OBJ_COMMIT_VERSION:
+        case RAWSTOR_CMD_OBJ_REMOVE_VERSION:
+            RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+        default:
+            break;
+        }
+    }
+    if (!rawstd_uuid_is_nil(&object)) {
+        RawstdUUID owner = object_owner(_db, object);
+        bool new_object = false;
+        if (command == RAWSTOR_CMD_OBJ_CREATE && rawstd_uuid_is_nil(&owner)) {
+            Stmt existing(_db, "SELECT 1 FROM objects WHERE id=?;");
+            existing.bind_blob(1, object.bytes, sizeof(object.bytes));
+            new_object = !existing.step();
+        }
+        if (rawstd_uuid_is_nil(&owner) && command == RAWSTOR_CMD_OBJ_REMOVE &&
+            !rawstd_uuid_is_nil(&mutation)) {
+            Stmt removed(
+                _db, "SELECT tenant_id FROM removed_owners WHERE "
+                     "idempotency_key=? AND id=?;"
+            );
+            removed.bind_blob(1, mutation.bytes, sizeof(mutation.bytes))
+                .bind_blob(2, object.bytes, sizeof(object.bytes));
+            if (removed.step())
+                removed.column_uuid(0, &owner);
+        }
+        if (rawstd_uuid_cmp(&owner, &result.tenant) && !new_object)
+            RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+        Stmt restriction(
+            _db, "SELECT rights FROM principal_objects WHERE identity=? AND "
+                 "object_id=?;"
+        );
+        restriction.bind_text(1, peer->uri().str())
+            .bind_blob(2, object.bytes, sizeof(object.bytes));
+        if (restriction.step())
+            result.rights &= static_cast<uint32_t>(restriction.column_int64(0));
+    }
+    uint32_t required = 0;
+    switch (command) {
+    case RAWSTOR_CMD_SET_OBJECT:
+    case RAWSTOR_CMD_LIST:
+        required = RAWSTOR_RIGHT_READ;
+        break;
+    case RAWSTOR_CMD_RESOLVE:
+        break;
+    case RAWSTOR_CMD_LIST_VERSIONS:
+        required = RAWSTOR_RIGHT_READ;
+        break;
+    case RAWSTOR_CMD_OBJ_CREATE:
+    case RAWSTOR_CMD_OBJ_RESIZE:
+    case RAWSTOR_CMD_OBJ_REMOVE:
+    case RAWSTOR_CMD_OBJ_COMMIT_VERSION:
+    case RAWSTOR_CMD_OBJ_REMOVE_VERSION:
+        required = RAWSTOR_RIGHT_MANAGE;
+        break;
+    default:
+        RAWSTD_THROW_SYSTEM_ERROR(EACCES);
+    }
+    if (!result.rights || (required && !(result.rights & required)))
+        RAWSTD_THROW_SYSTEM_ERROR(EACCES);
+    return result;
+}
+
+void ObjectStore::set_principal(
+    const std::string& identity, uint32_t role, const RawstdUUID& object,
+    uint32_t rights
+) {
+    rawtls::SpiffeId parsed(identity);
+    if (parsed.role() != rawtls::Role::client)
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    RawstdUUID tenant{};
+    rawstd_uuid_from_string(&tenant, parsed.tenant().c_str());
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    _require_tenant(tenant);
+    if (rawstd_uuid_is_nil(&object)) {
+        rawtls::role_rights(role);
+        Stmt update(
+            _db,
+            "INSERT INTO principals(identity,tenant_id,role) VALUES(?,?,?) ON "
+            "CONFLICT(identity) DO UPDATE SET role=excluded.role;"
+        );
+        update.bind_text(1, identity)
+            .bind_blob(2, tenant.bytes, sizeof(tenant.bytes))
+            .bind_int64(3, role)
+            .step();
+    } else {
+        if (role || (rights & ~RAWSTOR_RIGHT_ALL))
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        RawstdUUID owner = object_owner(_db, object);
+        if (rawstd_uuid_cmp(&owner, &tenant))
+            RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+        Stmt exists(_db, "SELECT 1 FROM principals WHERE identity=?;");
+        exists.bind_text(1, identity);
+        if (!exists.step())
+            RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+        Stmt update(
+            _db, "INSERT INTO principal_objects(identity,object_id,rights) "
+                 "VALUES(?,?,?) ON CONFLICT(identity,object_id) DO UPDATE SET "
+                 "rights=excluded.rights;"
+        );
+        update.bind_text(1, identity)
+            .bind_blob(2, object.bytes, sizeof(object.bytes))
+            .bind_int64(3, rights)
+            .step();
+    }
+}
+void ObjectStore::remove_principal(
+    const std::string& identity, const RawstdUUID& object
+) {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    Stmt del(
+        _db,
+        rawstd_uuid_is_nil(&object)
+            ? "DELETE FROM principals WHERE identity=?;"
+            : "DELETE FROM principal_objects WHERE identity=? AND object_id=?;"
+    );
+    del.bind_text(1, identity);
+    if (!rawstd_uuid_is_nil(&object))
+        del.bind_blob(2, object.bytes, sizeof(object.bytes));
+    del.step();
+}
+std::vector<RawstorFramePrincipalPayload> ObjectStore::list_principals() {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    Stmt select(
+        _db,
+        "SELECT identity,role,NULL,0 FROM principals UNION ALL SELECT "
+        "identity,0,object_id,rights FROM principal_objects ORDER BY identity;"
+    );
+    std::vector<RawstorFramePrincipalPayload> result;
+    while (select.step()) {
+        auto identity = select.column_blob(0);
+        if (identity.size() >= RAWSTOR_PRINCIPAL_ID_SIZE)
+            RAWSTD_THROW_SYSTEM_ERROR(EIO);
+        RawstorFramePrincipalPayload row{};
+        memcpy(row.identity, identity.data(), identity.size());
+        row.role = static_cast<uint32_t>(select.column_int64(1));
+        if (!row.role) {
+            RawstdUUID object{};
+            select.column_uuid(2, &object);
+            memcpy(row.object_id, object.bytes, 16);
+        }
+        row.rights = row.role ? rawtls::role_rights(row.role)
+                              : static_cast<uint32_t>(select.column_int64(3));
+        result.push_back(row);
+    }
+    return result;
+}
+
 RawstdUUID ObjectStore::transfer(
     const RawstdUUID& idempotency_key, const RawstdUUID& id,
     const RawstdUUID& tenant
@@ -720,7 +945,7 @@ RawstdUUID ObjectStore::transfer(
     if (rawstd_uuid_is_nil(&tenant)) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-    std::lock_guard<std::mutex> guard(_mutex);
+    std::lock_guard<std::recursive_mutex> guard(_mutex);
     if (replay_mutation(_db, idempotency_key, MutationType::transfer, id)) {
         // Not applied again: the owner is whoever has it now.
         return object_owner(_db, id);
@@ -745,7 +970,7 @@ void ObjectStore::set_witness_owner(
     if (rawstd_uuid_is_nil(&tenant)) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-    std::lock_guard<std::mutex> guard(_mutex);
+    std::lock_guard<std::recursive_mutex> guard(_mutex);
     Transaction tx(_db);
     RawstorObjectMeta meta = _load_witness(id, offset);
     memcpy(meta.tenant_id, tenant.bytes, sizeof(meta.tenant_id));
@@ -763,7 +988,7 @@ void ObjectStore::set_witness_owner(
 std::vector<ChunkEntry> ObjectStore::list_chunks(
     const RawstdUUID& tenant, RawstdUUID& token, unsigned int limit
 ) {
-    std::lock_guard<std::mutex> guard(_mutex);
+    std::lock_guard<std::recursive_mutex> guard(_mutex);
     /* The objects a tenant owns; no tenant lists them all. */
     const bool all = rawstd_uuid_is_nil(&tenant);
     Stmt stmt(
@@ -816,12 +1041,12 @@ std::vector<ChunkEntry> ObjectStore::list_chunks(
 }
 
 std::shared_ptr<const Topology> ObjectStore::topology() {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     return _topology;
 }
 
 void ObjectStore::check_topology(const Topology& topology) {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     _check_topology(topology);
 }
 
@@ -861,7 +1086,7 @@ void ObjectStore::_check_topology(const Topology& topology) {
 }
 
 void ObjectStore::set_topology(Topology topology) {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     _check_topology(topology);
     auto replacement = std::make_shared<const Topology>(std::move(topology));
     _sync_backends(*replacement);
@@ -896,14 +1121,14 @@ void ObjectStore::_sync_backends(const Topology& topology) {
 }
 
 void ObjectStore::reset_backend_availability() {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     exec(_db, "UPDATE backends SET available = 0;");
 }
 
 void ObjectStore::update_backend(
     const TopologyOST& ost, const RawstorLocationInfo* info
 ) {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     Stmt update(
         _db,
         info != nullptr
@@ -929,7 +1154,7 @@ void ObjectStore::update_backend(
 void ObjectStore::set_space_change_listener(
     std::function<void(const std::vector<RawstdUUID>&)> listener
 ) {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     _on_space_change = std::move(listener);
 }
 
@@ -954,14 +1179,14 @@ void ObjectStore::_notify_space_change(std::vector<RawstdUUID> osts) {
 }
 
 bool ObjectStore::backend_available(const RawstdUUID& id) {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     Stmt select(_db, "SELECT available FROM backends WHERE id = ?;");
     select.bind_blob(1, id.bytes, sizeof(id.bytes));
     return select.step() && select.column_int64(0) != 0;
 }
 
 RawstorLocationInfo ObjectStore::info() {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     RawstorLocationInfo result{};
     Stmt select(_db, "SELECT used, total FROM backends;");
     while (select.step()) {
@@ -993,7 +1218,7 @@ ObjectDescriptor ObjectStore::create(
     const RawstdUUID& id, uint64_t logical_size, uint64_t chunk_size,
     const PlacementPolicy& policy
 ) {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     validate_geometry(logical_size, chunk_size);
 
     if (replay_mutation(_db, idempotency_key, MutationType::create, id)) {
@@ -1063,7 +1288,7 @@ ObjectDescriptor ObjectStore::create(
 
 ObjectMap
 ObjectStore::open(const RawstdUUID& id, const RawstdUUID& version_id) {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     if (!rawstd_uuid_is_nil(&version_id)) {
         return _open_version(id, version_id);
     }
@@ -1124,7 +1349,7 @@ ObjectMap ObjectStore::_open_live(const RawstdUUID& id) {
 ResizeResult ObjectStore::resize(
     const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t new_size
 ) {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     if (std::optional<std::vector<unsigned char>> recorded =
             replay_mutation(_db, idempotency_key, MutationType::resize, id)) {
         ResultReader r(*recorded);
@@ -1186,7 +1411,7 @@ ResizeResult ObjectStore::resize(
 }
 
 void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     struct Chunk {
         /* Scan order becomes the slot order. */
         std::vector<RawstdUUID> ost_ids;
@@ -1371,7 +1596,7 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
 
 ObjectMap
 ObjectStore::remove(const RawstdUUID& idempotency_key, const RawstdUUID& id) {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     if (std::optional<std::vector<unsigned char>> recorded =
             replay_mutation(_db, idempotency_key, MutationType::remove, id)) {
         return decode_map(*recorded);
@@ -1391,6 +1616,7 @@ ObjectStore::remove(const RawstdUUID& idempotency_key, const RawstdUUID& id) {
 
     // ENOENT if there is no such object.
     ObjectMap ret = _open_live(id);
+    RawstdUUID owner = object_owner(_db, id);
 
     {
         Stmt del(_db, "DELETE FROM objects WHERE id = ?;");
@@ -1407,6 +1633,16 @@ ObjectStore::remove(const RawstdUUID& idempotency_key, const RawstdUUID& id) {
     record_mutation(
         _db, idempotency_key, MutationType::remove, id, encode_map(ret)
     );
+    if (!rawstd_uuid_is_nil(&idempotency_key)) {
+        Stmt saved(
+            _db, "INSERT INTO removed_owners(idempotency_key,id,tenant_id) "
+                 "VALUES(?,?,?);"
+        );
+        saved.bind_blob(1, idempotency_key.bytes, sizeof(idempotency_key.bytes))
+            .bind_blob(2, id.bytes, sizeof(id.bytes))
+            .bind_blob(3, owner.bytes, sizeof(owner.bytes))
+            .step();
+    }
 
     tx.commit();
     _notify_space_change(std::move(touched));
@@ -1415,7 +1651,7 @@ ObjectStore::remove(const RawstdUUID& idempotency_key, const RawstdUUID& id) {
 }
 
 std::vector<RawstdUUID> ObjectStore::list_versions(const RawstdUUID& id) {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     _descriptor(id);
 
     Stmt select(
@@ -1496,7 +1732,7 @@ uint64_t ObjectStore::commit_version(
     const RawstdUUID& idempotency_key, const RawstdUUID& id,
     const RawstdUUID& version_id, const std::vector<VersionMember>& members
 ) {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     if (std::optional<std::vector<unsigned char>> recorded = replay_mutation(
             _db, idempotency_key, MutationType::commit_version, id
         )) {
@@ -1586,7 +1822,7 @@ std::vector<VersionMember> ObjectStore::remove_version(
     const RawstdUUID& idempotency_key, const RawstdUUID& id,
     const RawstdUUID& version_id
 ) {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     std::vector<VersionMember> ret;
     if (std::optional<std::vector<unsigned char>> recorded = replay_mutation(
             _db, idempotency_key, MutationType::remove_version, id
@@ -1652,7 +1888,7 @@ void ObjectStore::create_tenant(
     if (rawstd_uuid_is_nil(&tenant)) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     /* The registry's own mutations are recorded under the tenant they concern.
      */
     if (replay_mutation(
@@ -1686,7 +1922,7 @@ void ObjectStore::remove_tenant(
     if (rawstd_uuid_cmp(&tenant, &default_tenant) == 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EPERM);
     }
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     if (replay_mutation(
             _db, idempotency_key, MutationType::remove_tenant, tenant
         )) {
@@ -1711,6 +1947,8 @@ void ObjectStore::remove_tenant(
     }
 
     {
+        Stmt principals(_db, "DELETE FROM principals WHERE tenant_id=?;");
+        principals.bind_blob(1, tenant.bytes, sizeof(tenant.bytes)).step();
         Stmt del(_db, "DELETE FROM tenants WHERE id = ?;");
         del.bind_blob(1, tenant.bytes, sizeof(tenant.bytes)).step();
     }
@@ -1722,7 +1960,7 @@ void ObjectStore::remove_tenant(
 
 std::vector<RawstdUUID>
 ObjectStore::list_tenants(RawstdUUID& token, unsigned int limit) {
-    std::lock_guard<std::mutex> lock(_mutex);
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
     Stmt select(_db, "SELECT id FROM tenants WHERE id>? ORDER BY id;");
     // The statement reads `after` until it is done; `token` is rewritten.
     const RawstdUUID after = token;

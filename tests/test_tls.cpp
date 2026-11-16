@@ -186,14 +186,13 @@ TEST(TlsTest, a_process_without_tls_settings_needs_insecure) {
     ASSERT_EQ(rawstor_initialize(&opts), 0);
 }
 
-TEST(TlsTest, location_info_over_tls) {
+TEST(TlsTest, an_ost_certificate_does_not_grant_provider_permissions) {
     rawstor::tests::TlsProcess tls(ost_uri(ost_id));
     OstServer server(8900);
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
 
     RawstorLocationInfo info = {};
-    EXPECT_EQ(location_info(*queue, server.location(), &info), 0);
-    EXPECT_GT(info.total, (uint64_t)0);
+    EXPECT_EQ(location_info(*queue, server.location(), &info), -EACCES);
 }
 
 TEST(TlsTest, a_silent_connection_does_not_hold_up_others) {
@@ -203,8 +202,7 @@ TEST(TlsTest, a_silent_connection_does_not_hold_up_others) {
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
     RawstorLocationInfo info = {};
-    EXPECT_EQ(location_info(*queue, server.location(), &info), 0);
-    EXPECT_GT(info.total, (uint64_t)0);
+    EXPECT_EQ(location_info(*queue, server.location(), &info), -EACCES);
 
     close(silent);
 }
@@ -234,7 +232,7 @@ TEST(TlsTest, a_plaintext_client_is_dropped) {
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
     RawstorLocationInfo info = {};
-    EXPECT_EQ(location_info(*queue, server.location(), &info), 0);
+    EXPECT_EQ(location_info(*queue, server.location(), &info), -EACCES);
 }
 
 TEST(TlsTest, a_server_of_another_ca_is_refused) {
@@ -256,7 +254,7 @@ TEST(TlsTest, a_server_of_another_ca_is_refused) {
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
     RawstorLocationInfo info = {};
-    EXPECT_EQ(location_info(*queue, server.location(), &info), 0);
+    EXPECT_EQ(location_info(*queue, server.location(), &info), -EACCES);
 }
 
 TEST(TlsTest, a_client_of_another_ca_is_refused_by_the_server) {
@@ -292,7 +290,7 @@ TEST(TlsTest, a_client_of_another_ca_is_refused_by_the_server) {
 
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
     RawstorLocationInfo info = {};
-    EXPECT_EQ(location_info(*queue, server.location(), &info), 0);
+    EXPECT_EQ(location_info(*queue, server.location(), &info), -EACCES);
 }
 
 TEST(TlsTest, the_wrong_ost_identity_is_refused) {

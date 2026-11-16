@@ -22,9 +22,10 @@
 namespace rawstor {
 namespace mdsserver {
 
-Monitor::Monitor(ObjectStore& store, Opts opts) :
+Monitor::Monitor(ObjectStore& store, Opts opts, RawstdUUID local_witness) :
     _store(store),
     _opts(opts),
+    _local_witness(local_witness),
     _wake(rawstd::Pipe::Mode::NonBlocking),
     _epoch(Clock::now()),
     _slots(opts.info_concurrency) {
@@ -77,8 +78,13 @@ rawstd::Task<void> Monitor::_probe(const TopologyOST& ost) {
     RawstorLocationInfo info{};
     bool available = false;
     try {
-        Location location(std::vector<rawstd::URI>{rawstd::URI(ost.location)});
-        info = co_await location.info(*_queue);
+        if (!ost.witness_only() || rawstd_uuid_is_nil(&_local_witness) ||
+            rawstd_uuid_cmp(&ost.id, &_local_witness)) {
+            Location location(
+                std::vector<rawstd::URI>{rawstd::URI(ost.location)}
+            );
+            info = co_await location.info(*_queue);
+        }
         available = true;
     } catch (const std::exception& e) {
         // Cut short by stop(): says nothing about the backend.

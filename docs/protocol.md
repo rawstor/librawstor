@@ -37,7 +37,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | Explicit `len` field in the response (`{res, len, hash}`) | ❌ | `res` still carries the payload size |
 | `map_epoch` in the IO frame (epoch-fence) | ❌ | planned in [MDS design](mds.md) |
 | Authentication: mutual TLS on every connection, identity from the certificate | ❌ | planned in [Security design](security.md) (stage 2) |
-| Authorization: capability tokens issued by `RESOLVE` and checked by the OST, per-command rights | ❌ | planned in [Security design](security.md) (stage 3) |
+| Authorization: capability tokens issued by `RESOLVE` and checked by the OST, per-command rights | ✅ | [Security design](security.md), `librawtls/authorization.hpp`, MDS and OST dispatch |
 
 One binary protocol is spoken by every rawstor server role: `rawstor-ost`
 (object storage) and `rawstor-mds` (metadata server). The authoritative
@@ -227,7 +227,7 @@ none any more -- the lease ran out and the barrier lifted itself.
 ### Handshake — 8 bytes
 
 `HANDSHAKE`'s request and response payload. `features` is the set of optional
-protocol features, a bit mask; no bit is defined yet. The client offers what it
+protocol features, a bit mask. Bit 0 (`RAWSTOR_FEATURE_AUTHORIZATION`) negotiates signed capabilities and the extended chunk map. The client offers what it
 has and the server answers with the subset it accepts, which the connection
 then uses; each side ignores the bits it does not know. There is no protocol
 version: features are the only negotiation.
@@ -956,3 +956,54 @@ Registered objects are `OBJECT` rows at offset zero; witness records are
 `CHUNK` rows carrying their real chunk offsets. Limits count IDs, and all
 offsets of an ID stay on one page. The row type alone says which kind of
 address was listed.
+
+
+## Authorization extension (feature bit 0)
+
+TLS tenant connections require `RAWSTOR_FEATURE_AUTHORIZATION`; a missing bit
+never enables legacy access. Plaintext connections retain their explicit
+insecure behavior. Provider roles use the closed command tables in
+[Security](security.md#roles-and-rights-per-command).
+
+With bit 0 negotiated, every `RawstorFrameObjChunkSlot` and its location string
+in a `RESOLVE` or `OBJ_REMOVE` reply are followed by a 220-byte
+`RawstorCapability`. Provider/insecure replies carry a zero capability. A tenant
+reply carries an Ed25519 signature over the preceding 156 bytes:
+
+| Field | Bytes |
+|---|---:|
+| format (`rstrcap` followed by byte 1) | 8 |
+| key ID (SHA-256 of the Ed25519 raw public key) | 32 |
+| tenant UUID | 16 |
+| object UUID | 16 |
+| server UUID (the OST/MDS certificate ID) | 16 |
+| version UUID (nil for live) | 16 |
+| SHA-256 fingerprint of the client's leaf certificate | 32 |
+| chunk offset | 8 |
+| expiry (UTC Unix seconds) | 8 |
+| rights (`read=1`, `write=2`, `discard=4`, `manage=8`) | 4 |
+| Ed25519 signature | 64 |
+
+`RENEW` (`0x15`) carries this fixed payload (228 bytes including the head),
+installs or refreshes the connection's authorization and returns an empty
+success reply. The client sends it before `SET_OBJECT` and before metadata or
+structural operations, and refreshes it through `RESOLVE` before expiry.
+The server verifies the signature, key ID, tenant, certificate fingerprint,
+audience and expiry. Each command checks the cached scope, rights and expiry;
+requests admitted before expiry can finish. A version token cannot read the
+live object; a manager's live token may remove a version of that same object.
+
+Provider-admin principal commands use `RawstorFramePrincipal` (2081 bytes,
+including the 8-byte head). Its payload is a NUL-terminated 2049-byte SPIFFE ID,
+a 16-byte object UUID, a 32-bit role and a 32-bit rights mask:
+
+| Command | Opcode | Effect |
+|---|---|---|
+| `PRINCIPAL_SET` | `0x4a` | Nil object: upsert reader=1, writer=2, manager=3. Non-nil object: role=0, restrict rights within the principal's role. |
+| `PRINCIPAL_REMOVE` | `0x4b` | Remove the principal, or its named object restriction. |
+| `PRINCIPAL_LIST` | `0x4c` | Empty request fields; reply is an array of the 2073-byte payloads. |
+
+Principal mutations are desired-state updates: repeats are harmless. The MDS
+validates the tenant against the identity and its registry. Unknown commands
+on an authenticated connection are denied. Foreign objects are `-ENOENT`;
+missing principals and insufficient rights on an owned object are `-EACCES`.

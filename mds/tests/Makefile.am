@@ -5,6 +5,7 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
               $(SQLITE3_CFLAGS) \
               $(ASAN_CFLAGS) \
               $(GTEST_CFLAGS) \
+              -I$(top_srcdir)/librawtls/include \
               -I$(top_srcdir)/mds/include \
               -I$(top_srcdir)/librawstd/include \
               -I$(top_srcdir)/include \

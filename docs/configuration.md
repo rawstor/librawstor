@@ -154,3 +154,60 @@ start. It logs `INSECURE` at start. A port is TLS or plaintext, never both and
 never detected, so a plaintext process cannot talk to a TLS one, in either
 direction; mixing the two in a cluster is meant only for moving it from one
 mode to the other.
+
+
+## Authorization
+
+TLS tenant clients are authorized by the MDS. Provider `admin` certificates
+manage principals and objects; provider `mds` certificates can scan OST
+metadata. Neither provider role may write data. An OST certificate grants no
+provider permissions. Plaintext `--insecure` deliberately bypasses these checks.
+
+The MDS signs capabilities using an Ed25519 key. Their default lifetime is
+five minutes; `RAWSTOR_MDS_OPTS_CAPABILITY_LIFETIME` sets seconds (1..3600). Configure
+`RAWSTOR_AUTH_SIGNING_KEY` on the MDS and `RAWSTOR_AUTH_KEYS` on every OST and
+on the MDS when it hosts a witness. The latter is a PEM bundle of trusted
+Ed25519 **public** keys, not a CA bundle. A missing key prevents tenant
+capabilities from being issued/accepted; it never falls back to unrestricted
+TLS. The topology UUID of a witness hosted on an MDS must equal the UUID in
+that MDS's certificate.
+
+```sh
+umask 077
+openssl genpkey -algorithm ED25519 -out /etc/rawstor/tls/capability.key
+openssl pkey -in /etc/rawstor/tls/capability.key -pubout -out /etc/rawstor/tls/capability.pub
+chown rawstor:rawstor /etc/rawstor/tls/capability.key
+chmod 0644 /etc/rawstor/tls/capability.pub
+```
+
+Only the MDS receives `capability.key`. Copy `capability.pub` to the verifiers.
+For rotation, distribute a bundle containing both public keys, switch the MDS
+signing key, wait at least the configured capability lifetime, then remove the old public key.
+A capability never outlives the client certificate that authenticates it.
+Keys are read when issuing or installing a capability, so replacing the key
+files applies to subsequent capabilities without a service restart.
+
+Using an admin certificate in the environment:
+
+```sh
+rawstor tenant create mds://mds:7776 --uuid 018f4e2a-2222-7000-8000-000000000001
+rawstor principal set mds://mds:7776 spiffe://cluster.example/tenant/018f4e2a-2222-7000-8000-000000000001/client/vhost manager
+rawstor principal list mds://mds:7776
+```
+
+The tenant client then uses its own certificate. A location without a named
+tenant creates objects for the certificate's tenant; naming a different tenant
+is refused. `reader` can read and list its tenant's objects, `writer` adds data
+writes/discards, `manager` adds structural operations and versions. An admin
+can restrict a principal on one object using
+`rawstor principal set LOCATION ID rights OBJECT MASK`; rights are intersected
+with the role, and a zero mask denies the object. Removing that restriction
+restores the tenant role with `rawstor principal remove LOCATION ID OBJECT`.
+Removing the principal uses the same command without `OBJECT`.
+
+The C API is `<rawstor/principal.h>`. Role changes, deletion and object
+restrictions affect new capabilities. Existing capabilities remain valid until
+their configured expiry (bounded by certificate expiry), including after ownership transfer. Expired
+connections deny new commands; the library re-resolves and renews before
+expiry. A certificate reload that changes the leaf certificate requires a new
+TLS connection when its old capability expires, preserving certificate binding.

@@ -24,11 +24,12 @@ extern "C" {
 #define RAWSTOR_MAGIC 0x72737472 // "rstr" as ascii
 
 /*
- * Optional capabilities negotiated by HANDSHAKE. No bit is
- * defined yet: RAWSTOR_FEATURES_SUPPORTED is the union of the bits this
- * build knows, what a client offers and what a server accepts from an offer.
+ * Optional capabilities negotiated by HANDSHAKE: RAWSTOR_FEATURES_SUPPORTED is
+ * the union of the bits this build knows, what a client offers and what a
+ * server accepts from an offer.
  */
-#define RAWSTOR_FEATURES_SUPPORTED UINT64_C(0)
+#define RAWSTOR_FEATURE_AUTHORIZATION UINT64_C(1)
+#define RAWSTOR_FEATURES_SUPPORTED RAWSTOR_FEATURE_AUTHORIZATION
 
 /*
  * Tenants (docs/tenants.md). An object has one tenant, its owner, recorded
@@ -210,6 +211,48 @@ extern "C" {
  */
 #define RAWSTOR_CMD_OBJ_TRANSFER 0x49
 
+/* Capability installation/refresh and provider-only principal administration.
+ */
+#define RAWSTOR_CMD_RENEW 0x15
+#define RAWSTOR_CMD_PRINCIPAL_SET 0x4a
+#define RAWSTOR_CMD_PRINCIPAL_REMOVE 0x4b
+#define RAWSTOR_CMD_PRINCIPAL_LIST 0x4c
+
+#define RAWSTOR_RIGHT_READ 1u
+#define RAWSTOR_RIGHT_WRITE 2u
+#define RAWSTOR_RIGHT_DISCARD 4u
+#define RAWSTOR_RIGHT_MANAGE 8u
+#define RAWSTOR_RIGHT_ALL 15u
+#define RAWSTOR_PRINCIPAL_READER 1u
+#define RAWSTOR_PRINCIPAL_WRITER 2u
+#define RAWSTOR_PRINCIPAL_MANAGER 3u
+#define RAWSTOR_PRINCIPAL_ID_SIZE 2049
+
+/* All signed bytes have a fixed shape; signature covers every preceding byte.
+ * The format tag prevents reuse as a signature for another protocol. */
+struct RawstorCapability {
+    uint8_t format[8];
+    uint8_t key_id[32];
+    uint8_t tenant_id[16];
+    uint8_t object_id[16];
+    uint8_t server_id[16];
+    uint8_t version_id[16];
+    uint8_t fingerprint[32];
+    uint64_t chunk_offset;
+    uint64_t not_after;
+    uint32_t rights;
+    uint8_t signature[64];
+} RAWSTOR_PACKED;
+
+struct RawstorFramePrincipalPayload {
+    char identity[RAWSTOR_PRINCIPAL_ID_SIZE];
+    uint8_t object_id[16]; /* nil = principal role; otherwise an object
+                              restriction */
+    uint32_t role;         /* reader, writer, manager; 0 when managing an object
+                              restriction */
+    uint32_t rights;
+} RAWSTOR_PACKED;
+
 typedef uint16_t RawstorCommandType;
 
 // Wire representation of enum RawstorObjectSyncStateValue
@@ -225,6 +268,16 @@ struct RawstorFrameHead {
     uint32_t magic;
     RawstorCommandType cmd;
     uint16_t cid;
+} RAWSTOR_PACKED;
+
+struct RawstorFrameRenew {
+    struct RawstorFrameHead head;
+    struct RawstorCapability payload;
+} RAWSTOR_PACKED;
+
+struct RawstorFramePrincipal {
+    struct RawstorFrameHead head;
+    struct RawstorFramePrincipalPayload payload;
 } RAWSTOR_PACKED;
 
 /* request frames */
@@ -880,6 +933,10 @@ static inline int rawstor_frame_allocate_decode(
     _Static_assert(sizeof(struct type) == (size), #type " wire size")
 #endif
 
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorCapability, 220);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameRenew, 228);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFramePrincipalPayload, 2073);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFramePrincipal, 2081);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameHead, 8);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameBasicPayload, 48);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSetObjectPayload, 64);

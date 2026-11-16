@@ -2,10 +2,11 @@
 
 A **tenant** is a field of an object: the party that owns it. An object is
 addressed by its id alone (ids are unique on their own), and the tenant is
-what a later check of rights looks at. Rights are not implemented yet, and
-nothing authenticates a caller: the tenant a caller names is **asserted by
-the caller**. Today the tenant owns, filters a listing and is recorded; it is
-not yet a security boundary.
+what authorization checks against the authenticated caller. In TLS mode the
+certificate identifies the caller's tenant, and MDS principal records determine
+its role and object restrictions. The MDS issues certificate-bound capabilities
+for OST access. Plaintext `--insecure` has no tenant security boundary. See
+[Authorization](configuration.md#authorization).
 
 ## Status
 
@@ -16,13 +17,13 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | Tenant in the location URI (`<tenant>@`), optional | ✅ | `src/location.cpp`, `librawstd/src/uri.cpp` |
 | Owner recorded with every chunk (`ALLOCATE`, chunk metadata, `META`) | ✅ | `src/blk_backend.cpp`, `include/rawstor/protocol.h` |
 | `LIST` by owner, every row carrying its owner; no tenant lists every object | ✅ | `src/blk_backend.cpp`, `mds/src/store.cpp` |
-| The default tenant owns what is created without naming one | ✅ | `src/location.cpp`, `mds/src/store.cpp` |
+| The caller's certificate tenant owns unnamed creates; providers/insecure clients use the default tenant | ✅ | `src/location.cpp`, `mds/src/store.cpp` |
 | MDS: owner of an object, tenant registry, `TENANT_CREATE` / `TENANT_REMOVE` / `LIST_TENANTS` | ✅ | `mds/src/store.cpp`, `mds/src/client.cpp` |
 | `--reconstruct` restores owners and registers their tenants | ✅ | `mds/src/store.cpp` |
 | CLI: `rawstor tenant create/list/remove` | ✅ | `cli/tenant.c` |
 | Transfer of an object to another tenant: `SET_OWNER`, `OBJ_TRANSFER`, `rawstor object transfer` | ✅ | `src/target.cpp`, `src/blk_backend.cpp`, `mds/src/store.cpp` |
-| Checking the caller's rights against the owner | ❌ | |
-| Authentication, binding a tenant to a certificate | ❌ | |
+| Checking the caller's rights against the owner | ✅ | MDS authorization and OST capability checks |
+| Authentication, binding a tenant to a certificate | ✅ | mTLS SPIFFE identity and MDS principals |
 
 ## Model
 
@@ -38,16 +39,16 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 - A location names a tenant as its **user information**, optionally. It is
   the tenant whose objects the location addresses: the owner of what is
   created through it, and the filter of what is listed through it. It is not
-  who is calling: the caller is a separate matter (a certificate, later), so
+  who is calling: the caller is identified by its TLS certificate, so
   an administrator creates an object for a user by naming that user in the
-  location. Until rights exist, nobody is refused.
-- `list` returns the objects **visible to the caller**. Until rights exist
-  that is the objects it owns; a caller that names no tenant, the
-  administrator, sees every object of the store.
+  location. TLS tenant callers may create only for their own tenant, subject to their role.
+- `list` returns the objects **visible to the caller**. A TLS tenant client
+  sees its own tenant. An admin or an insecure client that names no tenant
+  sees every object of the store.
 - A target names the owner of its object as the user information of its
-  URIs (`mds://<tenant>@host:port/<uuid>`), and none for an object of the
-  default tenant: an address without one stands for the default tenant, which
-  is the caller's own until a caller has an identity. So every row of a
+  URIs (`mds://<tenant>@host:port/<uuid>`). Without user information, a TLS
+  tenant client uses its own tenant; a provider or insecure client uses the
+  built-in default tenant. So every row of a
   listing carries its owner, also for the administrator, and
   `rawstor_target_tenant()` reads it from the address.
 - Every other operation takes the tenant to be informational: an object is
@@ -191,8 +192,10 @@ the tenant registered, and running the removal again finishes it. An object
 removed by someone else meanwhile is skipped. An object created for the tenant
 meanwhile can make the last step answer `-EBUSY`. The removal acts on the
 objects by their ids: an object transferred out of the tenant between the
-listing and its removal is removed with the rest, and nothing stops it, as nothing
-yet checks who may remove what (rights are the next stage and will be checked per object).
+listing and its removal can still be removed by the provider admin carrying
+out that operation: the batch is not atomic with ownership transfer. Tenant
+clients cannot remove the tenant registry or transfer ownership; their object
+operations are checked against their own tenant and role.
 
 `--reconstruct` rebuilds the map from what the OSTs hold, and the owner is part
 of a chunk's metadata, so owners come back with it; a tenant found as an owner is
@@ -293,7 +296,7 @@ records. `Location.tenants()`, `create_tenant()` and `remove_tenant()` raise
 
 ## Not here
 
-Authentication, the binding of a tenant to a certificate, rights, quotas and
-per-tenant limits are separate work. Until
-then any client can name any tenant, and the registry does not stop an OST from
-storing an object for a tenant it does not list.
+TLS authentication, principal roles and certificate-bound capabilities enforce
+tenant access; see [Security](security.md). Quotas and per-tenant resource
+limits are separate work. An insecure deployment has no authenticated tenant
+boundary.

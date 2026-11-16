@@ -1,6 +1,7 @@
 #ifndef RAWSTOR_TLS_HPP
 #define RAWSTOR_TLS_HPP
 
+#include <rawstor/protocol.h>
 #include <rawtls/context.hpp>
 #include <rawtls/transport.hpp>
 
@@ -22,6 +23,9 @@ namespace tls {
  */
 void initialize();
 
+// The authenticated client tenant, or the built-in default for a provider.
+RawstdUUID default_owner();
+
 void terminate() noexcept;
 
 // The process's TLS context, null when TLS is off.
@@ -42,6 +46,19 @@ void request_reload() noexcept;
  * cannot answer for another. Has no effect when TLS is off.
  */
 void expect_ost(const std::string& host, const RawstdUUID& ost_id);
+
+struct Capability {
+    RawstorCapability token;
+    std::string resolver;
+};
+void remember_capability(
+    const std::string& host, const RawstorCapability& token,
+    const std::string& resolver
+);
+Capability capability(
+    const std::string& host, const RawstdUUID& object, uint64_t offset,
+    const RawstdUUID& version
+);
 
 /*
  * The Transport of a connected socket to the server at `host` of `scheme`

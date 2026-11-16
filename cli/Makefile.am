@@ -16,7 +16,8 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
-rawstor_SOURCES = chunks.c \
+rawstor_SOURCES = principal.c principal.h \
+                  chunks.c \
                   chunks.h \
                   create.c \
                   create.h \

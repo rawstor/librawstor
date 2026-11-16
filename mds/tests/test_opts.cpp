@@ -68,4 +68,15 @@ TEST(MdsOptsTest, invalid_values_are_configuration_errors) {
     }
 }
 
+TEST(MdsOptsTest, capability_lifetime_is_bounded) {
+    ScopedEnv lifetime("RAWSTOR_MDS_OPTS_CAPABILITY_LIFETIME", nullptr);
+    EXPECT_EQ(rawstor::mdsserver::Opts::from_env().capability_lifetime, 300u);
+    setenv("RAWSTOR_MDS_OPTS_CAPABILITY_LIFETIME", "10", 1);
+    EXPECT_EQ(rawstor::mdsserver::Opts::from_env().capability_lifetime, 10u);
+    for (const char* bad : {"0", "3601", "", "-1"}) {
+        setenv("RAWSTOR_MDS_OPTS_CAPABILITY_LIFETIME", bad, 1);
+        EXPECT_THROW(rawstor::mdsserver::Opts::from_env(), std::system_error);
+    }
+}
+
 } // namespace

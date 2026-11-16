@@ -18,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <ctime>
 #include <exception>
 #include <memory>
 #include <optional>
@@ -101,6 +102,10 @@ public:
     void cancel_recv_multishot() noexcept override { _recv.cancel(); }
 
     const rawtls::SpiffeId* peer() const noexcept override { return nullptr; }
+    uint64_t peer_expiry() const noexcept override { return 0; }
+    std::array<unsigned char, 32> fingerprint(bool) const override {
+        return {};
+    }
 };
 
 const size_t cipher_size = 1 << 16;
@@ -129,6 +134,8 @@ private:
     std::string _expected_peer;
     rawtls::Role _expected_role = rawtls::Role::ost;
     std::optional<rawtls::SpiffeId> _peer;
+    std::optional<rawtls::SpiffeId> _local;
+    uint64_t _peer_expiration = 0;
     bool _handshake_done = false;
     bool _verify_failed = false;
     // True once the peer has said it will send no more.
@@ -171,7 +178,7 @@ private:
     }
 
     // The identity `cert` stands for, or std::system_error(EACCES).
-    rawtls::SpiffeId _check_peer(x509_st* cert) const {
+    rawtls::SpiffeId _check_peer(x509_st* cert, bool own = false) const {
         if (X509_check_ca(cert) != 0) {
             refuse("the certificate is a CA");
         }
@@ -179,8 +186,9 @@ private:
         // Absent extended key usage is not "any": the certificate must say it
         // may be used for the end of the connection it is on.
         uint32_t usage = X509_get_extended_key_usage(cert);
-        uint32_t needed =
-            _mode == rawtls::Mode::client ? XKU_SSL_SERVER : XKU_SSL_CLIENT;
+        uint32_t needed = (_mode == rawtls::Mode::client) != own
+                              ? XKU_SSL_SERVER
+                              : XKU_SSL_CLIENT;
         if (usage == UINT32_MAX || !(usage & needed)) {
             refuse("the certificate lacks the extended key usage");
         }
@@ -221,10 +229,10 @@ private:
             refuse("the URI SAN is not a rawstor SPIFFE ID");
         }
         const rawtls::SpiffeId& id = *parsed;
-        if (id.trust_domain() != _trust_domain) {
+        if (!own && id.trust_domain() != _trust_domain) {
             refuse("the SPIFFE ID is in another trust domain");
         }
-        if (_mode == rawtls::Mode::client) {
+        if (!own && _mode == rawtls::Mode::client) {
             if (!id.is_server()) {
                 refuse(
                     "the server's SPIFFE ID is not that of an OST or an MDS"
@@ -293,6 +301,15 @@ private:
             if (!_peer.has_value()) {
                 refuse("no identity was established");
             }
+            struct tm expiry{};
+            X509* peer_cert = SSL_get0_peer_certificate(_ssl);
+            if (peer_cert &&
+                ASN1_TIME_to_tm(X509_get0_notAfter(peer_cert), &expiry) == 1) {
+                time_t epoch = timegm(&expiry);
+                if (epoch > 0)
+                    _peer_expiration = static_cast<uint64_t>(epoch);
+            }
+            _local = _check_peer(SSL_get_certificate(_ssl), true);
             _handshake_done = true;
             return true;
         }
@@ -508,6 +525,20 @@ public:
     void cancel_recv_multishot() noexcept override;
 
     const rawtls::SpiffeId* peer() const noexcept override { return &*_peer; }
+    const rawtls::SpiffeId* local() const noexcept override { return &*_local; }
+    uint64_t peer_expiry() const noexcept override { return _peer_expiration; }
+    std::array<unsigned char, 32> fingerprint(bool local) const override {
+        X509* cert =
+            local ? SSL_get_certificate(_ssl) : SSL_get0_peer_certificate(_ssl);
+        std::array<unsigned char, 32> result{};
+        unsigned int size = 0;
+        if (cert == nullptr ||
+            X509_digest(cert, EVP_sha256(), result.data(), &size) != 1 ||
+            size != result.size()) {
+            refuse("cannot fingerprint the certificate");
+        }
+        return result;
+    }
 };
 
 /*

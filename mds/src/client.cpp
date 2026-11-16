@@ -1,5 +1,6 @@
 #include <mds/client.hpp>
 
+#include <mds/opts.hpp>
 #include <mds/server.hpp>
 
 #include <rawstd/coro.hpp>
@@ -17,7 +18,10 @@
 #include <system_error>
 #include <vector>
 
+#include <cstdlib>
 #include <cstring>
+#include <ctime>
+#include <functional>
 
 namespace {
 
@@ -75,8 +79,11 @@ std::string ost_location(const Topology& topology, const RawstdUUID& ost_id) {
 // Serializes an ObjectMap into an RESOLVE response payload: descriptor,
 // then one RawstorFrameObjChunkEntry + its width RawstorFrameObjChunkSlot
 // records per chunk (docs/mds.md, "Wire protocol").
-std::vector<unsigned char>
-encode_object_map(const Topology& topology, const ObjectMap& map) {
+std::vector<unsigned char> encode_object_map(
+    const Topology& topology, const ObjectMap& map,
+    const std::function<RawstorCapability(size_t, const PlacementSlot&)>&
+        capability = {}
+) {
     RawstorFrameObjDescriptorPayload descriptor{};
     memcpy(descriptor.id, map.descriptor.id.bytes, sizeof(descriptor.id));
     descriptor.logical_size = map.descriptor.logical_size;
@@ -98,6 +105,7 @@ encode_object_map(const Topology& topology, const ObjectMap& map) {
     std::vector<unsigned char> data(sizeof(descriptor));
     memcpy(data.data(), &descriptor, sizeof(descriptor));
 
+    size_t chunk = 0;
     for (const std::vector<PlacementSlot>& slots : map.chunks) {
         RawstorFrameObjChunkEntry entry{
             .width = static_cast<uint8_t>(slots.size()),
@@ -126,7 +134,14 @@ encode_object_map(const Topology& topology, const ObjectMap& map) {
                 data.data() + off + sizeof(wire_slot), location.data(),
                 location.size()
             );
+            if (capability) {
+                RawstorCapability token = capability(chunk, slot);
+                size_t start = data.size();
+                data.resize(start + sizeof(token));
+                memcpy(data.data() + start, &token, sizeof(token));
+            }
         }
+        ++chunk;
     }
 
     return data;
@@ -224,6 +239,45 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak) {
     co_await server.del_client(fd);
 }
 
+std::vector<unsigned char> Client::_encode_map(
+    const ObjectMap& map, const RawstdUUID& version,
+    const ObjectStore::Access& access
+) {
+    if (!(_features & RAWSTOR_FEATURE_AUTHORIZATION)) {
+        if (_transport->peer() &&
+            _transport->peer()->role() == rawtls::Role::client)
+            RAWSTD_THROW_SYSTEM_ERROR(EACCES);
+        return encode_object_map(*_server.store().topology(), map);
+    }
+    return encode_object_map(
+        *_server.store().topology(), map,
+        [&](size_t chunk, const PlacementSlot& slot) {
+            RawstorCapability token{};
+            if (!_transport->peer() ||
+                _transport->peer()->role() != rawtls::Role::client)
+                return token;
+            const char* key = getenv("RAWSTOR_AUTH_SIGNING_KEY");
+            if (!key || !*key)
+                RAWSTD_THROW_SYSTEM_ERROR(EACCES);
+            memcpy(token.tenant_id, access.tenant.bytes, 16);
+            memcpy(token.object_id, map.descriptor.id.bytes, 16);
+            memcpy(token.server_id, slot.ost_id.bytes, 16);
+            memcpy(token.version_id, version.bytes, 16);
+            auto fingerprint = _transport->fingerprint(false);
+            memcpy(token.fingerprint, fingerprint.data(), fingerprint.size());
+            token.chunk_offset = chunk * map.descriptor.chunk_size;
+            token.not_after = static_cast<uint64_t>(time(nullptr)) +
+                              Opts::from_env().capability_lifetime;
+            token.not_after =
+                std::min(token.not_after, _transport->peer_expiry());
+            token.rights = access.rights;
+            if (!rawstd_uuid_is_nil(&version))
+                token.rights &= RAWSTOR_RIGHT_READ | RAWSTOR_RIGHT_MANAGE;
+            return rawtls::sign_capability(token, key);
+        }
+    );
+}
+
 rawstd::Task<void> Client::_dispatch(
     std::weak_ptr<Client> weak, const RawstorFrameHead& head,
     rawio::RecvStream& stream
@@ -243,11 +297,77 @@ rawstd::Task<void> Client::_dispatch(
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
 
+    if (client->_handshaken && client->_transport->peer() &&
+        client->_transport->peer()->role() == rawtls::Role::client &&
+        !(client->_features & RAWSTOR_FEATURE_AUTHORIZATION)) {
+        co_await client->_send_response(head.cmd, head.cid, -EACCES);
+        RAWSTD_THROW_SYSTEM_ERROR(EACCES);
+    }
+
+    if (client->_transport->peer() &&
+        client->_transport->peer()->role() == rawtls::Role::client &&
+        client->_transport->peer_expiry() <=
+            static_cast<uint64_t>(time(nullptr))) {
+        co_await client->_send_response(head.cmd, head.cid, -EACCES);
+        RAWSTD_THROW_SYSTEM_ERROR(EACCES);
+    }
+
     // Every request below is served synchronously against ObjectStore
     // (docs/mds.md: "Calls are synchronous... a briefly blocked
     // event loop is accepted") -- the only actual awaiting here is the
     // socket read/write around it.
     switch (head.cmd) {
+    case RAWSTOR_CMD_RENEW: {
+        RawstorCapability token{};
+        co_await recv_all(stream, &token, sizeof(token));
+        int result = 0;
+        try {
+            client->_authorization.renew(token, *client->_transport);
+        } catch (const std::system_error& e) {
+            result = -e.code().value();
+        }
+        co_await client->_send_response(head.cmd, head.cid, result);
+        break;
+    }
+    case RAWSTOR_CMD_PRINCIPAL_SET:
+    case RAWSTOR_CMD_PRINCIPAL_REMOVE:
+    case RAWSTOR_CMD_PRINCIPAL_LIST: {
+        RawstorFramePrincipalPayload payload{};
+        co_await recv_all(stream, &payload, sizeof(payload));
+        int result = 0;
+        std::vector<RawstorFramePrincipalPayload> rows;
+        try {
+            auto access = store.authorize(client->_transport->peer(), head.cmd);
+            if (!memchr(payload.identity, 0, sizeof(payload.identity)))
+                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            if (head.cmd == RAWSTOR_CMD_PRINCIPAL_LIST)
+                rows = store.list_principals();
+            else if (head.cmd == RAWSTOR_CMD_PRINCIPAL_REMOVE)
+                store.remove_principal(
+                    payload.identity, uuid_of(payload.object_id)
+                );
+            else {
+                if (client->_transport->local() &&
+                    rawtls::SpiffeId(payload.identity).trust_domain() !=
+                        client->_transport->local()->trust_domain())
+                    RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+                store.set_principal(
+                    payload.identity, payload.role, uuid_of(payload.object_id),
+                    payload.rights
+                );
+            }
+        } catch (const std::system_error& e) {
+            result = -e.code().value();
+        }
+        if (result < 0)
+            co_await client->_send_response(head.cmd, head.cid, result);
+        else
+            co_await client->_send_response(
+                head.cmd, head.cid, rows.size() * sizeof(payload), rows.data(),
+                rows.size() * sizeof(payload)
+            );
+        break;
+    }
     case RAWSTOR_CMD_SET_OBJECT: {
         // The mandatory handshake; MDS control connections bind no
         // object (docs/mds.md, "Wire protocol") -- just drain
@@ -256,7 +376,13 @@ rawstd::Task<void> Client::_dispatch(
         // other server role, protocol.h).
         RawstorFrameSetObjectPayload payload;
         co_await recv_all(stream, &payload, sizeof(payload));
-        co_await client->_send_response(head.cmd, head.cid, 0);
+        int result = 0;
+        try {
+            auto access = store.authorize(client->_transport->peer(), head.cmd);
+        } catch (const std::system_error& e) {
+            result = -e.code().value();
+        }
+        co_await client->_send_response(head.cmd, head.cid, result);
         break;
     }
     case RAWSTOR_CMD_HANDSHAKE: {
@@ -268,6 +394,7 @@ rawstd::Task<void> Client::_dispatch(
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
         client->_handshaken = true;
+        client->_features = payload.features & RAWSTOR_FEATURES_SUPPORTED;
         // The capabilities both sides know.
         RawstorFrameHandshakePayload reply{
             .features = payload.features & RAWSTOR_FEATURES_SUPPORTED,
@@ -287,6 +414,8 @@ rawstd::Task<void> Client::_dispatch(
         std::vector<RawstorFrameTenantEntry> entries;
         int32_t res = 0;
         try {
+            auto access =
+                store.authorize(client->_transport->peer(), head.cmd, {}, {});
             std::vector<RawstdUUID> tenants = store.list_tenants(token, limit);
             entries.resize(tenants.size() + 1);
             for (size_t i = 0; i < tenants.size(); ++i) {
@@ -319,6 +448,8 @@ rawstd::Task<void> Client::_dispatch(
         co_await recv_all(stream, &payload, sizeof(payload));
         int32_t res = 0;
         try {
+            auto access =
+                store.authorize(client->_transport->peer(), head.cmd, {}, {});
             if (head.cmd == RAWSTOR_CMD_TENANT_CREATE) {
                 store.create_tenant(
                     uuid_of(payload.idempotency_key), uuid_of(payload.tenant_id)
@@ -340,6 +471,8 @@ rawstd::Task<void> Client::_dispatch(
         RawstorLocationInfo info{};
         int32_t res = 0;
         try {
+            auto access =
+                store.authorize(client->_transport->peer(), head.cmd, {}, {});
             info = store.info();
         } catch (const std::system_error& e) {
             res = -e.code().value();
@@ -358,6 +491,18 @@ rawstd::Task<void> Client::_dispatch(
         co_await recv_all(stream, &payload, sizeof(payload));
         int32_t res = 0;
         try {
+            if (int error = client->_authorization.check(
+                    *client->_transport, head.cmd, payload.object_id,
+                    payload.chunk_offset, nullptr
+                ))
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            if (client->_transport->peer() &&
+                client->_transport->peer()->role() == rawtls::Role::client &&
+                memcmp(
+                    payload.tenant_id,
+                    client->_authorization.token()->tenant_id, 16
+                ))
+                RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
             RawstorObjectSpec spec{};
             RawstorMemberRole role{};
             if (int error =
@@ -384,6 +529,22 @@ rawstd::Task<void> Client::_dispatch(
         int32_t res = 0;
         RawstorFrameMetaPayload out{};
         try {
+            if (int error = client->_authorization.check(
+                    *client->_transport, head.cmd, payload.object_id,
+                    payload.offset, nullptr
+                ))
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            if (client->_transport->peer() &&
+                client->_transport->peer()->role() == rawtls::Role::client) {
+                auto meta = store.witness_meta(
+                    uuid_of(payload.object_id), payload.offset
+                );
+                if (memcmp(
+                        meta.tenant_id,
+                        client->_authorization.token()->tenant_id, 16
+                    ))
+                    RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+            }
             RawstdUUID version = uuid_of(payload.version_id);
             if (!rawstd_uuid_is_nil(&version)) {
                 RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
@@ -415,6 +576,8 @@ rawstd::Task<void> Client::_dispatch(
         co_await recv_all(stream, &payload, sizeof(payload));
         int32_t res = 0;
         try {
+            auto access =
+                store.authorize(client->_transport->peer(), head.cmd, {}, {});
             store.set_witness_owner(
                 uuid_of(payload.object_id), payload.offset,
                 uuid_of(payload.version_id)
@@ -431,6 +594,8 @@ rawstd::Task<void> Client::_dispatch(
         int32_t res = 0;
         RawstorFrameObjTransferredPayload out{};
         try {
+            auto access =
+                store.authorize(client->_transport->peer(), head.cmd, {}, {});
             RawstdUUID owner = store.transfer(
                 uuid_of(payload.idempotency_key), uuid_of(payload.id),
                 uuid_of(payload.version_id)
@@ -453,6 +618,22 @@ rawstd::Task<void> Client::_dispatch(
         int32_t res = 0;
         RawstorFrameSyncReplyPayload out{};
         try {
+            if (int error = client->_authorization.check(
+                    *client->_transport, head.cmd, payload.object_id,
+                    payload.chunk_offset, nullptr
+                ))
+                RAWSTD_THROW_SYSTEM_ERROR(error);
+            if (client->_transport->peer() &&
+                client->_transport->peer()->role() == rawtls::Role::client) {
+                auto meta = store.witness_meta(
+                    uuid_of(payload.object_id), payload.chunk_offset
+                );
+                if (memcmp(
+                        meta.tenant_id,
+                        client->_authorization.token()->tenant_id, 16
+                    ))
+                    RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+            }
             RawstdUUID id = uuid_of(payload.object_id);
             bool ok = false;
             RawstorObjectMeta meta{};
@@ -491,11 +672,18 @@ rawstd::Task<void> Client::_dispatch(
         int32_t res = 0;
         RawstorFrameObjCreatedPayload out{};
         try {
+            auto access = store.authorize(
+                client->_transport->peer(), head.cmd, uuid_of(payload.id),
+                uuid_of(payload.tenant_id)
+            );
             // 1ull << chunk_shift is undefined from 64 on; 0 would be a
             // chunk_size of 0, which an mds:// object never has.
             if (payload.chunk_shift == 0 || payload.chunk_shift >= 64) {
                 RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
             }
+            RawstdUUID object = uuid_of(payload.id);
+            if (rawstd_uuid_is_nil(&object))
+                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
             // Every object has an owner (docs/tenants.md).
             const RawstdUUID owner = uuid_of(payload.tenant_id);
             if (rawstd_uuid_is_nil(&owner)) {
@@ -530,10 +718,15 @@ rawstd::Task<void> Client::_dispatch(
         int32_t res = 0;
         std::vector<unsigned char> data;
         try {
+            auto access = store.authorize(
+                client->_transport->peer(), head.cmd,
+                uuid_of(payload.object_id), {}
+            );
             ObjectMap map = store.open(
                 uuid_of(payload.object_id), uuid_of(payload.version_id)
             );
-            data = encode_object_map(*store.topology(), map);
+            data =
+                client->_encode_map(map, uuid_of(payload.version_id), access);
         } catch (const std::system_error& e) {
             res = -e.code().value();
         }
@@ -557,8 +750,15 @@ rawstd::Task<void> Client::_dispatch(
         int32_t res = 0;
         std::vector<RawstorFrameListEntry> entries;
         try {
-            auto records =
-                store.list_chunks(uuid_of(payload.tenant_id), token, limit);
+            auto access = store.authorize(
+                client->_transport->peer(), head.cmd, {},
+                uuid_of(payload.tenant_id)
+            );
+            auto records = store.list_chunks(
+                rawstd_uuid_is_nil(&access.tenant) ? uuid_of(payload.tenant_id)
+                                                   : access.tenant,
+                token, limit
+            );
             entries.resize(records.size() + 1);
             for (size_t i = 0; i < records.size(); ++i) {
                 memcpy(
@@ -588,6 +788,10 @@ rawstd::Task<void> Client::_dispatch(
         int32_t res = 0;
         std::vector<unsigned char> data;
         try {
+            auto access = store.authorize(
+                client->_transport->peer(), head.cmd,
+                uuid_of(payload.object_id), {}
+            );
             std::vector<RawstdUUID> ids =
                 store.list_versions(uuid_of(payload.object_id));
             data.resize(ids.size() * sizeof(RawstorFrameVersionEntry));
@@ -617,6 +821,9 @@ rawstd::Task<void> Client::_dispatch(
         int32_t res = 0;
         RawstorFrameObjResizedPayload out{};
         try {
+            auto access = store.authorize(
+                client->_transport->peer(), head.cmd, uuid_of(payload.id), {}
+            );
             ResizeResult result = store.resize(
                 uuid_of(payload.idempotency_key), uuid_of(payload.id),
                 payload.val
@@ -642,10 +849,14 @@ rawstd::Task<void> Client::_dispatch(
         int32_t res = 0;
         std::vector<unsigned char> data;
         try {
+            auto access = store.authorize(
+                client->_transport->peer(), head.cmd, uuid_of(payload.id), {},
+                uuid_of(payload.idempotency_key)
+            );
             ObjectMap map = store.remove(
                 uuid_of(payload.idempotency_key), uuid_of(payload.id)
             );
-            data = encode_object_map(*store.topology(), map);
+            data = client->_encode_map(map, {}, access);
         } catch (const std::system_error& e) {
             res = -e.code().value();
         }
@@ -662,6 +873,20 @@ rawstd::Task<void> Client::_dispatch(
     case RAWSTOR_CMD_OBJ_COMMIT_VERSION: {
         RawstorFrameObjCommitVersionPayload payload;
         co_await recv_all(stream, &payload, sizeof(payload));
+        int authorization_error = 0;
+        try {
+            auto access = store.authorize(
+                client->_transport->peer(), head.cmd, uuid_of(payload.id)
+            );
+        } catch (const std::system_error& e) {
+            authorization_error = e.code().value();
+        }
+        if (authorization_error) {
+            co_await client->_send_response(
+                head.cmd, head.cid, -authorization_error
+            );
+            RAWSTD_THROW_SYSTEM_ERROR(authorization_error);
+        }
         // Grown batch by batch as member records actually arrive, never
         // sized by the peer-supplied count up front: a bogus nmembers
         // can't force an allocation bigger than what was really sent.
@@ -678,6 +903,9 @@ rawstd::Task<void> Client::_dispatch(
         int32_t res = 0;
         RawstorFrameObjVersionCommittedPayload out{};
         try {
+            auto access = store.authorize(
+                client->_transport->peer(), head.cmd, uuid_of(payload.id), {}
+            );
             std::vector<VersionMember> members;
             members.reserve(wire_members.size());
             for (const RawstorFrameObjVersionMemberPayload& m : wire_members) {
@@ -710,6 +938,9 @@ rawstd::Task<void> Client::_dispatch(
         int32_t res = 0;
         std::vector<unsigned char> data;
         try {
+            auto access = store.authorize(
+                client->_transport->peer(), head.cmd, uuid_of(payload.id), {}
+            );
             std::vector<VersionMember> members = store.remove_version(
                 uuid_of(payload.idempotency_key), uuid_of(payload.id),
                 uuid_of(payload.version_id)
@@ -750,7 +981,9 @@ rawstd::Task<void> Client::_dispatch(
         // requires the peer to close and reconnect, same as an OST's own
         // unknown-command handling.
         rawstd_error("fd %d: Unsupported command: %u\n", fd, head.cmd);
-        co_await client->_send_response(head.cmd, head.cid, -ENOSYS);
+        co_await client->_send_response(
+            head.cmd, head.cid, client->_transport->peer() ? -EACCES : -ENOSYS
+        );
         RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
     }
 }

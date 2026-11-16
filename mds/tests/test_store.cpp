@@ -1416,3 +1416,106 @@ TEST_F(ObjectStoreTest, reconstruct_restores_the_owner) {
         errno_of([&] { store.remove_tenant(RawstdUUID{}, acme); }), EBUSY
     );
 }
+
+TEST_F(
+    ObjectStoreTest,
+    authorization_uses_registered_tenant_roles_and_object_restrictions
+) {
+    ObjectStore store = make_store();
+    RawstdUUID tenant = make_id(), other = make_id(), object = make_id();
+    store.create_tenant(make_id(), tenant);
+    store.create_tenant(make_id(), other);
+    store.create(
+        tenant, make_id(), object, chunk_size, chunk_size, make_policy(1)
+    );
+    RawstdUUIDString tenant_text;
+    rawstd_uuid_to_string(&tenant, &tenant_text);
+    std::string identity = std::string("spiffe://cluster.example/tenant/") +
+                           tenant_text + "/client/user";
+    rawtls::SpiffeId peer(identity);
+    auto error = [&](int expected, auto call) {
+        try {
+            call();
+            FAIL() << "expected error " << expected;
+        } catch (const std::system_error& e) {
+            EXPECT_EQ(e.code().value(), expected);
+        }
+    };
+    error(EACCES, [&] { store.authorize(&peer, RAWSTOR_CMD_RESOLVE, object); });
+    store.set_principal(identity, RAWSTOR_PRINCIPAL_READER, {}, 0);
+    EXPECT_EQ(
+        store.authorize(&peer, RAWSTOR_CMD_RESOLVE, object).rights,
+        RAWSTOR_RIGHT_READ
+    );
+    error(EACCES, [&] {
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE, object);
+    });
+    error(ENOENT, [&] {
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_CREATE, {}, other);
+    });
+    error(EACCES, [&] { store.authorize(&peer, RAWSTOR_CMD_TENANT_CREATE); });
+    store.set_principal(identity, RAWSTOR_PRINCIPAL_MANAGER, {}, 0);
+    EXPECT_EQ(
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE, object).rights,
+        RAWSTOR_RIGHT_ALL
+    );
+    RawstdUUID foreign = make_id(), unowned = make_id();
+    store.create(
+        other, make_id(), foreign, chunk_size, chunk_size, make_policy(1)
+    );
+    store.create(
+        {}, make_id(), unowned, chunk_size, chunk_size, make_policy(1)
+    );
+    error(ENOENT, [&] {
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_CREATE, foreign, tenant);
+    });
+    error(ENOENT, [&] {
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_CREATE, unowned, tenant);
+    });
+    error(ENOENT, [&] { store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE); });
+    store.set_principal(identity, 0, object, RAWSTOR_RIGHT_READ);
+    error(EACCES, [&] {
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE, object);
+    });
+    EXPECT_EQ(
+        store.authorize(&peer, RAWSTOR_CMD_RESOLVE, object).rights,
+        RAWSTOR_RIGHT_READ
+    );
+    store.transfer(make_id(), object, other);
+    error(ENOENT, [&] { store.authorize(&peer, RAWSTOR_CMD_RESOLVE, object); });
+    store.remove_principal(identity, {});
+    error(EACCES, [&] { store.authorize(&peer, RAWSTOR_CMD_LIST); });
+}
+
+TEST_F(
+    ObjectStoreTest, a_tenant_can_authorize_only_its_own_recorded_remove_retry
+) {
+    ObjectStore store = make_store();
+    RawstdUUID tenant = make_id(), object = make_id(), mutation = make_id();
+    store.create_tenant(make_id(), tenant);
+    RawstdUUIDString text;
+    rawstd_uuid_to_string(&tenant, &text);
+    std::string identity = std::string("spiffe://cluster.example/tenant/") +
+                           text + "/client/manager";
+    rawtls::SpiffeId peer(identity);
+    store.set_principal(identity, RAWSTOR_PRINCIPAL_MANAGER, {}, 0);
+    store.create(
+        tenant, make_id(), object, chunk_size, chunk_size, make_policy(1)
+    );
+    store.remove(mutation, object);
+    EXPECT_NO_THROW(
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE, object, {}, mutation)
+    );
+    EXPECT_THROW(
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE, object, {}, make_id()),
+        std::system_error
+    );
+    EXPECT_THROW(
+        store.authorize(&peer, RAWSTOR_CMD_RESOLVE, object), std::system_error
+    );
+    store.remove_principal(identity, {});
+    EXPECT_THROW(
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE, object, {}, mutation),
+        std::system_error
+    );
+}

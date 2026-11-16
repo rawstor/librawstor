@@ -1,21 +1,26 @@
 #include "tls.hpp"
 
 #include "opts.h"
+#include <rawstor/location.h>
+#include <rawtls/ca.hpp>
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.h>
 
 #include <atomic>
 #include <cerrno>
+#include <cstring>
 #include <map>
 #include <mutex>
 #include <optional>
 #include <set>
+#include <tuple>
 
 namespace {
 
 std::mutex mutex;
 std::unique_ptr<rawtls::Context> process_context;
+RawstdUUID client_tenant{};
 // The identity required of every MDS, empty to accept any MDS of the trust
 // domain.
 std::string mds_identity;
@@ -25,6 +30,12 @@ std::map<std::string, std::string> ost_identities;
 // witness on its own port, so an ost:// address among them is that MDS
 // answering as the witness, and it presents its own identity.
 std::set<std::string> mds_hosts;
+using CapabilityKey =
+    std::tuple<std::string, std::string, uint64_t, std::string>;
+std::map<CapabilityKey, rawstor::tls::Capability> capabilities;
+std::string uuid_key(const void* id) {
+    return std::string(static_cast<const char*>(id), 16);
+}
 // What request_reload() reaches from a signal handler, without the lock.
 std::atomic<rawtls::Context*> signal_context{nullptr};
 
@@ -78,18 +89,33 @@ void initialize() {
         }
     }
     std::lock_guard<std::mutex> lock(mutex);
+    rawtls::SpiffeId own(rawtls::inspect(config.cert_file).identity);
+    client_tenant = {};
+    if (own.role() == rawtls::Role::client)
+        rawstd_uuid_from_string(&client_tenant, own.tenant().c_str());
     process_context = std::move(context);
     mds_identity = std::move(mds);
     signal_context.store(process_context.get());
+}
+
+RawstdUUID default_owner() {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!rawstd_uuid_is_nil(&client_tenant))
+        return client_tenant;
+    RawstdUUID result{};
+    rawstd_uuid_from_string(&result, RAWSTOR_DEFAULT_TENANT);
+    return result;
 }
 
 void terminate() noexcept {
     std::lock_guard<std::mutex> lock(mutex);
     signal_context.store(nullptr);
     process_context.reset();
+    client_tenant = {};
     mds_identity.clear();
     ost_identities.clear();
     mds_hosts.clear();
+    capabilities.clear();
 }
 
 void request_reload() noexcept {
@@ -113,6 +139,38 @@ void expect_ost(const std::string& host, const RawstdUUID& ost_id) {
     rawstd_uuid_to_string(&ost_id, &id);
     ost_identities[host] =
         "spiffe://" + process_context->trust_domain() + "/ost/" + id;
+}
+
+void remember_capability(
+    const std::string& host, const RawstorCapability& token,
+    const std::string& resolver
+) {
+    if (!token.rights)
+        return;
+    std::lock_guard<std::mutex> lock(mutex);
+    capabilities[{
+        host, uuid_key(token.object_id), token.chunk_offset,
+        uuid_key(token.version_id)
+    }] = {token, resolver};
+}
+Capability capability(
+    const std::string& host, const RawstdUUID& object, uint64_t offset,
+    const RawstdUUID& version
+) {
+    std::lock_guard<std::mutex> lock(mutex);
+    auto it = capabilities.find(
+        {host, uuid_key(object.bytes), offset, uuid_key(version.bytes)}
+    );
+    if (it == capabilities.end()) {
+        RawstdUUID live{};
+        it = capabilities.find(
+            {host, uuid_key(object.bytes), offset, uuid_key(live.bytes)}
+        );
+        if (it == capabilities.end() ||
+            !(it->second.token.rights & RAWSTOR_RIGHT_MANAGE))
+            RAWSTD_THROW_SYSTEM_ERROR(EACCES);
+    }
+    return it->second;
 }
 
 rawstd::Task<std::unique_ptr<rawtls::Transport>> connect(

@@ -55,6 +55,11 @@ Environment=WORKERS=4
 #Environment=RAWSTOR_TLS_CERT=/etc/rawstor/tls/cert.pem
 #Environment=RAWSTOR_TLS_KEY=/etc/rawstor/tls/key.pem
 #Environment=RAWSTOR_TLS_CA=/etc/rawstor/tls/ca.pem
+# Capability verification keys (Ed25519 public PEM bundle).
+#Environment=RAWSTOR_AUTH_KEYS=/etc/rawstor/tls/capability.pub
+# Only the MDS signs capabilities; keep the private key on this service.
+#Environment=RAWSTOR_AUTH_SIGNING_KEY=/etc/rawstor/tls/capability.key
+#Environment=RAWSTOR_MDS_OPTS_CAPABILITY_LIFETIME=300
 EnvironmentFile=/etc/rawstor/mds/%i.conf
 ExecStart=/usr/bin/rawstor-mds --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --workers=${WORKERS} --db=${DB_PATH} --topology=${TOPOLOGY_PATH}
 # Re-reads TOPOLOGY_PATH without a restart (SIGHUP), keeping every client

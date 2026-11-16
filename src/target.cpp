@@ -1,4 +1,5 @@
 #include "target.hpp"
+#include "tls.hpp"
 
 #include "chunk.hpp"
 #include "location.hpp"
@@ -44,8 +45,7 @@ RawstdUUID owner_of(const rawstd::URI& uri) {
     RawstdUUID id;
     const std::string& name = uri.username();
     if (name.empty()) {
-        rawstd_uuid_from_string(&id, RAWSTOR_DEFAULT_TENANT);
-        return id;
+        return rawstor::tls::default_owner();
     }
     if (rawstd_uuid_from_string(&id, name.c_str()) < 0 ||
         rawstd_uuid_is_nil(&id)) {

@@ -15,6 +15,8 @@ struct Opts {
     // again, giving the client time to finish its work on them.
     unsigned int info_refresh_delay = 5000; // milliseconds
 
+    unsigned int capability_lifetime = 300; // seconds, 1..3600
+
     static Opts from_env();
 };
 
