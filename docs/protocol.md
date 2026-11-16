@@ -964,8 +964,8 @@ MDS and OST read the access policy from the authenticated leaf certificate.
 No authorization payload is added to `RESOLVE` or `OBJ_REMOVE` maps; their
 chunk slots contain the member identity and location. Both services check
 certificate expiry for new tenant commands, the closed command table in
-[Security](security.md#roles-and-rights-per-command), object restrictions and
-the object's owner. Foreign objects return `-ENOENT`; insufficient rights
+[Security](security.md#roles-and-permissions-per-command), object restrictions and
+the object's owner. Foreign objects return `-ENOENT`; insufficient permissions
 return `-EACCES`. The tenant of an allocation must match the certificate.
 
 The signed policy is a noncritical private X.509 extension with UUID-derived
@@ -986,10 +986,10 @@ with decimal masks (`read=1`, `write=2`, `discard=4`, `manage=8`). Each line,
 including the final one, ends in a newline. At most 128 objects are allowed;
 duplicate objects, nil UUIDs, unknown roles/bits, noncanonical content,
 trailing DER data and duplicate policy extensions are rejected. A missing
-extension grants no tenant rights. Provider certificates must not carry it.
+extension grants no tenant permissions. Provider certificates must not carry it.
 
 An object mask intersects the tenant role and covers all chunks and versions
-of that object. Objects not listed retain the role's rights. All snapshot
+of that object. Objects not listed retain the role's permissions. All snapshot
 data is read-only; a manager may manage versions of an allowed object.
 The certificate SAN provides the tenant; it is not duplicated in the policy.
 

@@ -165,7 +165,7 @@ TEST(
 ) {
     Cert certificate(X509_new(), X509_free);
     ASSERT_NE(certificate, nullptr);
-    EXPECT_EQ(rawtls::certificate_permissions(certificate.get()).rights(), 0u);
+    EXPECT_EQ(rawtls::certificate_permissions(certificate.get()).mask(), 0u);
     rawtls::Permissions policy{RAWSTOR_ROLE_MANAGER, {{object, 0}}};
     rawtls::certificate_permissions(certificate.get(), policy);
     auto decoded = rawtls::certificate_permissions(certificate.get());
@@ -173,8 +173,8 @@ TEST(
     EXPECT_EQ(decoded.objects, policy.objects);
     RawstdUUID id{};
     ASSERT_EQ(rawstd_uuid_from_string(&id, object.c_str()), 0);
-    EXPECT_EQ(decoded.rights(id.bytes), 0u);
-    EXPECT_EQ(decoded.rights(), RAWSTOR_PERM_ALL);
+    EXPECT_EQ(decoded.mask(id.bytes), 0u);
+    EXPECT_EQ(decoded.mask(), RAWSTOR_PERM_ALL);
 }
 
 TEST(

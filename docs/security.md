@@ -16,7 +16,7 @@ instead run with [`--insecure`](#insecure-mode), which turns all of this off.
   any CA that can write it: the project's own (`rawstor pki`) or an external
   one.
 - **Authorization: tokens signed by the MDS**, bound to the client's
-  certificate, with a closed rights table per command.
+  certificate, with a closed permissions table per command.
 - **`--insecure`** for a storage network isolated from every untrusted party:
   plaintext and no authentication at all.
 - **There is no mode with authentication but without encryption.** In this
@@ -46,7 +46,7 @@ document's own numbering (see [Implementation stages](#implementation-stages)).
 | `--insecure`: plaintext, no authentication, per process | 2 | ✅ | `--insecure` on every executable, `RawstorOpts::insecure` in a program, never in a systemd unit; [Without TLS](configuration.md#without-tls) |
 | Certificate and CA reload without downtime | 2 | ✅ | `SIGHUP` and `SIGUSR1` in `rawstor-ost` and `rawstor-mds`, `SIGUSR1` in `rawstor-vhost` and `rawstor-vduse`; `rawstor_tls_request_reload()` |
 | Certificate tenant roles and object restrictions | 3 | ✅ | CA-signed policy, PKI CLI/C/Python APIs |
-| Independent MDS and OST authorization | 3 | ✅ | Certificate policy, metadata ownership and closed per-command rights table |
+| Independent MDS and OST authorization | 3 | ✅ | Certificate policy, metadata ownership and closed per-command permissions table |
 | `rawstor pki` helper (own CA: init, issue, renew), `rawstor_pki_*()`, pyrawstor `rawstor.pki` | 4 | ✅ | [Issuing certificates](configuration.md#issuing-certificates) |
 | External CA support (SPIRE with spiffe-helper, Vault PKI, step-ca, cert-manager) | 4 | ✅ | documentation: [Issuing certificates](#issuing-certificates) |
 | At-rest encryption, server side (ZFS / dm-crypt) | 5 | ❌ | documentation only |
@@ -140,8 +140,8 @@ spiffe://<trust_domain>/tenant/<tenant_id>/client/<name>   a tenant's client
 
 Any CA that can write a URI SAN fits: SPIRE, Vault PKI, step-ca, cert-manager
 or the project's own helper (`rawstor pki`). See [Issuing certificates](#issuing-certificates).
-The certificate proves *who* the peer is; it carries no permissions (stage 3),
-so rights can change without reissuing it.
+The certificate proves *who* the peer is and carries the signed tenant role
+and object permissions. Changing those permissions requires reissuing it.
 
 A client never accepts "any certificate from the trusted CA" as the server.
 Every connection has an **expected server identity** that comes from trusted
@@ -274,7 +274,7 @@ paths it is entitled to.
 - **The CA's registration interface becomes the tenant boundary.** The MDS
   believes the tenant in the SPIFFE ID, so whoever can create a SPIRE entry
   or request a certificate under `/tenant/acme/` can act as `acme`. Only
-  the control plane may have that right; a deployment guide must say so.
+  the control plane may have that permission; a deployment guide must say so.
 - **The CA signs identity and permissions.** Tenant client certificates carry
   a reader/writer/manager role and optional per-object restrictions. An external
   issuer must emit the rawstor policy extension; a bare SPIFFE identity grants
@@ -302,7 +302,7 @@ the role. Snapshots remain immutable. See the signed
 
 Certificate expiry is checked for every new tenant command, including on an
 open connection. Renewal preserves permissions; changing them requires a new
-certificate. An old copy retains its signed rights until expiry or revocation.
+certificate. An old copy retains its signed permissions until expiry or revocation.
 CRLs apply on new connections. Credential reloads affect new connections, not
 the certificate an existing TLS session authenticated.
 
@@ -313,7 +313,7 @@ new check without a metadata read for each ordinary I/O. In-flight operations
 may finish; subsequent commands check the new owner. MDS holds its ownership
 lock across synchronous authorization and metadata operations.
 
-### Roles and rights per command
+### Roles and permissions per command
 
 Two kinds of principals, told apart by the path of their SPIFFE ID:
 
@@ -321,7 +321,7 @@ Two kinds of principals, told apart by the path of their SPIFFE ID:
   their own tenant, signed into the certificate:
   `reader` → `read`; `writer` → `read`, `write`, `discard`; `manager` →
   those plus `manage` (structural changes: allocate, release, versions,
-  freeze). Rights on a single object narrower than the role may be granted
+  freeze). Permissions on a single object narrower than the role may be granted
   per object in the certificate.
 - **Provider principals**: `mds` (`/mds/...`), `admin` (`/admin/...`). They
   are not tenant-scoped and authorize by their certificate role.
@@ -331,7 +331,7 @@ The list is closed: a command that is not in the table is refused with
 
 OST commands:
 
-| Command | Tenant principal: certificate right | `mds` | `admin` |
+| Command | Tenant principal: certificate permission | `mds` | `admin` |
 |---|---|---|---|
 | `HANDSHAKE` | any | any | any |
 | `SET_OBJECT` | `RAWSTOR_READONLY` needs `read`, a read-write open needs `write` | role | role |
@@ -351,7 +351,7 @@ MDS commands:
 |---|---|---|---|
 | `HANDSHAKE` | any | any | any |
 | `SET_OBJECT` (binds nothing on an MDS) | any | — | role |
-| `RESOLVE` | any nonzero rights on the object | — | role |
+| `RESOLVE` | any nonzero permissions on the object | — | role |
 | `LIST_VERSIONS` | `reader` | — | role |
 | `LIST` | any, answers only the tenant of the certificate | — | role: any tenant or all |
 | `OBJ_CREATE`, `OBJ_RESIZE`, `OBJ_REMOVE`, `OBJ_COMMIT_VERSION`, `OBJ_REMOVE_VERSION` | `manager` | — | role |
@@ -572,7 +572,7 @@ integrity of the wire, which XTS does not give, still come from TLS.
 that process. There is no environment variable and a systemd unit has no way to
 set it. It is the only way: a process that has no TLS
 settings and is not told to go without refuses to start. Traffic is then **plaintext, and no peer is authenticated**: there is
-no certificate to read an identity, a tenant or a role from, so the rights
+no certificate to read an identity, a tenant or a role from, so the permissions
 table, tokens and tenant isolation do not apply and every peer that can reach
 the port can do everything, as before this design. It is meant for a storage
 network that is isolated from every untrusted party, and for development and
@@ -774,7 +774,7 @@ require re-doing earlier ones.
    a legitimate peer that retries is told apart from a flood only by the
    rate.
 3. **Authorization (done).** CA-signed tenant roles and object restrictions;
-   independent MDS and OST checks against ownership and per-command rights;
+   independent MDS and OST checks against ownership and per-command permissions;
    `-EACCES` / `-ENOENT` semantics (a foreign object is `-ENOENT`).
 4. **PKI tooling (done).** `rawstor pki` runs a small CA (init, issue, renew)
    for deployments that have none, `<rawstor/pki.h>` and pyrawstor's
@@ -791,7 +791,7 @@ require re-doing earlier ones.
    on MDS and mirroring work and can be scheduled independently of stages 2-6.
 
 
-8. **Transfer by mutual tenant consent (planned).** Separate certificate rights
+8. **Transfer by mutual tenant consent (planned).** Separate certificate permissions
    for export and import; offer/accept/cancel/status API; durable MDS-coordinated
    ownership handover with member fencing and crash recovery. Both clients keep
    access only to their own tenants. Initial scope: objects in the same MDS.
@@ -820,4 +820,4 @@ require re-doing earlier ones.
   ([MDS design](mds.md)): handshake cost makes this likely.
 - Where the KMS plugin lives (client library vs. a helper daemon on the
   hypervisor) and how a key reaches a vhost process at attach time.
-- Whether `admin` rights are one role or split (tenant admin vs. operator).
+- Whether `admin` permissions are one role or split (tenant admin vs. operator).

@@ -53,28 +53,29 @@ static PyObject* py_pki_issue(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* cert_file;
     const char* key_file;
     unsigned int access_role = 0;
-    PyObject* object_rights = Py_None;
+    PyObject* object_permissions = Py_None;
     if (!PyArg_ParseTuple(
             args, "sizzkss|IO", &dir, &role, &tenant, &name, &validity,
-            &cert_file, &key_file, &access_role, &object_rights
+            &cert_file, &key_file, &access_role, &object_permissions
         )) {
         return NULL;
     }
     struct RawstorPkiPermissions permissions = {0};
     permissions.role = access_role;
-    if (object_rights != Py_None) {
-        if (!PyDict_Check(object_rights) ||
-            PyDict_Size(object_rights) > RAWSTOR_PKI_MAX_OBJECT_RIGHTS) {
+    if (object_permissions != Py_None) {
+        if (!PyDict_Check(object_permissions) ||
+            PyDict_Size(object_permissions) >
+                RAWSTOR_PKI_MAX_OBJECT_PERMISSIONS) {
             PyErr_SetString(
                 PyExc_ValueError,
-                "object_rights must be a dict with at most 128 entries"
+                "object_permissions must be a dict with at most 128 entries"
             );
             return NULL;
         }
         Py_ssize_t position = 0;
         PyObject* key;
         PyObject* value;
-        while (PyDict_Next(object_rights, &position, &key, &value)) {
+        while (PyDict_Next(object_permissions, &position, &key, &value)) {
             Py_ssize_t size;
             PyObject* encoded = PyUnicode_AsUTF8String(key);
             if (!encoded)
@@ -84,26 +85,26 @@ static PyObject* py_pki_issue(PyObject* Py_UNUSED(self), PyObject* args) {
                 Py_DECREF(encoded);
                 return NULL;
             }
-            unsigned long rights = PyLong_AsUnsignedLong(value);
+            unsigned long mask = PyLong_AsUnsignedLong(value);
             if (PyErr_Occurred()) {
                 Py_DECREF(encoded);
                 return NULL;
             }
             if (size != 36 || memchr(object, 0, (size_t)size) ||
-                rights > RAWSTOR_PERM_ALL) {
+                mask > RAWSTOR_PERM_ALL) {
                 Py_DECREF(encoded);
                 PyErr_SetString(
                     PyExc_ValueError,
-                    "object_rights requires UUID keys and masks in 0..15"
+                    "object_permissions requires UUID keys and masks in 0..15"
                 );
                 return NULL;
             }
-            struct RawstorPkiObjectRights* entry =
+            struct RawstorPkiObjectPermissions* entry =
                 &permissions.objects[permissions.count++];
             memcpy(entry->object_id, object, 36);
             Py_DECREF(encoded);
             entry->object_id[36] = '\0';
-            entry->rights = (unsigned int)rights;
+            entry->permissions = (unsigned int)mask;
         }
     }
     char identity[RAWSTOR_PKI_IDENTITY_SIZE];
@@ -172,18 +173,18 @@ static PyObject* py_pki_show(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
     for (size_t i = 0; i < info.permissions.count; ++i) {
-        PyObject* rights =
-            PyLong_FromUnsignedLong(info.permissions.objects[i].rights);
-        if (!rights ||
+        PyObject* mask =
+            PyLong_FromUnsignedLong(info.permissions.objects[i].permissions);
+        if (!mask ||
             PyDict_SetItemString(
-                restrictions, info.permissions.objects[i].object_id, rights
+                restrictions, info.permissions.objects[i].object_id, mask
             ) < 0) {
-            Py_XDECREF(rights);
+            Py_XDECREF(mask);
             Py_DECREF(restrictions);
             Py_DECREF(issued);
             return NULL;
         }
-        Py_DECREF(rights);
+        Py_DECREF(mask);
     }
     PyObject* ret = Py_BuildValue(
         "(sLOIO)", info.identity, info.not_after, issued, info.permissions.role,

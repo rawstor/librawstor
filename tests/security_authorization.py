@@ -249,7 +249,7 @@ def main():
             # A newly issued policy restricts the object without modifying MDS.
             restricted = ['pki', 'issue', '--ca', directory / 'ca', '--cert', directory / 'restricted.crt',
                           '--key', directory / 'restricted.key', '--role', 'manager',
-                          '--object-rights', str(uuid.UUID(bytes=object_id)) + ':1', 'client', tenant, 'restricted']
+                          '--object-permissions', str(uuid.UUID(bytes=object_id)) + ':1', 'client', tenant, 'restricted']
             run(restricted)
             info = json.loads(run(['pki', 'show', '--cert', directory / 'restricted.crt', '--format', 'json']))
             assert 'manager' in str(info) and str(uuid.UUID(bytes=object_id)) in str(info), info

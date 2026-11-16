@@ -991,7 +991,7 @@ rawstd::DetachedTask Client::_list(
         for (const auto& group : groups) {
             if (client->_transport->peer() &&
                 client->_transport->peer()->role() == rawtls::Role::client &&
-                !(client->_transport->peer()->permissions().rights(
+                !(client->_transport->peer()->permissions().mask(
                       group.id.bytes
                   ) &
                   RAWSTOR_PERM_READ))

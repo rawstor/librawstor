@@ -14,7 +14,7 @@ struct Permissions {
     uint32_t role = 0;
     std::map<std::string, uint32_t> objects;
 
-    uint32_t rights(const uint8_t* object = nullptr) const;
+    uint32_t mask(const uint8_t* object = nullptr) const;
 };
 
 enum class Role {

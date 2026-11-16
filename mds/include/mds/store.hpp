@@ -139,7 +139,7 @@ private:
 public:
     struct Access {
         std::unique_lock<std::recursive_mutex> lock;
-        uint32_t rights;
+        uint32_t permissions;
         RawstdUUID tenant;
     };
     // Holds ownership state stable through the synchronous operation.

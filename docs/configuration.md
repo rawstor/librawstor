@@ -177,17 +177,17 @@ management. The process role shown as `role=client` is separate from the
 objects and ownership; `mds` certificates scan OST metadata. Neither provider
 role may write data, and OST certificates grant no provider permissions.
 
-To restrict particular objects, repeat `--object-rights UUID:MASK` when issuing
-the certificate (at most 128 entries). The mask intersects the role's rights:
+To restrict particular objects, repeat `--object-permissions UUID:MASK` when issuing
+the certificate (at most 128 entries). The mask intersects the role's permissions:
 `read=1`, `write=2`, `discard=4`, `manage=8`; combine bits by addition, or use
-zero to deny the object. Other objects retain the role's rights. Restrictions
+zero to deny the object. Other objects retain the role's permissions. Restrictions
 apply to the object and all its versions; snapshots remain read-only.
 
 ```sh
 rawstor pki issue --ca ca --cert reader.crt --key reader.key \
   --role manager \
-  --object-rights 018f4e2a-2222-7000-8000-000000000002:1 \
-  --object-rights 018f4e2a-2222-7000-8000-000000000003:0 \
+  --object-permissions 018f4e2a-2222-7000-8000-000000000002:1 \
+  --object-permissions 018f4e2a-2222-7000-8000-000000000003:0 \
   client 018f4e2a-2222-7000-8000-000000000001 vm-2
 rawstor pki show --cert reader.crt
 ```
@@ -200,10 +200,10 @@ rawstor tenant create mds://mds:7776 --uuid 018f4e2a-2222-7000-8000-000000000001
 
 A location without a named tenant uses the client certificate's tenant.
 Naming another tenant is refused. OST checks the owner in local metadata;
-foreign objects return `ENOENT`, insufficient rights return `EACCES`.
+foreign objects return `ENOENT`, insufficient permissions return `EACCES`.
 
 `pki renew` preserves the signed role and restrictions. Use `pki issue` to
-change permissions. The old certificate retains its rights until expiry or
+change permissions. The old certificate retains its permissions until expiry or
 revocation; replacing a file does not revoke copies of it. Reload credentials
 on clients to use the new certificate on new connections. The client library
 reconnects an expired TLS connection with the reloaded credentials when retrying
@@ -213,8 +213,8 @@ A configured CRL is checked on new TLS connections.
 
 The C API in `<rawstor/pki.h>` accepts `RawstorPkiPermissions` in
 `rawstor_pki_issue()` and returns it in `RawstorPkiInfo.permissions`.
-Python `pki.issue_client(..., role="manager", object_rights={UUID: 1})` does
-the same; `pki.show()` returns `access_role` and `object_rights`.
+Python `pki.issue_client(..., role="manager", object_permissions={UUID: 1})` does
+the same; `pki.show()` returns `access_role` and `object_permissions`.
 
 An external CA must issue the [authorization extension](protocol.md#authorization)
 in addition to the SPIFFE SAN. Missing permissions grant no tenant access;

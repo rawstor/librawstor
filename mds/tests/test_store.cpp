@@ -1445,7 +1445,7 @@ TEST_F(
     error(EACCES, [&] { store.authorize(&peer, RAWSTOR_CMD_RESOLVE, object); });
     peer.permissions({RAWSTOR_ROLE_READER, {}});
     EXPECT_EQ(
-        store.authorize(&peer, RAWSTOR_CMD_RESOLVE, object).rights,
+        store.authorize(&peer, RAWSTOR_CMD_RESOLVE, object).permissions,
         RAWSTOR_PERM_READ
     );
     error(EACCES, [&] {
@@ -1457,7 +1457,7 @@ TEST_F(
     error(EACCES, [&] { store.authorize(&peer, RAWSTOR_CMD_TENANT_CREATE); });
     peer.permissions({RAWSTOR_ROLE_MANAGER, {}});
     EXPECT_EQ(
-        store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE, object).rights,
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE, object).permissions,
         RAWSTOR_PERM_ALL
     );
     RawstdUUID foreign = make_id(), unowned = make_id();
@@ -1483,7 +1483,7 @@ TEST_F(
         store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE, object);
     });
     EXPECT_EQ(
-        store.authorize(&peer, RAWSTOR_CMD_RESOLVE, object).rights,
+        store.authorize(&peer, RAWSTOR_CMD_RESOLVE, object).permissions,
         RAWSTOR_PERM_READ
     );
     store.transfer(make_id(), object, other);

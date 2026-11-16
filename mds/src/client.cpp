@@ -625,7 +625,7 @@ rawstd::Task<void> Client::_dispatch(
                 if (client->_transport->peer() &&
                     client->_transport->peer()->role() ==
                         rawtls::Role::client &&
-                    !(client->_transport->peer()->permissions().rights(
+                    !(client->_transport->peer()->permissions().mask(
                           record.id.bytes
                       ) &
                       RAWSTOR_PERM_READ))

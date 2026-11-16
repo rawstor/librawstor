@@ -66,19 +66,21 @@ int rawstor_pki_init(
     const char* dir, const char* trust_domain, unsigned long validity
 );
 
-/** Per-object restrictions intersect the role's rights. Zero denies access. */
-#define RAWSTOR_PKI_MAX_OBJECT_RIGHTS 128
+/** Per-object restrictions intersect the role's permissions. Zero denies
+ * access. */
+#define RAWSTOR_PKI_MAX_OBJECT_PERMISSIONS 128
 
-struct RawstorPkiObjectRights {
+struct RawstorPkiObjectPermissions {
     char object_id[37];
-    unsigned int rights;
+    unsigned int permissions;
 };
 
 struct RawstorPkiPermissions {
     unsigned int
         role; /* RAWSTOR_ROLE_READER, WRITER or MANAGER; 0 grants none */
     size_t count;
-    struct RawstorPkiObjectRights objects[RAWSTOR_PKI_MAX_OBJECT_RIGHTS];
+    struct RawstorPkiObjectPermissions
+        objects[RAWSTOR_PKI_MAX_OBJECT_PERMISSIONS];
 };
 
 /**
@@ -92,7 +94,7 @@ struct RawstorPkiPermissions {
  * (see docs/security.md) is copied to `identity`, if it is not NULL, with room
  * for RAWSTOR_PKI_IDENTITY_SIZE bytes: `size` is checked before anything is
  * issued. `permissions` applies to tenant clients only; NULL grants no tenant
- * rights.
+ * permissions.
  */
 int rawstor_pki_issue(
     const char* dir, enum RawstorPkiRole role, const char* tenant,

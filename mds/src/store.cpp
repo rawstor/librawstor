@@ -758,7 +758,7 @@ ObjectStore::Access ObjectStore::authorize(
     if (peer->role() != rawtls::Role::client)
         RAWSTD_THROW_SYSTEM_ERROR(EACCES);
     rawstd_uuid_from_string(&result.tenant, peer->tenant().c_str());
-    result.rights = peer->permissions().rights(
+    result.permissions = peer->permissions().mask(
         rawstd_uuid_is_nil(&object) ? nullptr : object.bytes
     );
     if (!rawstd_uuid_is_nil(&tenant) &&
@@ -820,7 +820,7 @@ ObjectStore::Access ObjectStore::authorize(
     default:
         RAWSTD_THROW_SYSTEM_ERROR(EACCES);
     }
-    if (!result.rights || (required && !(result.rights & required)))
+    if (!result.permissions || (required && !(result.permissions & required)))
         RAWSTD_THROW_SYSTEM_ERROR(EACCES);
     return result;
 }
@@ -840,9 +840,9 @@ ObjectStore::Access ObjectStore::authorize_witness(
         return result;
     }
     rawstd_uuid_from_string(&result.tenant, peer->tenant().c_str());
-    result.rights = peer->permissions().rights(object.bytes);
-    uint32_t required = rawtls::member_right(command);
-    if (!required || (result.rights & required) != required)
+    result.permissions = peer->permissions().mask(object.bytes);
+    uint32_t required = rawtls::member_permission(command);
+    if (!required || (result.permissions & required) != required)
         RAWSTD_THROW_SYSTEM_ERROR(EACCES);
     if (command == RAWSTOR_CMD_ALLOCATE &&
         rawstd_uuid_cmp(&tenant, &result.tenant))

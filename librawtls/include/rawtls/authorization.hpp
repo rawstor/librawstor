@@ -10,11 +10,11 @@ struct x509_st;
 
 namespace rawtls {
 
-uint32_t member_right(RawstorCommandType command, uint64_t flags = 0);
+uint32_t member_permission(RawstorCommandType command, uint64_t flags = 0);
 
 bool provider_member(Role role, RawstorCommandType command);
 
-uint32_t role_rights(uint32_t role);
+uint32_t role_permissions(uint32_t role);
 
 // A noncritical, UUID-based private extension containing a DER UTF8String.
 // Missing policy grants no tenant access. Malformed or duplicate policy fails.

@@ -33,23 +33,23 @@ std::string encode(const rawtls::Permissions& policy) {
         fail(EINVAL);
     std::string text =
         "rawstor-access-v1\n" + std::to_string(policy.role) + "\n";
-    for (const auto& [object, rights] : policy.objects) {
+    for (const auto& [object, mask] : policy.objects) {
         RawstdUUID id{};
         RawstdUUIDString canonical;
         if (rawstd_uuid_from_string(&id, object.c_str()) < 0 ||
-            rawstd_uuid_is_nil(&id) || (rights & ~RAWSTOR_PERM_ALL))
+            rawstd_uuid_is_nil(&id) || (mask & ~RAWSTOR_PERM_ALL))
             fail(EINVAL);
         rawstd_uuid_to_string(&id, &canonical);
         if (object != canonical)
             fail(EINVAL);
-        text += object + "=" + std::to_string(rights) + "\n";
+        text += object + "=" + std::to_string(mask) + "\n";
     }
     return text;
 }
 } // namespace
 
 namespace rawtls {
-uint32_t role_rights(uint32_t role) {
+uint32_t role_permissions(uint32_t role) {
     switch (role) {
     case RAWSTOR_ROLE_READER:
         return RAWSTOR_PERM_READ;
@@ -63,7 +63,7 @@ uint32_t role_rights(uint32_t role) {
         fail(EINVAL);
     }
 }
-uint32_t member_right(RawstorCommandType command, uint64_t flags) {
+uint32_t member_permission(RawstorCommandType command, uint64_t flags) {
     switch (command) {
     case RAWSTOR_CMD_SET_OBJECT:
         return flags & RAWSTOR_READONLY ? RAWSTOR_PERM_READ
@@ -117,8 +117,8 @@ bool provider_member(Role role, RawstorCommandType command) {
     }
 }
 
-uint32_t Permissions::rights(const uint8_t* object) const {
-    uint32_t result = role_rights(role);
+uint32_t Permissions::mask(const uint8_t* object) const {
+    uint32_t result = role_permissions(role);
     if (object && !objects.empty()) {
         RawstdUUID id{};
         RawstdUUIDString text;
@@ -175,8 +175,8 @@ Permissions certificate_permissions(X509* cert) {
         if (mask.empty() || mask.size() > 2 ||
             mask.find_first_not_of("0123456789") != std::string::npos)
             fail(EINVAL);
-        unsigned int rights = static_cast<unsigned int>(std::stoul(mask));
-        if (!result.objects.emplace(object, rights).second)
+        unsigned int parsed_mask = static_cast<unsigned int>(std::stoul(mask));
+        if (!result.objects.emplace(object, parsed_mask).second)
             fail(EINVAL);
     }
     // Re-encoding enforces canonical UUIDs, masks, order, and a final newline.
@@ -242,12 +242,12 @@ int Authorization::check(
         return EACCES;
     if (peer->role() != Role::client)
         return provider_member(peer->role(), command) ? 0 : EACCES;
-    uint32_t required = member_right(command, flags),
-             rights = peer->permissions().rights(id);
-    if (!required || (rights & required) != required)
+    uint32_t required = member_permission(command, flags),
+             mask = peer->permissions().mask(id);
+    if (!required || (mask & required) != required)
         return EACCES;
     if ((command == RAWSTOR_CMD_FREEZE || command == RAWSTOR_CMD_THAW) &&
-        !(rights & RAWSTOR_PERM_MANAGE))
+        !(mask & RAWSTOR_PERM_MANAGE))
         return EACCES;
     // Snapshots are immutable, even when the certificate grants live writes.
     RawstdUUID selected{};

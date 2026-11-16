@@ -98,7 +98,7 @@ int rawstor_pki_issue(
         }
         rawtls::Permissions policy;
         if (permissions) {
-            if (permissions->count > RAWSTOR_PKI_MAX_OBJECT_RIGHTS)
+            if (permissions->count > RAWSTOR_PKI_MAX_OBJECT_PERMISSIONS)
                 throw std::system_error(
                     EINVAL, std::generic_category(),
                     "Too many object restrictions"
@@ -107,7 +107,7 @@ int rawstor_pki_issue(
             for (size_t i = 0; i < permissions->count; ++i) {
                 const auto& entry = permissions->objects[i];
                 if (!memchr(entry.object_id, 0, sizeof(entry.object_id)) ||
-                    !policy.objects.emplace(entry.object_id, entry.rights)
+                    !policy.objects.emplace(entry.object_id, entry.permissions)
                          .second)
                     throw std::system_error(
                         EINVAL, std::generic_category(),
@@ -152,10 +152,10 @@ int rawstor_pki_show(
         info->issued = found.issued;
         info->permissions = {};
         info->permissions.role = found.permissions.role;
-        for (const auto& [object, rights] : found.permissions.objects) {
+        for (const auto& [object, mask] : found.permissions.objects) {
             auto& entry = info->permissions.objects[info->permissions.count++];
             std::memcpy(entry.object_id, object.c_str(), object.size() + 1);
-            entry.rights = rights;
+            entry.permissions = mask;
         }
     });
 }

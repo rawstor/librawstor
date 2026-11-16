@@ -101,13 +101,13 @@ static void issue_usage(void) {
         "  --ca DIR              The CA made by `pki init`\n"
         "  --cert FILE           Where the certificate goes\n"
         "  --key FILE            Where the private key goes\n"
-        "  --object-rights UUID:MASK\n"
+        "  --object-permissions UUID:MASK\n"
         "                        Restrict one object and its versions "
         "(repeat up to 128 times)\n"
         "                        read=1, write=2, discard=4, manage=8; 0 "
         "denies access.\n"
         "                        The mask intersects the role; other objects "
-        "keep role rights.\n"
+        "keep role permissions.\n"
         "  --role ROLE           Client access: reader, writer or manager\n"
         "                        Required for client certificates\n"
         "  --validity DURATION   How long the certificate is valid "
@@ -118,7 +118,8 @@ static void issue_usage(void) {
         "(when the\n"
         "certificate expires, UTC) and issued (yes); the ones that do not "
         "apply are empty,\n"
-        "null in json. access_role and object_rights show the signed client "
+        "null in json. access_role and object_permissions show the signed "
+        "client "
         "permissions.\n"
         "`--format value --column id` prints just an OST's or "
         "an MDS's id.\n"
@@ -370,8 +371,11 @@ static int parse_process(
 }
 
 static const char* const identity_columns[] = {
-    "identity",  "role",      "trust_domain", "id",          "name",
-    "tenant_id", "not_after", "issued",       "access_role", "object_rights",
+    "identity",     "role",
+    "trust_domain", "id",
+    "name",         "tenant_id",
+    "not_after",    "issued",
+    "access_role",  "object_permissions",
 };
 static const enum RawstorCliColumnType identity_types[] = {
     RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
@@ -430,14 +434,14 @@ static RawstorCliTable* identity_table(const struct RawstorPkiInfo* info) {
         : info->permissions.role == RAWSTOR_ROLE_WRITER  ? "writer"
         : info->permissions.role == RAWSTOR_ROLE_MANAGER ? "manager"
                                                          : "";
-    char object_rights[RAWSTOR_PKI_MAX_OBJECT_RIGHTS * 41 + 1] = {0};
+    char object_permissions[RAWSTOR_PKI_MAX_OBJECT_PERMISSIONS * 41 + 1] = {0};
     size_t used = 0;
     for (size_t i = 0; i < info->permissions.count; ++i) {
-        const struct RawstorPkiObjectRights* entry =
+        const struct RawstorPkiObjectPermissions* entry =
             &info->permissions.objects[i];
         used += (size_t)snprintf(
-            object_rights + used, sizeof(object_rights) - used, "%s%s:%u",
-            i ? "," : "", entry->object_id, entry->rights
+            object_permissions + used, sizeof(object_permissions) - used,
+            "%s%s:%u", i ? "," : "", entry->object_id, entry->permissions
         );
     }
     RawstorCliCell cells[] = {
@@ -450,7 +454,7 @@ static RawstorCliTable* identity_table(const struct RawstorPkiInfo* info) {
         rawstor_cli_cell_optional(not_after),
         rawstor_cli_cell_optional(issued),
         rawstor_cli_cell_optional(access_role),
-        rawstor_cli_cell_optional(object_rights),
+        rawstor_cli_cell_optional(object_permissions),
     };
     if (rawstor_cli_table_add_row(table, cells) < 0) {
         rawstor_cli_table_delete(table);
@@ -500,7 +504,7 @@ static int command_issue(int argc, char** argv, int renew) {
         {"key", required_argument, NULL, 'k'},
         {"validity", required_argument, NULL, 'V'},
         {"role", required_argument, NULL, 'r'},
-        {"object-rights", required_argument, NULL, 'o'},
+        {"object-permissions", required_argument, NULL, 'o'},
         {"format", required_argument, NULL, RAWSTOR_CLI_OPT_FORMAT},
         {"column", required_argument, NULL, RAWSTOR_CLI_OPT_COLUMN},
         {},
@@ -554,10 +558,11 @@ static int command_issue(int argc, char** argv, int renew) {
             const char* separator = strchr(optarg, ':');
             char* end = NULL;
             if (renew || !separator || separator - optarg != 36 ||
-                permissions.count == RAWSTOR_PKI_MAX_OBJECT_RIGHTS) {
+                permissions.count == RAWSTOR_PKI_MAX_OBJECT_PERMISSIONS) {
                 fprintf(
-                    stderr, "--object-rights requires UUID:MASK (at most 128 "
-                            "entries); use issue to change permissions\n"
+                    stderr,
+                    "--object-permissions requires UUID:MASK (at most 128 "
+                    "entries); use issue to change permissions\n"
                 );
                 return EX_USAGE;
             }
@@ -567,11 +572,11 @@ static int command_issue(int argc, char** argv, int renew) {
                 fprintf(stderr, "MASK must be 0..15\n");
                 return EX_USAGE;
             }
-            struct RawstorPkiObjectRights* entry =
+            struct RawstorPkiObjectPermissions* entry =
                 &permissions.objects[permissions.count++];
             memcpy(entry->object_id, optarg, 36);
             entry->object_id[36] = '\0';
-            entry->rights = (unsigned int)mask;
+            entry->permissions = (unsigned int)mask;
             break;
         }
         case 'V': {

@@ -23,7 +23,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | CLI: `rawstor tenant create/list/remove` | ✅ | `cli/tenant.c` |
 | Transfer of an object to another tenant: `SET_OWNER`, `OBJ_TRANSFER`, `rawstor object transfer` | ✅ | `src/target.cpp`, `src/blk_backend.cpp`, `mds/src/store.cpp` |
 | Transfer by mutual consent of two tenant clients, without admin credentials | ❌ | [Implementation plan](#planned-transfer-by-mutual-consent) |
-| Checking the caller's rights against the owner | ✅ | Independent MDS and OST certificate policy checks |
+| Checking the caller's permissions against the owner | ✅ | Independent MDS and OST certificate policy checks |
 | Authentication, binding a tenant to a certificate | ✅ | mTLS SPIFFE identity and signed certificate permissions |
 
 ## Model
@@ -266,7 +266,7 @@ initially have access only to their own tenants.
 - A missing tenant in the URI defaults to the certificate identity's tenant.
   An explicit URI tenant is checked against certificate permissions; naming it
   grants no access. Neither party needs a certificate for both tenants.
-- Add explicit certificate rights `transfer-out` and `transfer-in`, with PKI
+- Add explicit certificate permissions `transfer-out` and `transfer-in`, with PKI
   CLI/C/Python issuance, inspection and renewal support. Do not grant them
   implicitly through `manager` or widen the existing `manage` bit. Object
   restrictions must be able to deny export of a particular object.
@@ -274,7 +274,7 @@ initially have access only to their own tenants.
   destination. The receiver authorizes import into that destination. Neither
   client receives provider credentials or general `SET_OWNER` permission.
 - A transfer ID identifies an offer; possessing it does not authorize acceptance.
-  Check the accepting client's destination tenant and import right independently.
+  Check the accepting client's destination tenant and import permission independently.
 
 ### Proposed user flow
 
@@ -301,7 +301,7 @@ Keep `rawstor object transfer TARGET TENANT` as the provider-admin operation.
 
 ### Implementation steps
 
-1. **Certificate policy and protocol.** Specify the new rights and their object
+1. **Certificate policy and protocol.** Specify the new permissions and their object
    mask semantics, validation of unknown bits, and renewal behavior. Define
    offer, accept, cancel and status requests, idempotency keys, error semantics
    and the metadata needed by OST. Validate authority on both clients' requests;
@@ -338,13 +338,13 @@ Keep `rawstor object transfer TARGET TENANT` as the provider-admin operation.
    the C API, Python bindings and CLI. Status exposes details only to the
    participants or provider admin; it distinguishes pending, preparing,
    committing, completed, cancelled and expired operations. Document certificate
-   rights, expiry, cancellation, retry behavior and the same-MDS limitation.
+   permissions, expiry, cancellation, retry behavior and the same-MDS limitation.
 
 ### Acceptance tests
 
 - Two certificates, each authorized for just its own tenant, complete a transfer
   without admin credentials; the object UUID and data are preserved.
-- Missing export/import rights, a forbidden source object, the wrong destination
+- Missing export/import permissions, a forbidden source object, the wrong destination
   tenant, or a third client with only the transfer ID cannot complete it.
 - Expired, revoked, cancelled and stale approvals cannot be accepted. Replaying
   requests cannot duplicate a transfer or undo a later ownership change.
