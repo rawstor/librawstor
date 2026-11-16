@@ -491,8 +491,9 @@ std::string CA::issue_id(
         );
     }
     if (parsed->role() != Role::client &&
-        (permissions.role || !permissions.objects.empty()))
+        (permissions.role || !permissions.objects.empty())) {
         raise(EINVAL, "Only a client has permissions");
+    }
     std::string common_name = parsed->name().substr(0, 64);
 
     Cert ca = read_cert(join(_dir, "ca.crt"));

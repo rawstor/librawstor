@@ -548,15 +548,15 @@ static int command_issue(int argc, char** argv, int renew) {
                 return EX_USAGE;
             }
             role_set = 1;
-            if (!strcmp(optarg, "none"))
+            if (!strcmp(optarg, "none")) {
                 permissions.role = RAWSTOR_ROLE_NONE;
-            else if (!strcmp(optarg, "reader"))
+            } else if (!strcmp(optarg, "reader")) {
                 permissions.role = RAWSTOR_ROLE_READER;
-            else if (!strcmp(optarg, "writer"))
+            } else if (!strcmp(optarg, "writer")) {
                 permissions.role = RAWSTOR_ROLE_WRITER;
-            else if (!strcmp(optarg, "manager"))
+            } else if (!strcmp(optarg, "manager")) {
                 permissions.role = RAWSTOR_ROLE_MANAGER;
-            else {
+            } else {
                 fprintf(
                     stderr, "--role must be none, reader, writer or manager\n"
                 );

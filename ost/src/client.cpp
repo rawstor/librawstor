@@ -189,15 +189,17 @@ rawstd::Task<int> Client::_authorize(
     int error =
         _authorization.check(*_transport, command, object, version, flags);
     if (error || !_transport->peer() ||
-        _transport->peer()->role() != rawtls::Role::client || !object)
+        _transport->peer()->role() != rawtls::Role::client || !object) {
         co_return error;
+    }
     bool bound = command == RAWSTOR_CMD_READ || command == RAWSTOR_CMD_WRITE ||
                  command == RAWSTOR_CMD_FLUSH || command == RAWSTOR_CMD_LEAVE ||
                  command == RAWSTOR_CMD_DISCARD ||
                  command == RAWSTOR_CMD_WRITE_ZEROES;
     uint64_t generation = ownership_generation.load();
-    if (bound && _owner_generation == generation)
+    if (bound && _owner_generation == generation) {
         co_return 0;
+    }
     RawstdUUID id{};
     memcpy(id.bytes, object, sizeof(id.bytes));
     try {
@@ -209,23 +211,29 @@ rawstd::Task<int> Client::_authorize(
                     records = co_await slot.meta(id, offset);
                 } catch (const std::system_error& e) {
                     if (command == RAWSTOR_CMD_ALLOCATE &&
-                        e.code().value() == ENOENT)
+                        e.code().value() == ENOENT) {
                         co_return;
+                    }
                     throw;
                 }
-                if (records.empty())
+                if (records.empty()) {
                     RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+                }
                 for (const auto& record : records) {
-                    if (record.state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE)
+                    if (record.state == RAWSTOR_OBJECT_SYNC_STATE_UNREACHABLE) {
                         RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
-                    if (int denied =
-                            _authorization.owner(*_transport, record.tenant_id))
+                    }
+                    if (int denied = _authorization.owner(
+                            *_transport, record.tenant_id
+                        )) {
                         RAWSTD_THROW_SYSTEM_ERROR(denied);
+                    }
                 }
             }
         );
-        if (bound)
+        if (bound) {
             _owner_generation = generation;
+        }
     } catch (const std::system_error& e) {
         co_return e.code().value();
     }
@@ -802,8 +810,9 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                     co_await client->_send_response(
                         head.cmd, head.cid, -error, 0
                     );
-                    if (io.len)
+                    if (io.len) {
                         RAWSTD_THROW_SYSTEM_ERROR(error);
+                    }
                     break;
                 }
 
@@ -988,8 +997,9 @@ rawstd::DetachedTask Client::_list(
                 !(client->_transport->peer()->permissions().mask(
                       group.id.bytes
                   ) &
-                  RAWSTOR_PERM_READ))
+                  RAWSTOR_PERM_READ)) {
                 continue;
+            }
             RawstorFrameListEntry entry{};
             memcpy(entry.id, group.id.bytes, sizeof(entry.id));
             memcpy(

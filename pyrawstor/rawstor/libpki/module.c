@@ -78,8 +78,9 @@ static PyObject* py_pki_issue(PyObject* Py_UNUSED(self), PyObject* args) {
         while (PyDict_Next(object_permissions, &position, &key, &value)) {
             Py_ssize_t size;
             PyObject* encoded = PyUnicode_AsUTF8String(key);
-            if (!encoded)
+            if (!encoded) {
                 return NULL;
+            }
             char* object;
             if (PyBytes_AsStringAndSize(encoded, &object, &size) < 0) {
                 Py_DECREF(encoded);

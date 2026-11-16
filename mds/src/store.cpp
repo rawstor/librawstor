@@ -728,8 +728,9 @@ ObjectStore::Access ObjectStore::authorize(
     Access result{
         std::unique_lock<std::recursive_mutex>(_mutex), RAWSTOR_PERM_ALL, {}
     };
-    if (!peer)
+    if (!peer) {
         return result;
+    }
     if (peer->role() == rawtls::Role::admin) {
         switch (command) {
         case RAWSTOR_CMD_SET_OBJECT:
@@ -755,8 +756,9 @@ ObjectStore::Access ObjectStore::authorize(
             RAWSTD_THROW_SYSTEM_ERROR(EACCES);
         }
     }
-    if (peer->role() != rawtls::Role::client)
+    if (peer->role() != rawtls::Role::client) {
         RAWSTD_THROW_SYSTEM_ERROR(EACCES);
+    }
     rawstd_uuid_from_string(&result.tenant, peer->tenant().c_str());
     result.permissions = peer->permissions().mask(
         rawstd_uuid_is_nil(&object) ? nullptr : object.bytes
@@ -764,12 +766,14 @@ ObjectStore::Access ObjectStore::authorize(
     // SET_OBJECT only acknowledges an MDS control connection. A scoped client
     // can connect for its permitted objects without tenant-wide permissions.
     if (command == RAWSTOR_CMD_SET_OBJECT && rawstd_uuid_is_nil(&object)) {
-        for (const auto& entry : peer->permissions().objects)
+        for (const auto& entry : peer->permissions().objects) {
             result.permissions |= entry.second;
+        }
     }
     if (!rawstd_uuid_is_nil(&tenant) &&
-        rawstd_uuid_cmp(&tenant, &result.tenant))
+        rawstd_uuid_cmp(&tenant, &result.tenant)) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
     if (rawstd_uuid_is_nil(&object)) {
         switch (command) {
         case RAWSTOR_CMD_RESOLVE:
@@ -799,11 +803,13 @@ ObjectStore::Access ObjectStore::authorize(
             );
             removed.bind_blob(1, mutation.bytes, sizeof(mutation.bytes))
                 .bind_blob(2, object.bytes, sizeof(object.bytes));
-            if (removed.step())
+            if (removed.step()) {
                 removed.column_uuid(0, &owner);
+            }
         }
-        if (rawstd_uuid_cmp(&owner, &result.tenant) && !new_object)
+        if (rawstd_uuid_cmp(&owner, &result.tenant) && !new_object) {
             RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+        }
     }
     uint32_t required = 0;
     switch (command) {
@@ -827,8 +833,9 @@ ObjectStore::Access ObjectStore::authorize(
     default:
         RAWSTD_THROW_SYSTEM_ERROR(EACCES);
     }
-    if (!result.permissions || (required && !(result.permissions & required)))
+    if (!result.permissions || (required && !(result.permissions & required))) {
         RAWSTD_THROW_SYSTEM_ERROR(EACCES);
+    }
     return result;
 }
 
@@ -839,31 +846,37 @@ ObjectStore::Access ObjectStore::authorize_witness(
     Access result{
         std::unique_lock<std::recursive_mutex>(_mutex), RAWSTOR_PERM_ALL, {}
     };
-    if (!peer)
+    if (!peer) {
         return result;
+    }
     if (peer->role() != rawtls::Role::client) {
-        if (!rawtls::provider_member(peer->role(), command))
+        if (!rawtls::provider_member(peer->role(), command)) {
             RAWSTD_THROW_SYSTEM_ERROR(EACCES);
+        }
         return result;
     }
     rawstd_uuid_from_string(&result.tenant, peer->tenant().c_str());
     result.permissions = peer->permissions().mask(object.bytes);
     uint32_t required = rawtls::member_permission(command);
-    if (!required || (result.permissions & required) != required)
+    if (!required || (result.permissions & required) != required) {
         RAWSTD_THROW_SYSTEM_ERROR(EACCES);
+    }
     if (command == RAWSTOR_CMD_ALLOCATE &&
-        rawstd_uuid_cmp(&tenant, &result.tenant))
+        rawstd_uuid_cmp(&tenant, &result.tenant)) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
     RawstorObjectMeta meta{};
     try {
         meta = _load_witness(object, offset);
     } catch (const std::system_error& e) {
-        if (command == RAWSTOR_CMD_ALLOCATE && e.code().value() == ENOENT)
+        if (command == RAWSTOR_CMD_ALLOCATE && e.code().value() == ENOENT) {
             return result;
+        }
         throw;
     }
-    if (memcmp(meta.tenant_id, result.tenant.bytes, sizeof(meta.tenant_id)))
+    if (memcmp(meta.tenant_id, result.tenant.bytes, sizeof(meta.tenant_id))) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
     return result;
 }
 

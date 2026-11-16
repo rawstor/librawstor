@@ -98,21 +98,23 @@ int rawstor_pki_issue(
         }
         rawtls::Permissions policy;
         if (permissions) {
-            if (permissions->count > RAWSTOR_PKI_MAX_OBJECT_PERMISSIONS)
+            if (permissions->count > RAWSTOR_PKI_MAX_OBJECT_PERMISSIONS) {
                 throw std::system_error(
                     EINVAL, std::generic_category(),
                     "Too many object restrictions"
                 );
+            }
             policy.role = permissions->role;
             for (size_t i = 0; i < permissions->count; ++i) {
                 const auto& entry = permissions->objects[i];
                 if (!memchr(entry.object_id, 0, sizeof(entry.object_id)) ||
                     !policy.objects.emplace(entry.object_id, entry.permissions)
-                         .second)
+                         .second) {
                     throw std::system_error(
                         EINVAL, std::generic_category(),
                         "Invalid object restriction"
                     );
+                }
             }
         }
         give(

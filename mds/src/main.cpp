@@ -366,8 +366,9 @@ void mds(
     RawstdUUID local_witness{};
     if (const char* cert = rawstor_opts_tls_cert()) {
         rawtls::SpiffeId identity(rawtls::inspect(cert).identity);
-        if (identity.role() == rawtls::Role::mds)
+        if (identity.role() == rawtls::Role::mds) {
             rawstd_uuid_from_string(&local_witness, identity.name().c_str());
+        }
     }
     rawstor::mdsserver::Monitor monitor(store, opts, local_witness);
     store.set_space_change_listener([&monitor](

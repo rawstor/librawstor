@@ -461,18 +461,21 @@ char* rawstor_cli_list_target(const char* target, const char* location) {
                     (path.empty() || path.back() == '/' ||
                      member_path.size() == path.size() ||
                      member_path[path.size()] == '/') &&
-                    (!source || path.size() > source->path().str().size()))
+                    (!source || path.size() > source->path().str().size())) {
                     source = &candidate;
+                }
             }
             if (!source) {
                 errno = EINVAL;
                 return nullptr;
             }
-            if (!result.empty())
+            if (!result.empty()) {
                 result += ',';
+            }
             result += member.scheme() + "://";
-            if (!source->userinfo().empty())
+            if (!source->userinfo().empty()) {
                 result += source->userinfo() + "@";
+            }
             result += member.host() + member.path().str();
         }
         char* text = static_cast<char*>(std::malloc(result.size() + 1));

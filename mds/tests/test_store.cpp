@@ -1582,10 +1582,11 @@ TEST_F(
     ObjectStore store = make_store();
     RawstdUUID tenant = make_id(), object = make_id(), other = make_id();
     store.create_tenant(make_id(), tenant);
-    for (const auto& id : {object, other})
+    for (const auto& id : {object, other}) {
         store.create(
             tenant, make_id(), id, chunk_size, chunk_size, make_policy(1)
         );
+    }
     RawstdUUIDString tenant_text, object_text;
     rawstd_uuid_to_string(&tenant, &tenant_text);
     rawstd_uuid_to_string(&object, &object_text);

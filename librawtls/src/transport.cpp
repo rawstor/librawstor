@@ -245,8 +245,9 @@ private:
         }
         parsed->permissions(rawtls::certificate_permissions(cert));
         if (id.role() != rawtls::Role::client &&
-            (id.permissions().role || !id.permissions().objects.empty()))
+            (id.permissions().role || !id.permissions().objects.empty())) {
             refuse("only tenant clients may carry permissions");
+        }
         return *parsed;
     }
 
@@ -308,15 +309,17 @@ private:
             if (peer_cert &&
                 ASN1_TIME_to_tm(X509_get0_notAfter(peer_cert), &expiry) == 1) {
                 time_t epoch = timegm(&expiry);
-                if (epoch > 0)
+                if (epoch > 0) {
                     _peer_expiration = static_cast<uint64_t>(epoch);
+                }
             }
             X509* own = SSL_get_certificate(_ssl);
             (void)_check_peer(own, true);
             if (ASN1_TIME_to_tm(X509_get0_notAfter(own), &expiry) == 1) {
                 time_t epoch = timegm(&expiry);
-                if (epoch > 0)
+                if (epoch > 0) {
                     _local_expiration = static_cast<uint64_t>(epoch);
+                }
             }
             _handshake_done = true;
             return true;
@@ -407,8 +410,9 @@ private:
         // Reconnect with the reloaded credentials before sending an expired
         // certificate's command; the server's EACCES is a permanent IO error.
         if (_mode == rawtls::Mode::client &&
-            _local_expiration <= static_cast<uint64_t>(time(nullptr)))
+            _local_expiration <= static_cast<uint64_t>(time(nullptr))) {
             RAWSTD_THROW_SYSTEM_ERROR(ECONNRESET);
+        }
         size_t total = 0;
         for (size_t i = 0; i < count; ++i) {
             if (iov[i].iov_len > 0) {

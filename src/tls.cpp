@@ -83,8 +83,9 @@ void initialize() {
     std::lock_guard<std::mutex> lock(mutex);
     rawtls::SpiffeId own(rawtls::inspect(config.cert_file).identity);
     client_tenant = {};
-    if (own.role() == rawtls::Role::client)
+    if (own.role() == rawtls::Role::client) {
         rawstd_uuid_from_string(&client_tenant, own.tenant().c_str());
+    }
     process_context = std::move(context);
     mds_identity = std::move(mds);
     signal_context.store(process_context.get());
@@ -92,8 +93,9 @@ void initialize() {
 
 RawstdUUID default_owner() {
     std::lock_guard<std::mutex> lock(mutex);
-    if (!rawstd_uuid_is_nil(&client_tenant))
+    if (!rawstd_uuid_is_nil(&client_tenant)) {
         return client_tenant;
+    }
     RawstdUUID result{};
     rawstd_uuid_from_string(&result, RAWSTOR_DEFAULT_TENANT);
     return result;

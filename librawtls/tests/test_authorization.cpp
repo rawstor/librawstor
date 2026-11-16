@@ -62,10 +62,11 @@ TEST(
     }
     for (auto command :
          {RAWSTOR_CMD_WRITE, RAWSTOR_CMD_DISCARD, RAWSTOR_CMD_WRITE_ZEROES,
-          RAWSTOR_CMD_FLUSH, RAWSTOR_CMD_LEAVE})
+          RAWSTOR_CMD_FLUSH, RAWSTOR_CMD_LEAVE}) {
         EXPECT_EQ(
             authorization.check(connection, command, nullptr, nullptr), EACCES
         );
+    }
 }
 
 TEST(AuthorizationTest, object_masks_override_role_defaults) {

@@ -539,8 +539,9 @@ rawstd::Task<void> Client::_dispatch(
                 RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
             }
             RawstdUUID object = uuid_of(payload.id);
-            if (rawstd_uuid_is_nil(&object))
+            if (rawstd_uuid_is_nil(&object)) {
                 RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            }
             // Every object has an owner (docs/tenants.md).
             const RawstdUUID owner = uuid_of(payload.tenant_id);
             if (rawstd_uuid_is_nil(&owner)) {
@@ -622,8 +623,9 @@ rawstd::Task<void> Client::_dispatch(
                     !(client->_transport->peer()->permissions().mask(
                           record.id.bytes
                       ) &
-                      RAWSTOR_PERM_READ))
+                      RAWSTOR_PERM_READ)) {
                     continue;
+                }
                 RawstorFrameListEntry entry{};
                 memcpy(entry.id, record.id.bytes, sizeof(entry.id));
                 memcpy(

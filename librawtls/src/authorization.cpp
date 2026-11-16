@@ -28,19 +28,22 @@ constexpr size_t max_objects = 128;
 
 std::string encode(const rawtls::Permissions& policy) {
     if (policy.role > RAWSTOR_ROLE_MANAGER ||
-        policy.objects.size() > max_objects)
+        policy.objects.size() > max_objects) {
         fail(EINVAL);
+    }
     std::string text =
         std::string("rawstor-access\n") + std::to_string(policy.role) + "\n";
     for (const auto& [object, mask] : policy.objects) {
         RawstdUUID id{};
         RawstdUUIDString canonical;
         if (rawstd_uuid_from_string(&id, object.c_str()) < 0 ||
-            rawstd_uuid_is_nil(&id) || (mask & ~RAWSTOR_PERM_ALL))
+            rawstd_uuid_is_nil(&id) || (mask & ~RAWSTOR_PERM_ALL)) {
             fail(EINVAL);
+        }
         rawstd_uuid_to_string(&id, &canonical);
-        if (object != canonical)
+        if (object != canonical) {
             fail(EINVAL);
+        }
         text += object + "=" + std::to_string(mask) + "\n";
     }
     return text;
@@ -125,8 +128,9 @@ uint32_t Permissions::mask(const uint8_t* object) const {
         memcpy(id.bytes, object, sizeof(id.bytes));
         rawstd_uuid_to_string(&id, &text);
         auto it = objects.find(text);
-        if (it != objects.end())
+        if (it != objects.end()) {
             result = it->second;
+        }
     }
     return result;
 }
@@ -135,74 +139,90 @@ Permissions certificate_permissions(X509* cert) {
     std::unique_ptr<ASN1_OBJECT, decltype(&ASN1_OBJECT_free)> oid(
         OBJ_txt2obj(policy_oid, 1), ASN1_OBJECT_free
     );
-    if (!oid)
+    if (!oid) {
         fail(EIO);
+    }
     int index = X509_get_ext_by_OBJ(cert, oid.get(), -1);
-    if (index < 0)
+    if (index < 0) {
         return {};
-    if (X509_get_ext_by_OBJ(cert, oid.get(), index) >= 0)
+    }
+    if (X509_get_ext_by_OBJ(cert, oid.get(), index) >= 0) {
         fail(EINVAL);
+    }
     X509_EXTENSION* extension = X509_get_ext(cert, index);
     ASN1_OCTET_STRING* data = X509_EXTENSION_get_data(extension);
     int size = ASN1_STRING_length(data);
-    if (size <= 0 || size > 8192)
+    if (size <= 0 || size > 8192) {
         fail(EINVAL);
+    }
     const unsigned char* first = ASN1_STRING_get0_data(data);
     const unsigned char* cursor = first;
     std::unique_ptr<ASN1_UTF8STRING, decltype(&ASN1_UTF8STRING_free)> value(
         d2i_ASN1_UTF8STRING(nullptr, &cursor, size), ASN1_UTF8STRING_free
     );
-    if (!value || cursor != first + size)
+    if (!value || cursor != first + size) {
         fail(EINVAL);
+    }
     std::string text(
         reinterpret_cast<const char*>(ASN1_STRING_get0_data(value.get())),
         ASN1_STRING_length(value.get())
     );
     std::istringstream lines(text);
     std::string line;
-    if (!std::getline(lines, line))
+    if (!std::getline(lines, line)) {
         fail(EINVAL);
-    if (line != "rawstor-access")
+    }
+    if (line != "rawstor-access") {
         fail(EINVAL);
+    }
     Permissions result;
     if (!std::getline(lines, line) || line.size() != 1 || line[0] < '0' ||
-        line[0] > '3')
+        line[0] > '3') {
         fail(EINVAL);
+    }
     result.role = line[0] - '0';
     while (std::getline(lines, line)) {
         if (result.objects.size() >= max_objects || line.size() < 38 ||
-            line[36] != '=')
+            line[36] != '=') {
             fail(EINVAL);
+        }
         std::string object = line.substr(0, 36), mask = line.substr(37);
         if (mask.empty() || mask.size() > 2 ||
-            mask.find_first_not_of("0123456789") != std::string::npos)
+            mask.find_first_not_of("0123456789") != std::string::npos) {
             fail(EINVAL);
+        }
         unsigned int parsed_mask = static_cast<unsigned int>(std::stoul(mask));
-        if (!result.objects.emplace(object, parsed_mask).second)
+        if (!result.objects.emplace(object, parsed_mask).second) {
             fail(EINVAL);
+        }
     }
     // Re-encoding enforces canonical UUIDs, masks, order, and a final newline.
-    if (encode(result) != text)
+    if (encode(result) != text) {
         fail(EINVAL);
+    }
     return result;
 }
 
 void certificate_permissions(X509* cert, const Permissions& policy) {
-    if (!policy.role && policy.objects.empty())
+    if (!policy.role && policy.objects.empty()) {
         return;
+    }
     std::string text = encode(policy);
     std::unique_ptr<ASN1_UTF8STRING, decltype(&ASN1_UTF8STRING_free)> value(
         ASN1_UTF8STRING_new(), ASN1_UTF8STRING_free
     );
-    if (!value || ASN1_STRING_set(value.get(), text.data(), text.size()) != 1)
+    if (!value || ASN1_STRING_set(value.get(), text.data(), text.size()) != 1) {
         fail(EIO);
+    }
     int size = i2d_ASN1_UTF8STRING(value.get(), nullptr);
-    if (size <= 0)
+    if (size <= 0) {
         fail(EIO);
+    }
     std::vector<unsigned char> der(size);
     unsigned char* cursor = der.data();
-    if (i2d_ASN1_UTF8STRING(value.get(), &cursor) != size)
+    if (i2d_ASN1_UTF8STRING(value.get(), &cursor) != size) {
         fail(EIO);
+    }
     std::unique_ptr<ASN1_OBJECT, decltype(&ASN1_OBJECT_free)> oid(
         OBJ_txt2obj(policy_oid, 1), ASN1_OBJECT_free
     );
@@ -210,26 +230,30 @@ void certificate_permissions(X509* cert, const Permissions& policy) {
         ASN1_OCTET_STRING_new(), ASN1_OCTET_STRING_free
     );
     if (!oid || !data ||
-        ASN1_OCTET_STRING_set(data.get(), der.data(), der.size()) != 1)
+        ASN1_OCTET_STRING_set(data.get(), der.data(), der.size()) != 1) {
         fail(EIO);
+    }
     std::unique_ptr<X509_EXTENSION, decltype(&X509_EXTENSION_free)> extension(
         X509_EXTENSION_create_by_OBJ(nullptr, oid.get(), 0, data.get()),
         X509_EXTENSION_free
     );
-    if (!extension || X509_add_ext(cert, extension.get(), -1) != 1)
+    if (!extension || X509_add_ext(cert, extension.get(), -1) != 1) {
         fail(EIO);
+    }
 }
 
 int Authorization::owner(
     const Transport& connection, const uint8_t* tenant
 ) const {
     auto peer = connection.peer();
-    if (!peer || peer->role() != Role::client)
+    if (!peer || peer->role() != Role::client) {
         return 0;
+    }
     RawstdUUID expected{};
     if (rawstd_uuid_from_string(&expected, peer->tenant().c_str()) < 0 ||
-        memcmp(expected.bytes, tenant, 16))
+        memcmp(expected.bytes, tenant, 16)) {
         return ENOENT;
+    }
     return 0;
 }
 
@@ -238,22 +262,28 @@ int Authorization::check(
     const uint8_t* version, uint64_t flags
 ) const {
     auto peer = connection.peer();
-    if (!peer)
+    if (!peer) {
         return 0;
-    if (connection.peer_expiry() <= static_cast<uint64_t>(time(nullptr)))
+    }
+    if (connection.peer_expiry() <= static_cast<uint64_t>(time(nullptr))) {
         return EACCES;
-    if (peer->role() != Role::client)
+    }
+    if (peer->role() != Role::client) {
         return provider_member(peer->role(), command) ? 0 : EACCES;
+    }
     uint32_t required = member_permission(command, flags),
              mask = peer->permissions().mask(id);
-    if (!required || (mask & required) != required)
+    if (!required || (mask & required) != required) {
         return EACCES;
+    }
     // Snapshots are immutable, even when the certificate grants live writes.
     RawstdUUID selected{};
-    if (version)
+    if (version) {
         memcpy(selected.bytes, version, sizeof(selected.bytes));
-    if (!rawstd_uuid_is_nil(&selected) && (required & RAWSTOR_PERM_WRITE))
+    }
+    if (!rawstd_uuid_is_nil(&selected) && (required & RAWSTOR_PERM_WRITE)) {
         return EACCES;
+    }
     return 0;
 }
 } // namespace rawtls
