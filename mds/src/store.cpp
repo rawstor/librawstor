@@ -1,5 +1,6 @@
 #include <mds/store.hpp>
 #include <rawstor/location.h>
+#include <rawstor/pki.h>
 #include <rawstor/protocol.h>
 #include <rawtls/authorization.hpp>
 

@@ -1,5 +1,6 @@
 #include <atomic>
 #include <ost/client.hpp>
+#include <rawstor/pki.h>
 
 #include <ost/server.hpp>
 

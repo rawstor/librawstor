@@ -1,4 +1,5 @@
 #include <mds/client.hpp>
+#include <rawstor/pki.h>
 
 #include <mds/opts.hpp>
 #include <mds/server.hpp>

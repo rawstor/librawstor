@@ -1,4 +1,5 @@
 #include "tmp_dir.hpp"
+#include <rawstor/pki.h>
 
 #include <mds/placement.hpp>
 #include <mds/store.hpp>

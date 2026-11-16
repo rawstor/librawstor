@@ -210,15 +210,6 @@ extern "C" {
  */
 #define RAWSTOR_CMD_OBJ_TRANSFER 0x49
 
-#define RAWSTOR_RIGHT_READ 1u
-#define RAWSTOR_RIGHT_WRITE 2u
-#define RAWSTOR_RIGHT_DISCARD 4u
-#define RAWSTOR_RIGHT_MANAGE 8u
-#define RAWSTOR_RIGHT_ALL 15u
-#define RAWSTOR_ACCESS_READER 1u
-#define RAWSTOR_ACCESS_WRITER 2u
-#define RAWSTOR_ACCESS_MANAGER 3u
-
 typedef uint16_t RawstorCommandType;
 
 // Wire representation of enum RawstorObjectSyncStateValue

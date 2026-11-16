@@ -1,3 +1,4 @@
+#include <rawstor/pki.h>
 #include <rawtls/authorization.hpp>
 
 #include <openssl/asn1.h>

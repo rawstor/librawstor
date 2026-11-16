@@ -7,13 +7,23 @@
 #ifndef RAWSTOR_PKI_H
 #define RAWSTOR_PKI_H
 
-#include <rawstor/protocol.h>
-
 #include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/** Rights and tenant access roles signed into client certificates. */
+#define RAWSTOR_RIGHT_READ 1u
+#define RAWSTOR_RIGHT_WRITE 2u
+#define RAWSTOR_RIGHT_DISCARD 4u
+#define RAWSTOR_RIGHT_MANAGE 8u
+#define RAWSTOR_RIGHT_ALL                                                      \
+    (RAWSTOR_RIGHT_READ | RAWSTOR_RIGHT_WRITE | RAWSTOR_RIGHT_DISCARD |        \
+     RAWSTOR_RIGHT_MANAGE)
+#define RAWSTOR_ACCESS_READER 1u
+#define RAWSTOR_ACCESS_WRITER 2u
+#define RAWSTOR_ACCESS_MANAGER 3u
 
 /**
  * A small certificate authority for installations that have none: a directory
