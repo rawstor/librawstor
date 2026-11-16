@@ -89,10 +89,15 @@ rawstor pki init --trust-domain cluster.example ca
 rawstor pki issue --ca ca --cert ost.crt --key ost.key ost       # a new id
 rawstor pki issue --ca ca --cert mds.crt --key mds.key mds       # a new id
 rawstor pki issue --ca ca --cert hv1.crt --key hv1.key admin hv1
-rawstor pki issue --ca ca --cert vm.crt --key vm.key --role manager client <tenant uuid> vm-1
+rawstor pki issue --ca ca --cert vm.crt --key vm.key \
+  --role none --object-permissions <object-uuid>:7 client <tenant-uuid> vm-1
 rawstor pki renew --ca ca --cert ost.crt --key ost.key
 rawstor pki show --cert ost.crt                                  # what it says
 ```
+
+The `vm-1` example grants a virtual machine access only to its disk object:
+replace `<tenant-uuid>` and `<object-uuid>` with the tenant and disk UUIDs.
+Mask `7` permits reading, writing and discarding data.
 
 A CA is made for the trust domain of one cluster and keeps it, so every
 certificate it issues is in it. `issue` writes a certificate and a new key
@@ -167,7 +172,7 @@ Issue client credentials on the CA machine:
 
 ```sh
 rawstor pki issue --ca ca --cert client.crt --key client.key \
-  --role manager client 018f4e2a-2222-7000-8000-000000000001 vm-1
+  --role manager client 018f4e2a-2222-7000-8000-000000000001 tenant-manager
 ```
 
 `--role` is required for a client: `none` grants no default permissions,
@@ -185,12 +190,12 @@ zero to deny the object. Other objects retain the role's defaults. Object permis
 apply to the object and all its versions; snapshots remain read-only.
 
 ```sh
-rawstor pki issue --ca ca --cert reader.crt --key reader.key \
+rawstor pki issue --ca ca --cert restricted-manager.crt --key restricted-manager.key \
   --role manager \
   --object-permissions 018f4e2a-2222-7000-8000-000000000002:1 \
   --object-permissions 018f4e2a-2222-7000-8000-000000000003:0 \
-  client 018f4e2a-2222-7000-8000-000000000001 vm-2
-rawstor pki show --cert reader.crt
+  client 018f4e2a-2222-7000-8000-000000000001 restricted-manager
+rawstor pki show --cert restricted-manager.crt
 ```
 
 For a vhost that may access only one object, use `none` and grant that UUID
