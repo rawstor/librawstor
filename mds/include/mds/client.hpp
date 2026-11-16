@@ -8,7 +8,6 @@
 
 #include <rawio/stream.hpp>
 
-#include <rawtls/authorization.hpp>
 #include <rawtls/transport.hpp>
 
 #include <rawstd/coro.hpp>
@@ -43,7 +42,7 @@ private:
     std::unique_ptr<rawtls::Transport> _transport;
     // Set by HANDSHAKE, the first request: nothing is served before it.
     bool _handshaken = false;
-    uint64_t _features = 0;
+
     static rawstd::DetachedTask _recv_pump(std::weak_ptr<Client> weak);
 
     // `stream` is the connection's request stream, owned by _recv_pump().
@@ -67,15 +66,11 @@ public:
         Private, Server& server, int fd,
         std::unique_ptr<rawtls::Transport> transport
     );
-
     Client(const Client&) = delete;
-
     Client(Client&&) = delete;
-
     ~Client();
 
     Client& operator=(const Client&) = delete;
-
     Client& operator=(Client&&) = delete;
 };
 

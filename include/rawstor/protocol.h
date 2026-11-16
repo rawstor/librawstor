@@ -24,9 +24,9 @@ extern "C" {
 #define RAWSTOR_MAGIC 0x72737472 // "rstr" as ascii
 
 /*
- * Optional capabilities negotiated by HANDSHAKE: RAWSTOR_FEATURES_SUPPORTED is
- * the union of the bits this build knows, what a client offers and what a
- * server accepts from an offer.
+ * Optional capabilities negotiated by HANDSHAKE. No bit is
+ * defined yet: RAWSTOR_FEATURES_SUPPORTED is the union of the bits this
+ * build knows, what a client offers and what a server accepts from an offer.
  */
 #define RAWSTOR_FEATURES_SUPPORTED UINT64_C(0)
 
@@ -850,7 +850,6 @@ static inline int rawstor_frame_allocate_encode(
     out->member_role = (uint8_t)role;
     return 0;
 }
-
 static inline int rawstor_frame_allocate_decode(
     const struct RawstorFrameAllocatePayload* in, struct RawstorObjectSpec* out,
     enum RawstorMemberRole* role

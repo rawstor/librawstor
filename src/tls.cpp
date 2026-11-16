@@ -9,7 +9,6 @@
 
 #include <atomic>
 #include <cerrno>
-#include <cstring>
 #include <map>
 #include <mutex>
 #include <optional>

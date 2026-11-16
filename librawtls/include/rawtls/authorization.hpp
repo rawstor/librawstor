@@ -26,8 +26,7 @@ class Authorization final {
 public:
     int check(
         const Transport& connection, RawstorCommandType command,
-        const uint8_t* id, uint64_t offset, const uint8_t* version,
-        uint64_t flags = 0
+        const uint8_t* id, const uint8_t* version, uint64_t flags = 0
     ) const;
 
     int owner(const Transport& connection, const uint8_t* tenant) const;

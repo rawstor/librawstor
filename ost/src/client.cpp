@@ -186,9 +186,8 @@ rawstd::Task<int> Client::_authorize(
     RawstorCommandType command, const uint8_t* object, uint64_t offset,
     const uint8_t* version, uint64_t flags
 ) {
-    int error = _authorization.check(
-        *_transport, command, object, offset, version, flags
-    );
+    int error =
+        _authorization.check(*_transport, command, object, version, flags);
     if (error || !_transport->peer() ||
         _transport->peer()->role() != rawtls::Role::client || !object)
         co_return error;
@@ -391,8 +390,6 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                     RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
                 }
                 client->_handshaken = true;
-                client->_features =
-                    handshake.features & RAWSTOR_FEATURES_SUPPORTED;
                 _handshake(weak, head, handshake);
                 rawstd::DetachedTask::rethrow_if_pending();
                 break;
@@ -867,10 +864,7 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 // no way to know how many payload bytes this request's
                 // body is, to skip past and resynchronize with whatever
                 // request follows it on the wire.
-                co_await client->_send_response(
-                    head.cmd, head.cid,
-                    client->_transport->peer() ? -EACCES : -ENOSYS, 0
-                );
+                co_await client->_send_response(head.cmd, head.cid, -ENOSYS, 0);
                 std::ostringstream oss;
                 oss << "Unexpected command: " << head.cmd;
                 throw std::runtime_error(oss.str());

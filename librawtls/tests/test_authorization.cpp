@@ -55,7 +55,7 @@ TEST(
         rawtls::SpiffeId("spiffe://cluster.example/admin/operator");
     for (auto command : {RAWSTOR_CMD_SYNC_PREPARE, RAWSTOR_CMD_SYNC_ACCEPT}) {
         EXPECT_EQ(
-            authorization.check(connection, command, nullptr, 0, nullptr), 0
+            authorization.check(connection, command, nullptr, nullptr), 0
         );
         EXPECT_FALSE(rawtls::provider_member(rawtls::Role::mds, command));
         EXPECT_FALSE(rawtls::provider_member(rawtls::Role::ost, command));
@@ -64,8 +64,7 @@ TEST(
          {RAWSTOR_CMD_WRITE, RAWSTOR_CMD_DISCARD, RAWSTOR_CMD_WRITE_ZEROES,
           RAWSTOR_CMD_FLUSH, RAWSTOR_CMD_LEAVE})
         EXPECT_EQ(
-            authorization.check(connection, command, nullptr, 0, nullptr),
-            EACCES
+            authorization.check(connection, command, nullptr, nullptr), EACCES
         );
 }
 
@@ -75,7 +74,7 @@ TEST(AuthorizationTest, object_masks_override_role_defaults) {
     RawstdUUID id{};
     ASSERT_EQ(rawstd_uuid_from_string(&id, object.c_str()), 0);
     EXPECT_EQ(
-        authorization.check(connection, RAWSTOR_CMD_READ, id.bytes, 0, nullptr),
+        authorization.check(connection, RAWSTOR_CMD_READ, id.bytes, nullptr),
         EACCES
     );
     connection.identity.permissions(
@@ -83,36 +82,29 @@ TEST(AuthorizationTest, object_masks_override_role_defaults) {
          {{object, RAWSTOR_PERM_READ | RAWSTOR_PERM_MANAGE}}}
     );
     EXPECT_EQ(
-        authorization.check(connection, RAWSTOR_CMD_READ, id.bytes, 0, nullptr),
+        authorization.check(connection, RAWSTOR_CMD_READ, id.bytes, nullptr), 0
+    );
+    EXPECT_EQ(
+        authorization.check(connection, RAWSTOR_CMD_WRITE, id.bytes, nullptr),
+        EACCES
+    );
+    EXPECT_EQ(
+        authorization.check(connection, RAWSTOR_CMD_RELEASE, id.bytes, nullptr),
+        0
+    );
+    EXPECT_EQ(
+        authorization.check(connection, RAWSTOR_CMD_FREEZE, id.bytes, nullptr),
         0
     );
     EXPECT_EQ(
         authorization.check(
-            connection, RAWSTOR_CMD_WRITE, id.bytes, 0, nullptr
+            connection, RAWSTOR_CMD_LOCATION_INFO, nullptr, nullptr
         ),
         EACCES
     );
     EXPECT_EQ(
         authorization.check(
-            connection, RAWSTOR_CMD_RELEASE, id.bytes, 0, nullptr
-        ),
-        0
-    );
-    EXPECT_EQ(
-        authorization.check(
-            connection, RAWSTOR_CMD_FREEZE, id.bytes, 0, nullptr
-        ),
-        0
-    );
-    EXPECT_EQ(
-        authorization.check(
-            connection, RAWSTOR_CMD_LOCATION_INFO, nullptr, 0, nullptr
-        ),
-        EACCES
-    );
-    EXPECT_EQ(
-        authorization.check(
-            connection, RAWSTOR_CMD_SET_OWNER, id.bytes, 0, nullptr
+            connection, RAWSTOR_CMD_SET_OWNER, id.bytes, nullptr
         ),
         EACCES
     );
@@ -120,7 +112,7 @@ TEST(AuthorizationTest, object_masks_override_role_defaults) {
     ASSERT_EQ(rawstd_uuid7_init(&other), 0);
     EXPECT_EQ(
         authorization.check(
-            connection, RAWSTOR_CMD_WRITE, other.bytes, 0, nullptr
+            connection, RAWSTOR_CMD_WRITE, other.bytes, nullptr
         ),
         0
     );
@@ -136,20 +128,20 @@ TEST(AuthorizationTest, discard_and_zeroes_require_write_permission) {
             connection.identity.permissions({RAWSTOR_ROLE_READER, {}});
             EXPECT_EQ(
                 authorization.check(
-                    connection, command, nullptr, 0, nullptr, flags
+                    connection, command, nullptr, nullptr, flags
                 ),
                 EACCES
             );
             connection.identity.permissions({RAWSTOR_ROLE_WRITER, {}});
             EXPECT_EQ(
                 authorization.check(
-                    connection, command, nullptr, 0, nullptr, flags
+                    connection, command, nullptr, nullptr, flags
                 ),
                 0
             );
             EXPECT_EQ(
                 authorization.check(
-                    connection, command, nullptr, 0, version.bytes, flags
+                    connection, command, nullptr, version.bytes, flags
                 ),
                 EACCES
             );
@@ -168,13 +160,13 @@ TEST(AuthorizationTest, expired_certificates_and_foreign_owners_are_denied) {
     EXPECT_EQ(authorization.owner(connection, other.bytes), ENOENT);
     connection.expiry = 1;
     EXPECT_EQ(
-        authorization.check(connection, RAWSTOR_CMD_READ, nullptr, 0, nullptr),
+        authorization.check(connection, RAWSTOR_CMD_READ, nullptr, nullptr),
         EACCES
     );
     connection.identity =
         rawtls::SpiffeId("spiffe://cluster.example/admin/operator");
     EXPECT_EQ(
-        authorization.check(connection, RAWSTOR_CMD_META, nullptr, 0, nullptr),
+        authorization.check(connection, RAWSTOR_CMD_META, nullptr, nullptr),
         EACCES
     );
 }
@@ -187,26 +179,26 @@ TEST(AuthorizationTest, snapshots_remain_readonly_for_managers) {
     ASSERT_EQ(rawstd_uuid7_init(&version), 0);
     EXPECT_EQ(
         authorization.check(
-            connection, RAWSTOR_CMD_SET_OBJECT, nullptr, 0, version.bytes,
+            connection, RAWSTOR_CMD_SET_OBJECT, nullptr, version.bytes,
             RAWSTOR_READONLY
         ),
         0
     );
     EXPECT_EQ(
         authorization.check(
-            connection, RAWSTOR_CMD_WRITE, nullptr, 0, version.bytes
+            connection, RAWSTOR_CMD_WRITE, nullptr, version.bytes
         ),
         EACCES
     );
     EXPECT_EQ(
         authorization.check(
-            connection, RAWSTOR_CMD_DISCARD, nullptr, 0, version.bytes
+            connection, RAWSTOR_CMD_DISCARD, nullptr, version.bytes
         ),
         EACCES
     );
     EXPECT_EQ(
         authorization.check(
-            connection, RAWSTOR_CMD_RELEASE, nullptr, 0, version.bytes
+            connection, RAWSTOR_CMD_RELEASE, nullptr, version.bytes
         ),
         0
     );
@@ -291,35 +283,25 @@ TEST(AuthorizationTest, none_grants_only_explicit_object_permissions) {
     connection.identity.permissions(policy);
     rawtls::Authorization authorization;
     EXPECT_EQ(
-        authorization.check(connection, RAWSTOR_CMD_READ, id.bytes, 0, nullptr),
+        authorization.check(connection, RAWSTOR_CMD_READ, id.bytes, nullptr), 0
+    );
+    EXPECT_EQ(
+        authorization.check(connection, RAWSTOR_CMD_WRITE, id.bytes, nullptr), 0
+    );
+    EXPECT_EQ(
+        authorization.check(connection, RAWSTOR_CMD_DISCARD, id.bytes, nullptr),
         0
     );
     EXPECT_EQ(
-        authorization.check(
-            connection, RAWSTOR_CMD_WRITE, id.bytes, 0, nullptr
-        ),
-        0
-    );
-    EXPECT_EQ(
-        authorization.check(
-            connection, RAWSTOR_CMD_DISCARD, id.bytes, 0, nullptr
-        ),
-        0
-    );
-    EXPECT_EQ(
-        authorization.check(
-            connection, RAWSTOR_CMD_RELEASE, id.bytes, 0, nullptr
-        ),
+        authorization.check(connection, RAWSTOR_CMD_RELEASE, id.bytes, nullptr),
         EACCES
     );
     EXPECT_EQ(
-        authorization.check(
-            connection, RAWSTOR_CMD_READ, other.bytes, 0, nullptr
-        ),
+        authorization.check(connection, RAWSTOR_CMD_READ, other.bytes, nullptr),
         EACCES
     );
     EXPECT_EQ(
-        authorization.check(connection, RAWSTOR_CMD_LIST, nullptr, 0, nullptr),
+        authorization.check(connection, RAWSTOR_CMD_LIST, nullptr, nullptr),
         EACCES
     );
 }

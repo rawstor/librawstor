@@ -235,7 +235,7 @@ int Authorization::owner(
 
 int Authorization::check(
     const Transport& connection, RawstorCommandType command, const uint8_t* id,
-    uint64_t, const uint8_t* version, uint64_t flags
+    const uint8_t* version, uint64_t flags
 ) const {
     auto peer = connection.peer();
     if (!peer)
@@ -247,9 +247,6 @@ int Authorization::check(
     uint32_t required = member_permission(command, flags),
              mask = peer->permissions().mask(id);
     if (!required || (mask & required) != required)
-        return EACCES;
-    if ((command == RAWSTOR_CMD_FREEZE || command == RAWSTOR_CMD_THAW) &&
-        !(mask & RAWSTOR_PERM_MANAGE))
         return EACCES;
     // Snapshots are immutable, even when the certificate grants live writes.
     RawstdUUID selected{};

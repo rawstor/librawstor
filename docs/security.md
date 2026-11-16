@@ -15,8 +15,8 @@ instead run with [`--insecure`](#insecure-mode), which turns all of this off.
 - **Identity: a SPIFFE ID** (one URI SAN) in the peer's certificate, issued by
   any CA that can write it: the project's own (`rawstor pki`) or an external
   one.
-- **Authorization: tokens signed by the MDS**, bound to the client's
-  certificate, with a closed permissions table per command.
+- **Authorization: CA-signed roles and object permissions in the client's
+  certificate**, checked independently by MDS and OST for each command.
 - **`--insecure`** for a storage network isolated from every untrusted party:
   plaintext and no authentication at all.
 - **There is no mode with authentication but without encryption.** In this
@@ -95,8 +95,8 @@ flowchart LR
     end
 
     guest -- "virtio-blk, no rawstor protocol" --> vhost
-    vhost -- "mTLS: RESOLVE, token" --> mds
-    vhost -- "mTLS: SET_OBJECT + token, IO" --> ost
+    vhost -- "mTLS: RESOLVE" --> mds
+    vhost -- "mTLS: SET_OBJECT, IO" --> ost
     cp -- "tenants and ownership (admin API)" --> mds
     cp -- "registers attachment" --> ca
     ca -. "short-lived SPIFFE certificate" .-> vhost
@@ -231,7 +231,7 @@ sets up with an external source and what changes for security.
   hour, renewed at about half of it. SPIRE relies on expiry rather than
   revocation (forced revocation has been a long-standing roadmap item there),
   so with it the exposure window after a compromise is the certificate
-  lifetime plus the token lifetime, hours plus minutes. Vault PKI and step-ca
+  lifetime; established client permissions expire with the certificate. Vault PKI and step-ca
   can publish a CRL, which rawstor reloads with the other files.
 
 ### With SPIRE
@@ -584,7 +584,7 @@ that process. There is no environment variable and a systemd unit has no way to
 set it. It is the only way: a process that has no TLS
 settings and is not told to go without refuses to start. Traffic is then **plaintext, and no peer is authenticated**: there is
 no certificate to read an identity, a tenant or a role from, so the permissions
-table, tokens and tenant isolation do not apply and every peer that can reach
+table and tenant isolation do not apply and every peer that can reach
 the port can do everything, as before this design. It is meant for a storage
 network that is isolated from every untrusted party, and for development and
 tests; the operator takes responsibility for the network.
@@ -676,8 +676,8 @@ of scope here.
 
 | It can | It cannot |
 |---|---|
-| read every chunk it stores, of every tenant, in plaintext unless the volume is encrypted on the client (stage 6) | mint or alter a token: it holds only the MDS public key |
-| return altered data: the copy is read from one in-sync member, XTS gives no integrity and the transport hash is not cryptographic | use a client's token against another OST: the token is bound to the client's certificate, whose key it does not have |
+| read every chunk it stores, of every tenant, in plaintext unless the volume is encrypted on the client (stage 6) | mint or alter client permissions: it does not hold the CA private key |
+| return altered data: the copy is read from one in-sync member, XTS gives no integrity and the transport hash is not cryptographic | use a client's permissions against another OST: it does not hold the client's private key |
 | lie about its own state: a copy's state (`CLEAN`, `DIRTY`, `LOST`, sync id) is kept by the copy itself, so it can claim to be the up-to-date member | present itself as another OST: clients expect a specific `ost_id` identity |
 | keep using its certificate until it expires, unless the CA publishes revocation | reach chunks it does not hold |
 
@@ -690,8 +690,7 @@ is still a member.
 In this order:
 
 1. **Stop advertising it.** The OST is marked `quarantined` in the topology: it
-   receives no new placement, `RESOLVE` no longer returns it, and no token is
-   issued for it. (Today the MDS refuses to drop an OST that still holds
+   receives no new placement and `RESOLVE` no longer returns it. (Today the MDS refuses to drop an OST that still holds
    chunks, so a state between "in use" and "removed" is needed.)
 2. **Stop trusting its identity.** The CA stops issuing and renewing its
    certificate: delete the SPIRE entry, or do not renew; where the CA
@@ -717,13 +716,13 @@ In this order:
 | Step | Effective after |
 |---|---|
 | `RESOLVE` stops returning it | at once, for clients that resolve |
-| Token expiry | minutes: no new `SET_OBJECT` on it |
 | Epoch fence | the next write that reaches a healthy member |
-| Certificate expiry | hours (SPIRE has no revocation; a CRL shortens it elsewhere) |
+| Certificate expiry | new TLS handshakes refuse the expired OST certificate; a CRL can shorten this interval |
 
-A client that only reads from the compromised copy and never writes keeps
-reading it until its token expires and it resolves again; reads are not
-fenced.
+A client that only reads from an established connection to the compromised
+copy is not fenced by the planned write fence. Certificate expiry prevents
+new TLS handshakes; it does not guarantee that an existing read connection
+is closed. Cutting off such readers remains part of the exclusion design.
 
 ### Dependencies
 

@@ -42,7 +42,6 @@ private:
     std::unique_ptr<rawtls::Transport> _transport;
     // Set by HANDSHAKE, the first request: nothing is served before it.
     bool _handshaken = false;
-    uint64_t _features = 0;
     rawtls::Authorization _authorization;
     RawstdUUID _bound_object{};
     RawstdUUID _bound_version{};
@@ -116,69 +115,56 @@ private:
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameHandshakePayload payload
     );
-
     static rawstd::DetachedTask _list(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameListPayload payload
     );
-
     static rawstd::DetachedTask _allocate(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameAllocatePayload payload
     );
-
     // `payload.version_id` nil for the live version, non-nil for one
     // previously created (protocol.h's own doc comment on RELEASE).
     static rawstd::DetachedTask _release(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameBasicPayload payload
     );
-
     // The tenant in `payload.version_id` becomes the owner of the member.
     static rawstd::DetachedTask _set_owner(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameBasicPayload payload
     );
-
     static rawstd::DetachedTask _create_version(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameBasicPayload payload
     );
-
     static rawstd::DetachedTask _freeze_thaw(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameBasicPayload payload
     );
-
     static rawstd::DetachedTask _meta(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameBasicPayload payload
     );
-
     static rawstd::DetachedTask _list_versions(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameBasicPayload payload
     );
-
     static rawstd::DetachedTask
     _info(std::weak_ptr<Client> weak, RawstorFrameHead head);
-
     static rawstd::DetachedTask _set_object(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameSetObjectPayload payload
     );
-
     static rawstd::DetachedTask _read(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameIOPayload payload
     );
-
     static rawstd::DetachedTask _write(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameIOPayload payload,
         std::shared_ptr<std::vector<unsigned char>> data
     );
-
     // Issues a validated WRITE to storage -- Slot::pwrite()'s
     // underlying blk::Backend applies write-throttling itself (see
     // blk_backend.hpp's _throttle_acquire()), so this just dispatches.
@@ -187,30 +173,24 @@ private:
         uint8_t flags, uint64_t epoch,
         std::shared_ptr<std::vector<unsigned char>> data
     );
-
     static rawstd::DetachedTask _discard(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameIOPayload payload
     );
-
     static rawstd::DetachedTask _write_zeroes(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameIOPayload payload
     );
-
     static rawstd::DetachedTask
     _flush(std::weak_ptr<Client> weak, RawstorFrameHead head, uint64_t epoch);
-
     // The session's clean departure: closes the object it set cleanly.
     static rawstd::DetachedTask
     _leave(std::weak_ptr<Client> weak, RawstorFrameHead head);
-
     // SYNC_PREPARE/SYNC_ACCEPT on the copy this server is.
     static rawstd::DetachedTask _sync(
         std::weak_ptr<Client> weak, RawstorFrameHead head,
         RawstorFrameSyncProposePayload payload
     );
-
     // Sends a response frame and awaits its actual completion (not just
     // submission) -- unlike every other rawio_*() bridge in the .cpp,
     // there's no separate fire-and-forget IOCallback anymore: a failure
@@ -222,7 +202,6 @@ private:
         const RawstorCommandType& type, uint16_t cid, int32_t result,
         uint64_t hash
     );
-
     rawstd::Task<void> _send_response(
         const RawstorCommandType& type, uint16_t cid, int32_t result,
         uint64_t hash, const std::vector<unsigned char>& data
@@ -239,15 +218,11 @@ public:
         Private, RawIOQueue* queue, Server& server, int fd,
         std::unique_ptr<rawtls::Transport> transport
     );
-
     Client(const Client&) = delete;
-
     Client(Client&&) = delete;
-
     ~Client() noexcept;
 
     Client& operator=(const Client&) = delete;
-
     Client& operator=(Client&&) = delete;
 
     // Asynchronously closes this client's open object (if any), then its

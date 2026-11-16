@@ -61,7 +61,6 @@ private:
     bool _large_receive_ring = false;
 
     void _start_receive_ring();
-
     rawstd::Task<void> _ensure_large_receive_ring();
 
 protected:
@@ -72,7 +71,6 @@ protected:
     // EBADF if there is no connection, as a send on a closed socket does.
     rawstd::Task<size_t>
     _send(const void* buf, size_t size, unsigned int flags);
-
     rawstd::Task<size_t> _sendmsg(const msghdr* msg, unsigned int flags);
 
 private:
@@ -91,16 +89,13 @@ private:
         RawstorCommandType cmd, const char* op_name, const RawstdUUID& id,
         uint64_t offset, uint64_t val = 0, const RawstdUUID& version_id = {}
     );
-
     // SYNC_PREPARE/SYNC_ACCEPT: sends `request` and returns the member's
     // reply.
     rawstd::Task<bool> _sync_request(
         const RawstorFrameSyncPropose& request, const char* op_name,
         RawstorObjectMeta& meta
     );
-
     void _fail_in_flight(int error);
-
     // Returns nullptr, rather than throwing, for an unregistered cid: a
     // response can legitimately race with Slot::_op() already having
     // failed and retried that same op on a different backend (e.g. after a
@@ -108,7 +103,6 @@ private:
     // already unregistered and the response is stale, not a corrupted
     // stream.
     BackendOp* _find_op(uint16_t cid);
-
     void _remove_op(uint16_t cid);
 
     // Pulls the shared response stream forever, demultiplexing each
@@ -123,7 +117,6 @@ private:
         std::weak_ptr<Backend> weak, rawio::RecvStream stream,
         rawstd::TraceEvent trace_event
     );
-
     // _recv_pump()'s own way out on a stream it can no longer trust: fails
     // everything still in flight with `error`, if the backend is still
     // around.
@@ -227,7 +220,6 @@ public:
     );
 
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
-
     ~Backend();
 
     // The destination's Slot owns the copy state.

@@ -1,6 +1,5 @@
 #include "wire_backend.hpp"
 #include "wire_backend_op.hpp"
-#include <ctime>
 
 #include "opts.h"
 #include "telemetry.hpp"
@@ -592,16 +591,16 @@ namespace wire {
 rawstd::Task<size_t>
 Backend::_send(const void* buf, size_t size, unsigned int flags) {
     if (_transport == nullptr) {
-        co_return co_await no_connection();
+        return no_connection();
     }
-    co_return co_await _transport->send(buf, size, flags);
+    return _transport->send(buf, size, flags);
 }
 
 rawstd::Task<size_t> Backend::_sendmsg(const msghdr* msg, unsigned int flags) {
     if (_transport == nullptr) {
-        co_return co_await no_connection();
+        return no_connection();
     }
-    co_return co_await _transport->sendmsg(msg, flags);
+    return _transport->sendmsg(msg, flags);
 }
 
 Backend::~Backend() {
@@ -884,11 +883,9 @@ rawstd::Task<std::vector<T>> Backend::_basic_request(
     RawstorCommandType cmd, const char* op_name, const RawstdUUID& id,
     uint64_t offset, uint64_t val, const RawstdUUID& version_id
 ) {
-    if (cmd != RAWSTOR_CMD_LOCATION_INFO && cmd != RAWSTOR_CMD_LEAVE &&
-        cmd != RAWSTOR_CMD_FLUSH)
-        if (cmd == RAWSTOR_CMD_LIST_VERSIONS) {
-            co_await _ensure_large_receive_ring();
-        }
+    if (cmd == RAWSTOR_CMD_LIST_VERSIONS) {
+        co_await _ensure_large_receive_ring();
+    }
     co_await _receive_resize.settle();
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "%s\n", op_name);
 
@@ -1290,8 +1287,6 @@ rawstd::Task<bool> Backend::_sync_request(
     const RawstorFrameSyncPropose& request, const char* op_name,
     RawstorObjectMeta& meta
 ) {
-    RawstdUUID id{};
-    memcpy(id.bytes, request.payload.object_id, 16);
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('s', "%s\n", op_name);
 
     std::shared_ptr<BackendOpSync> op = std::make_shared<BackendOpSync>(
@@ -1418,14 +1413,12 @@ rawstd::Task<void> Backend::_send_set_object(
     const RawstdUUID& session_id, const RawstdUUID& id, uint64_t offset,
     int flags, const RawstdUUID& version_id
 ) {
-    if (!rawstd_uuid_is_nil(&id))
-        // The demultiplex pump is already running by now -- _connect() starts
-        // it
-        // before this is ever reachable -- so this is just another
-        // cid-dispatched request like list()/create()/....
-        if (!_receiving) {
-            RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
-        }
+    // The demultiplex pump is already running by now -- _connect() starts it
+    // before this is ever reachable -- so this is just another
+    // cid-dispatched request like list()/create()/....
+    if (!_receiving) {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
+    }
 
     if (!rawstd_uuid_is_nil(&id)) {
         co_await _ensure_large_receive_ring();

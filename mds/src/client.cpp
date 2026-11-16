@@ -1,7 +1,6 @@
 #include <mds/client.hpp>
 #include <rawstor/pki.h>
 
-#include <mds/opts.hpp>
 #include <mds/server.hpp>
 
 #include <rawstd/coro.hpp>
@@ -19,10 +18,8 @@
 #include <system_error>
 #include <vector>
 
-#include <cstdlib>
 #include <cstring>
 #include <ctime>
-#include <functional>
 
 namespace {
 
@@ -286,7 +283,6 @@ rawstd::Task<void> Client::_dispatch(
             RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
         }
         client->_handshaken = true;
-        client->_features = payload.features & RAWSTOR_FEATURES_SUPPORTED;
         // The capabilities both sides know.
         RawstorFrameHandshakePayload reply{
             .features = payload.features & RAWSTOR_FEATURES_SUPPORTED,
@@ -850,9 +846,7 @@ rawstd::Task<void> Client::_dispatch(
         // requires the peer to close and reconnect, same as an OST's own
         // unknown-command handling.
         rawstd_error("fd %d: Unsupported command: %u\n", fd, head.cmd);
-        co_await client->_send_response(
-            head.cmd, head.cid, client->_transport->peer() ? -EACCES : -ENOSYS
-        );
+        co_await client->_send_response(head.cmd, head.cid, -ENOSYS);
         RAWSTD_THROW_SYSTEM_ERROR(ENOSYS);
     }
 }

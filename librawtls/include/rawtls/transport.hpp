@@ -9,7 +9,6 @@
 
 #include <rawstd/coro.hpp>
 
-#include <array>
 #include <memory>
 #include <optional>
 #include <string>
@@ -77,7 +76,6 @@ public:
     // peer whole and in the order they were started.
     virtual rawstd::Task<size_t>
     send(const void* buf, size_t size, unsigned int flags) = 0;
-
     virtual rawstd::Task<size_t>
     sendmsg(const msghdr* msg, unsigned int flags) = 0;
 

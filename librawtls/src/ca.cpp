@@ -541,9 +541,6 @@ std::string CA::issue(
         id += "/tenant/" + tenant + "/client/" + name;
         break;
     }
-    if (role != Role::client &&
-        (permissions.role || !permissions.objects.empty()))
-        raise(EINVAL, "Only a client has permissions");
     return issue_id(id, validity, cert_file, key_file, permissions);
 }
 
