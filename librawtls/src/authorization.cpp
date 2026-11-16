@@ -105,6 +105,8 @@ bool provider_member(Role role, RawstorCommandType command) {
     case RAWSTOR_CMD_LIST:
     case RAWSTOR_CMD_LOCATION_INFO:
         return role == Role::admin || role == Role::mds;
+    case RAWSTOR_CMD_SYNC_PREPARE:
+    case RAWSTOR_CMD_SYNC_ACCEPT:
     case RAWSTOR_CMD_ALLOCATE:
     case RAWSTOR_CMD_RELEASE:
     case RAWSTOR_CMD_CREATE_VERSION:

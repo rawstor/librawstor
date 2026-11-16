@@ -337,7 +337,7 @@ OST commands:
 | `SET_OBJECT` | `RAWSTOR_READONLY` needs `read`, a read-write open needs `write` | role | role |
 | `READ`, `META`, `LIST_VERSIONS` | `read` | role | role |
 | `WRITE`, `FLUSH`, `LEAVE` | `write` | — | — |
-| `SYNC_PREPARE`, `SYNC_ACCEPT` (the chunk's configuration register on a witness member) | `write` | — | — |
+| `SYNC_PREPARE`, `SYNC_ACCEPT` (the chunk membership register, including witnesses) | `write` | — | role |
 | `DISCARD`, `WRITE_ZEROES` with `UNMAP` | `discard` | — | — |
 | `WRITE_ZEROES` without `UNMAP` | `write` | — | — |
 | `ALLOCATE`, `RELEASE`, `CREATE_VERSION`, `FREEZE`, `THAW` | `manage` | — | role |
@@ -359,6 +359,9 @@ MDS commands:
 | `LOCATION_INFO` | — | — | role |
 | `LIST_TENANTS`, `TENANT_CREATE`, `TENANT_REMOVE` | — | — | role |
 | `OBJ_TRANSFER` (changes the owner of an object) | — | — | role |
+
+Provider admins also use the membership register to initialize newly created
+objects and manage their copies. This grants metadata control, not data writes.
 
 `SYNC_PREPARE` and `SYNC_ACCEPT` are how a writer records which copies are in
 sync, excludes one and takes it back, so every writer needs them and a

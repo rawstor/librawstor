@@ -256,6 +256,16 @@ def main():
             run(['testio', mirror, '--block-size', '4K', '--io-depth', '1', '--count', '2'], 'manager')
             run(['object', 'show', mirror], 'reader')
             run(['object', 'remove', mirror], 'manager')
+            # Provider admin creation initializes DATA and MDS witness membership.
+            for destination in [location, selected]:
+                created = run(['object', 'create', destination, '--size', '64K', '--chunk-size', '64K',
+                               '--mirrors', '2', '--failure-domain', 'ost',
+                               '--format', 'value', '--column', 'target'], 'admin')
+                run(['object', 'show', created], 'admin')
+                if destination == selected:
+                    run(['testio', created, '--block-size', '4K', '--io-depth', '1', '--count', '2'], 'manager')
+                    run(['object', 'show', created], 'reader')
+                run(['object', 'remove', created], 'admin')
             # A newly issued policy restricts the object without modifying MDS.
             restricted = ['pki', 'issue', '--ca', directory / 'ca', '--cert', directory / 'restricted.crt',
                           '--key', directory / 'restricted.key', '--role', 'manager',

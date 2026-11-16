@@ -47,6 +47,29 @@ public:
 using Cert = std::unique_ptr<X509, decltype(&X509_free)>;
 } // namespace
 
+TEST(
+    AuthorizationTest, provider_admin_can_manage_membership_without_data_writes
+) {
+    Connection connection;
+    rawtls::Authorization authorization;
+    connection.identity =
+        rawtls::SpiffeId("spiffe://cluster.example/admin/operator");
+    for (auto command : {RAWSTOR_CMD_SYNC_PREPARE, RAWSTOR_CMD_SYNC_ACCEPT}) {
+        EXPECT_EQ(
+            authorization.check(connection, command, nullptr, 0, nullptr), 0
+        );
+        EXPECT_FALSE(rawtls::provider_member(rawtls::Role::mds, command));
+        EXPECT_FALSE(rawtls::provider_member(rawtls::Role::ost, command));
+    }
+    for (auto command :
+         {RAWSTOR_CMD_WRITE, RAWSTOR_CMD_DISCARD, RAWSTOR_CMD_WRITE_ZEROES,
+          RAWSTOR_CMD_FLUSH, RAWSTOR_CMD_LEAVE})
+        EXPECT_EQ(
+            authorization.check(connection, command, nullptr, 0, nullptr),
+            EACCES
+        );
+}
+
 TEST(AuthorizationTest, roles_are_intersected_with_object_masks) {
     Connection connection;
     rawtls::Authorization authorization;
