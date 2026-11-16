@@ -89,7 +89,9 @@ static void issue_usage(void) {
         "  ost [ID]              A rawstor-ost. ID is its id in the MDS "
         "topology, a UUID;\n"
         "                        a new one is made without it\n"
-        "  mds NAME              A rawstor-mds\n"
+        "  mds [ID]              A rawstor-mds. ID is its id, a UUID like an "
+        "OST's; a new\n"
+        "                        one is made without it\n"
         "  admin NAME            An operator or a control plane\n"
         "  client TENANT NAME    A tenant's client, such as rawstor-vhost; "
         "TENANT is a UUID\n"
@@ -101,11 +103,11 @@ static void issue_usage(void) {
         "  --validity DURATION   How long the certificate is valid "
         "(default: 7d)\n" RAWSTOR_CLI_OUTPUT_USAGE "\n"
         "Columns: identity (the SPIFFE ID), role, trust_domain, name (of an "
-        "mds, "
-        "an admin or\n"
-        "a client), ost_id (of an ost) and tenant_id (of a client); the ones "
-        "that do not\n"
-        "apply are empty, null in json. `--format value --column ost_id` "
+        "admin or a\n"
+        "client), ost_id (of an ost), mds_id (of an mds) and tenant_id (of a "
+        "client); the\n"
+        "ones that do not apply are empty, null in json. `--format value "
+        "--column ost_id`\n"
         "prints just an OST's id.\n"
     );
 }
@@ -272,7 +274,7 @@ static int command_init(int argc, char** argv) {
 }
 
 /* The role and its names from the arguments after the options: `ost [ID]`,
- * `mds NAME`, `admin NAME`, `client TENANT NAME`. Returns 0, or EX_USAGE. */
+ * `mds [ID]`, `admin NAME`, `client TENANT NAME`. Returns 0, or EX_USAGE. */
 static int parse_process(
     int argc, char** argv, enum RawstorPkiRole* role, const char** tenant,
     const char** name
@@ -293,7 +295,8 @@ static int parse_process(
         max = 1;
     } else if (strcmp(kind, "mds") == 0) {
         *role = RAWSTOR_PKI_MDS;
-        min = max = 1;
+        min = 0;
+        max = 1;
     } else if (strcmp(kind, "admin") == 0) {
         *role = RAWSTOR_PKI_ADMIN;
         min = max = 1;
@@ -309,9 +312,7 @@ static int parse_process(
     if (rest < min) {
         fprintf(
             stderr, "%s needs %s\n", kind,
-            *role == RAWSTOR_PKI_CLIENT ? "a tenant and a name"
-            : *role == RAWSTOR_PKI_OST  ? "nothing or an id"
-                                        : "a name"
+            *role == RAWSTOR_PKI_CLIENT ? "a tenant and a name" : "a name"
         );
         return EX_USAGE;
     }
@@ -329,19 +330,20 @@ static int parse_process(
 }
 
 static const char* const identity_columns[] = {
-    "identity", "role", "trust_domain", "name", "ost_id", "tenant_id",
+    "identity", "role", "trust_domain", "name", "ost_id", "mds_id", "tenant_id",
 };
 static const enum RawstorCliColumnType identity_types[] = {
     RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
     RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
     RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
+    RAWSTOR_CLI_COLUMN_STRING,
 };
 #define IDENTITY_NCOLUMNS                                                      \
     (sizeof(identity_columns) / sizeof(identity_columns[0]))
 
 /* The table of one process, from the SPIFFE ID the CA printed:
  *   spiffe://<trust domain>/ost/<id>
- *   spiffe://<trust domain>/mds/<name>
+ *   spiffe://<trust domain>/mds/<id>
  *   spiffe://<trust domain>/admin/<name>
  *   spiffe://<trust domain>/tenant/<tenant>/client/<name>
  * The CA made the ID, so its shape is known. */
@@ -355,11 +357,14 @@ static RawstorCliTable* identity_table(const char* identity) {
     const char* role = path;
     const char* name = "";
     const char* ost_id = "";
+    const char* mds_id = "";
     const char* tenant_id = "";
     char* slash = strchr(path, '/');
     *slash++ = '\0';
     if (strcmp(role, "ost") == 0) {
         ost_id = slash;
+    } else if (strcmp(role, "mds") == 0) {
+        mds_id = slash;
     } else if (strcmp(role, "tenant") == 0) {
         /* tenant/<tenant>/client/<name> */
         role = "client";
@@ -378,9 +383,10 @@ static RawstorCliTable* identity_table(const char* identity) {
         return NULL;
     }
     RawstorCliCell cells[] = {
-        rawstor_cli_cell_string(identity), rawstor_cli_cell_string(role),
-        rawstor_cli_cell_string(domain),   rawstor_cli_cell_optional(name),
-        rawstor_cli_cell_optional(ost_id), rawstor_cli_cell_optional(tenant_id),
+        rawstor_cli_cell_string(identity),    rawstor_cli_cell_string(role),
+        rawstor_cli_cell_string(domain),      rawstor_cli_cell_optional(name),
+        rawstor_cli_cell_optional(ost_id),    rawstor_cli_cell_optional(mds_id),
+        rawstor_cli_cell_optional(tenant_id),
     };
     if (rawstor_cli_table_add_row(table, cells) < 0) {
         rawstor_cli_table_delete(table);

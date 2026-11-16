@@ -63,7 +63,7 @@ rawstor pki init --trust-domain ${TD} ca
 # an OST's id is made with its certificate, and `issue` prints it as `ost_id`
 OST1=$(rawstor pki issue --ca ca --cert ost1.crt --key ost1.key --format value --column ost_id ost)
 OST2=$(rawstor pki issue --ca ca --cert ost2.crt --key ost2.key --format value --column ost_id ost)
-rawstor pki issue --ca ca --cert mds.crt --key mds.key mds ${CLUSTER}
+rawstor pki issue --ca ca --cert mds.crt --key mds.key mds
 rawstor pki issue --ca ca --cert hv1.crt --key hv1.key admin hv1
 ```
 
@@ -123,7 +123,8 @@ the witness subset of the OST protocol on its own port, so its location is an
 `ost://` one with the MDS's port, `7776`, and it needs an id of its own:
 
 ```
-# OST1, OST2 and CLUSTER are the ids the certificates were made with
+# OST1 and OST2 are the ids the certificates were made with; CLUSTER names the
+# MDS instance, which has an id of its own (the one in mds.crt)
 WITNESS=$(cat /proc/sys/kernel/random/uuid)
 
 sudo tee /etc/rawstor/mds/${CLUSTER}.topology <<EOF

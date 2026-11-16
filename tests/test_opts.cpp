@@ -83,7 +83,9 @@ TEST(OptsTest, tls_settings_come_together_or_not_at_all) {
 
 TEST(OptsTest, tls_extras_need_the_tls_settings) {
     {
-        ScopedEnv mds("RAWSTOR_TLS_MDS_ID", "mds-1");
+        ScopedEnv mds(
+            "RAWSTOR_TLS_MDS_ID", "018f4e2a-0000-7000-8000-0000000000e1"
+        );
         EXPECT_EQ(rawstor_opts_initialize(nullptr), -EINVAL);
     }
     {
@@ -99,14 +101,18 @@ TEST(OptsTest, tls_settings_are_read) {
         ScopedEnv key("RAWSTOR_TLS_KEY", "/etc/rawstor/tls/key.pem");
         ScopedEnv ca("RAWSTOR_TLS_CA", "/etc/rawstor/tls/ca.pem");
         ScopedEnv crl("RAWSTOR_TLS_CRL", "/etc/rawstor/tls/ca.crl");
-        ScopedEnv mds("RAWSTOR_TLS_MDS_ID", "mds-1");
+        ScopedEnv mds(
+            "RAWSTOR_TLS_MDS_ID", "018f4e2a-0000-7000-8000-0000000000e1"
+        );
         EXPECT_EQ(rawstor_opts_initialize(nullptr), 0);
         EXPECT_STREQ(rawstor_opts_tls_trust_domain(), "cluster.example");
         EXPECT_STREQ(rawstor_opts_tls_cert(), "/etc/rawstor/tls/cert.pem");
         EXPECT_STREQ(rawstor_opts_tls_key(), "/etc/rawstor/tls/key.pem");
         EXPECT_STREQ(rawstor_opts_tls_ca(), "/etc/rawstor/tls/ca.pem");
         EXPECT_STREQ(rawstor_opts_tls_crl(), "/etc/rawstor/tls/ca.crl");
-        EXPECT_STREQ(rawstor_opts_tls_mds_id(), "mds-1");
+        EXPECT_STREQ(
+            rawstor_opts_tls_mds_id(), "018f4e2a-0000-7000-8000-0000000000e1"
+        );
     }
     EXPECT_EQ(rawstor_opts_tls_trust_domain(), nullptr);
     EXPECT_EQ(rawstor_opts_tls_mds_id(), nullptr);
@@ -146,7 +152,9 @@ TEST(OptsTest, insecure_with_tls_settings_fails) {
         EXPECT_EQ(rawstor_opts_initialize(&opts), -EINVAL);
     }
     {
-        ScopedEnv mds("RAWSTOR_TLS_MDS_ID", "mds-1");
+        ScopedEnv mds(
+            "RAWSTOR_TLS_MDS_ID", "018f4e2a-0000-7000-8000-0000000000e1"
+        );
         EXPECT_EQ(rawstor_opts_initialize(&opts), -EINVAL);
     }
     EXPECT_EQ(rawstor_opts_initialize(&opts), 0);

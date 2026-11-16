@@ -637,7 +637,7 @@ jobs:
         cd /tmp/pki
         rawstor pki init --trust-domain cluster.example ca
         rawstor pki issue --ca ca --cert ost.crt --key ost.key ost 018f4e2a-1111-7000-8000-000000000001
-        rawstor pki issue --ca ca --cert mds.crt --key mds.key mds ci
+        rawstor pki issue --ca ca --cert mds.crt --key mds.key mds
         rawstor pki issue --ca ca --cert cli.crt --key cli.key admin ci
         for who in ost mds cli; do
           echo "RAWSTOR_TLS_TRUST_DOMAIN=cluster.example RAWSTOR_TLS_CERT=/tmp/pki/${who}.crt RAWSTOR_TLS_KEY=/tmp/pki/${who}.key RAWSTOR_TLS_CA=/tmp/pki/ca/ca.crt" > ${who}.env

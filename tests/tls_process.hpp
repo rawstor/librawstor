@@ -36,7 +36,7 @@ public:
     rawtls::testing::Pki pki;
     rawtls::testing::Identity identity;
 
-    // `mds_id`, if given, is the name of the one MDS this process accepts.
+    // `mds_id`, if given, is the id of the one MDS this process accepts.
     explicit TlsProcess(
         const std::string& uri, const std::string& mds_id = ""
     ) {

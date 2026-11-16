@@ -12,6 +12,7 @@ from rawstor import pki
 
 OST = "0198f1a2-3b4c-7d5e-8f90-a1b2c3d4e5f6"
 TENANT = "0198f1a2-3b4c-7d5e-8f90-0123456789ab"
+MDS = "0198f1a2-3b4c-7d5e-8f90-fedcba987654"
 
 
 class TestPki(unittest.TestCase):
@@ -62,13 +63,20 @@ class TestPki(unittest.TestCase):
         self.assertTrue(first.startswith("spiffe://cluster.example/ost/"))
         self.assertNotEqual(first, second)
 
+    def test_mds_without_an_id(self):
+        pki.init(self.ca, "cluster.example")
+        first = pki.issue_mds(self.ca, self.dir / "a.crt", self.dir / "a.key")
+        second = pki.issue_mds(self.ca, self.dir / "b.crt", self.dir / "b.key")
+        self.assertTrue(first.startswith("spiffe://cluster.example/mds/"))
+        self.assertNotEqual(first, second)
+
     def test_roles(self):
         pki.init(self.ca, "cluster.example")
         crt = self.dir / "x.crt"
         key = self.dir / "x.key"
         self.assertEqual(
-            pki.issue_mds(self.ca, "mds-1", crt, key),
-            "spiffe://cluster.example/mds/mds-1",
+            pki.issue_mds(self.ca, crt, key, MDS),
+            f"spiffe://cluster.example/mds/{MDS}",
         )
         self.assertEqual(
             pki.issue_admin(self.ca, "ops", crt, key),

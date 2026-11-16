@@ -15,6 +15,7 @@ namespace {
 namespace fs = std::filesystem;
 
 const char* const ost_id = "0198f1a2-3b4c-7d5e-8f90-a1b2c3d4e5f6";
+const char* const mds_id = "0198f1a2-3b4c-7d5e-8f90-fedcba987654";
 
 class PkiTest : public ::testing::Test {
 protected:
@@ -92,6 +93,23 @@ TEST_F(PkiTest, an_ost_without_a_name_gets_an_id) {
     );
 }
 
+TEST_F(PkiTest, an_mds_without_a_name_gets_an_id) {
+    std::string ca = path("ca");
+    ASSERT_EQ(rawstor_pki_init(ca.c_str(), "cluster.example", 86400), 0);
+    std::string cert = path("mds.crt");
+    std::string key = path("mds.key");
+    ASSERT_EQ(
+        rawstor_pki_issue(
+            ca.c_str(), RAWSTOR_PKI_MDS, nullptr, nullptr, 3600, cert.c_str(),
+            key.c_str(), identity, sizeof(identity)
+        ),
+        0
+    );
+    EXPECT_EQ(
+        std::string(identity).rfind("spiffe://cluster.example/mds/", 0), 0u
+    );
+}
+
 TEST_F(PkiTest, every_role_has_its_shape) {
     std::string ca = path("ca");
     ASSERT_EQ(rawstor_pki_init(ca.c_str(), "cluster.example", 86400), 0);
@@ -100,10 +118,14 @@ TEST_F(PkiTest, every_role_has_its_shape) {
     const char* tenant = "0198f1a2-3b4c-7d5e-8f90-0123456789ab";
     ASSERT_EQ(
         rawstor_pki_issue(
-            ca.c_str(), RAWSTOR_PKI_MDS, nullptr, "mds-1", 3600, cert.c_str(),
-            key.c_str(), nullptr, 0
+            ca.c_str(), RAWSTOR_PKI_MDS, nullptr, mds_id, 3600, cert.c_str(),
+            key.c_str(), identity, sizeof(identity)
         ),
         0
+    );
+    EXPECT_EQ(
+        std::string(identity),
+        std::string("spiffe://cluster.example/mds/") + mds_id
     );
     ASSERT_EQ(
         rawstor_pki_issue(
@@ -163,7 +185,7 @@ TEST_F(PkiTest, failures_are_errno_and_a_message) {
     );
     EXPECT_EQ(
         rawstor_pki_issue(
-            ca.c_str(), RAWSTOR_PKI_MDS, nullptr, nullptr, 3600, cert.c_str(),
+            ca.c_str(), RAWSTOR_PKI_MDS, nullptr, "mds-1", 3600, cert.c_str(),
             key.c_str(), nullptr, 0
         ),
         -EINVAL

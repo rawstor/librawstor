@@ -90,13 +90,15 @@ def issue_ost(
 
 def issue_mds(
     directory: Path,
-    name: str,
     cert_file: Path,
     key_file: Path,
+    mds_id: Optional[str] = None,
     validity: Validity = VALIDITY,
 ) -> str:
-    """Issues a certificate and a key for a rawstor-mds called ``name``."""
-    return _issue(directory, _MDS, None, name, cert_file, key_file, validity)
+    """Issues a certificate and a key for a rawstor-mds. ``mds_id`` is its id,
+    a UUID like an OST's; a new one is made without it. Returns the SPIFFE ID
+    the certificate names."""
+    return _issue(directory, _MDS, None, mds_id, cert_file, key_file, validity)
 
 
 def issue_admin(

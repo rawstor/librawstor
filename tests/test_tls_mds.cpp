@@ -29,6 +29,9 @@
 
 namespace {
 
+const std::string mds_1 = "018f4e2a-0000-7000-8000-0000000000e1";
+const std::string mds_2 = "018f4e2a-0000-7000-8000-0000000000e2";
+
 // A real rawstor-mds on its own thread, with one OST in its topology.
 class MdsServer {
 private:
@@ -121,7 +124,7 @@ ssize_t location_info(
 
 TEST(TlsMdsTest, location_info_over_tls) {
     rawstor::tests::TlsProcess tls(
-        "spiffe://" + rawstor::tests::TlsProcess::trust_domain + "/mds/mds-1"
+        "spiffe://" + rawstor::tests::TlsProcess::trust_domain + "/mds/" + mds_1
     );
     MdsServer server(8906);
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
@@ -148,8 +151,9 @@ TEST(TlsMdsTest, an_ost_identity_is_not_accepted_for_an_mds) {
 
 TEST(TlsMdsTest, the_configured_mds_name_is_required) {
     rawstor::tests::TlsProcess tls(
-        "spiffe://" + rawstor::tests::TlsProcess::trust_domain + "/mds/mds-1",
-        "mds-2"
+        "spiffe://" + rawstor::tests::TlsProcess::trust_domain + "/mds/" +
+            mds_1,
+        mds_2
     );
     MdsServer server(8909);
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
@@ -160,8 +164,9 @@ TEST(TlsMdsTest, the_configured_mds_name_is_required) {
 
 TEST(TlsMdsTest, the_configured_mds_name_is_accepted) {
     rawstor::tests::TlsProcess tls(
-        "spiffe://" + rawstor::tests::TlsProcess::trust_domain + "/mds/mds-1",
-        "mds-1"
+        "spiffe://" + rawstor::tests::TlsProcess::trust_domain + "/mds/" +
+            mds_1,
+        mds_1
     );
     MdsServer server(8910);
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
@@ -175,7 +180,7 @@ TEST(TlsMdsTest, the_configured_mds_name_is_accepted) {
 // an MDS, whatever id the witness has.
 TEST(TlsMdsTest, the_witness_an_mds_hosts_is_accepted_at_its_address) {
     rawstor::tests::TlsProcess tls(
-        "spiffe://" + rawstor::tests::TlsProcess::trust_domain + "/mds/mds-1"
+        "spiffe://" + rawstor::tests::TlsProcess::trust_domain + "/mds/" + mds_1
     );
     MdsServer server(8911);
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);
@@ -190,8 +195,9 @@ TEST(TlsMdsTest, the_witness_an_mds_hosts_is_accepted_at_its_address) {
 
 TEST(TlsMdsTest, the_witness_an_mds_hosts_needs_the_configured_mds_name) {
     rawstor::tests::TlsProcess tls(
-        "spiffe://" + rawstor::tests::TlsProcess::trust_domain + "/mds/mds-1",
-        "mds-2"
+        "spiffe://" + rawstor::tests::TlsProcess::trust_domain + "/mds/" +
+            mds_1,
+        mds_2
     );
     MdsServer server(8912);
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(2);

@@ -119,7 +119,7 @@ format and invents none:
 
 ```text
 spiffe://<trust_domain>/ost/<ost_id>               OST      (provider infrastructure)
-spiffe://<trust_domain>/mds/<name>                 MDS      (provider infrastructure)
+spiffe://<trust_domain>/mds/<mds_id>               MDS      (provider infrastructure)
 spiffe://<trust_domain>/admin/<name>               operator / control plane
 spiffe://<trust_domain>/tenant/<tenant_id>/client/<name>   a tenant's client
 ```
@@ -129,7 +129,8 @@ spiffe://<trust_domain>/tenant/<tenant_id>/client/<name>   a tenant's client
   trust domain, so a certificate from another cluster is rejected even if the
   same CA signed it.
 - Path segments are letters, digits, `.`, `-`, `_`, case-sensitive; the whole
-  ID is at most 2048 bytes. Ids are UUIDs in their canonical text form.
+  ID is at most 2048 bytes. Ids (of an OST, an MDS and a tenant) are UUIDs in
+  their canonical text form.
 - Only clients carry a tenant. OSTs and MDSs belong to the provider, so
   their IDs have none. A tenant's client can never present an ID under
   `/ost/`, `/mds/` or `/admin/`: the issuing side decides the path, the

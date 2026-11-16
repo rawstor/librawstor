@@ -29,6 +29,7 @@ namespace fs = std::filesystem;
 
 const std::string ost_id = "0198f1a2-3b4c-7d5e-8f90-a1b2c3d4e5f6";
 const std::string ost_uri = "spiffe://cluster.example/ost/" + ost_id;
+const std::string mds_id = "0198f1a2-3b4c-7d5e-8f90-fedcba987654";
 const std::string tenant = "0198f1a2-3b4c-7d5e-8f90-0123456789ab";
 const std::chrono::seconds hour(3600);
 
@@ -211,7 +212,7 @@ TEST_F(CATest, an_ost_gets_a_certificate_a_context_takes) {
     EXPECT_NO_THROW(rawtls::Context context(config("ost")));
 }
 
-TEST_F(CATest, an_ost_without_an_id_gets_a_new_one) {
+TEST_F(CATest, an_ost_or_an_mds_without_an_id_gets_a_new_one) {
     init();
     rawtls::CA ca(dir.path("ca"));
     std::string first = ca.issue(
@@ -223,6 +224,12 @@ TEST_F(CATest, an_ost_without_an_id_gets_a_new_one) {
     EXPECT_NE(first, second);
     EXPECT_EQ(rawtls::SpiffeId(first).role(), rawtls::Role::ost);
     EXPECT_EQ(uri_of(dir.path("a.crt")), first);
+
+    std::string mds = ca.issue(
+        rawtls::Role::mds, "", "", hour, dir.path("m.crt"), dir.path("m.key")
+    );
+    EXPECT_EQ(rawtls::SpiffeId(mds).role(), rawtls::Role::mds);
+    EXPECT_EQ(uri_of(dir.path("m.crt")), mds);
 }
 
 TEST_F(CATest, every_role_gets_its_shape) {
@@ -230,10 +237,10 @@ TEST_F(CATest, every_role_gets_its_shape) {
     rawtls::CA ca(dir.path("ca"));
     EXPECT_EQ(
         ca.issue(
-            rawtls::Role::mds, "", "mds-1", hour, dir.path("m.crt"),
+            rawtls::Role::mds, "", mds_id, hour, dir.path("m.crt"),
             dir.path("m.key")
         ),
-        "spiffe://cluster.example/mds/mds-1"
+        "spiffe://cluster.example/mds/" + mds_id
     );
     EXPECT_EQ(
         ca.issue(
@@ -264,8 +271,9 @@ TEST_F(CATest, issue_checks_what_it_is_asked) {
         };
     };
     expect_errno(EINVAL, issue(rawtls::Role::ost, "", "not-a-uuid"));
-    expect_errno(EINVAL, issue(rawtls::Role::mds, "", ""));
+    expect_errno(EINVAL, issue(rawtls::Role::mds, "", "mds-1"));
     expect_errno(EINVAL, issue(rawtls::Role::mds, "", "a/b"));
+    expect_errno(EINVAL, issue(rawtls::Role::admin, "", ""));
     expect_errno(EINVAL, issue(rawtls::Role::admin, tenant, "ops"));
     expect_errno(EINVAL, issue(rawtls::Role::client, "", "vm"));
     expect_errno(EINVAL, issue(rawtls::Role::client, tenant, ""));

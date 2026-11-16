@@ -360,17 +360,17 @@ namespace {
 // Only a name that makes a SPIFFE ID of rawstor in this trust domain.
 void check_trust_domain(const std::string& trust_domain) {
     try {
-        static_cast<void>(SpiffeId("spiffe://" + trust_domain + "/mds/x"));
+        static_cast<void>(SpiffeId("spiffe://" + trust_domain + "/admin/x"));
     } catch (const std::system_error&) {
         raise(EINVAL, "Not a trust domain of rawstor: " + trust_domain);
     }
 }
 
-std::string new_ost_id() {
+std::string new_id() {
     RawstdUUID id;
     int res = rawstd_uuid7_init(&id);
     if (res < 0) {
-        raise(-res, "Cannot generate an OST id");
+        raise(-res, "Cannot generate an id");
     }
     RawstdUUIDString text;
     rawstd_uuid_to_string(&id, &text);
@@ -473,14 +473,15 @@ std::string CA::issue(
     }
     switch (role) {
     case Role::ost:
-        id += "/ost/" + (name.empty() ? new_ost_id() : name);
-        break;
     case Role::mds:
+        id += (role == Role::ost ? "/ost/" : "/mds/") +
+              (name.empty() ? new_id() : name);
+        break;
     case Role::admin:
         if (name.empty()) {
             raise(EINVAL, "A name is required");
         }
-        id += (role == Role::mds ? "/mds/" : "/admin/") + name;
+        id += "/admin/" + name;
         break;
     case Role::client:
         if (tenant.empty() || name.empty()) {

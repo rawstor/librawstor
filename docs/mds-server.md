@@ -84,7 +84,7 @@ Two clusters on one host:
 for C in ${CLUSTER1} ${CLUSTER2}; do
     sudo cp my-${C}.topology /etc/rawstor/mds/${C}.topology
 done
-# Each instance has its own certificate, for spiffe://<trust domain>/mds/<name>:
+# Each instance has its own certificate, for spiffe://<trust domain>/mds/<mds id>:
 # /etc/rawstor/tls/<cluster>.crt and <cluster>.key, see Configuration for TLS.
 tls() {
     printf 'RAWSTOR_TLS_TRUST_DOMAIN=cluster.example\nRAWSTOR_TLS_CERT=/etc/rawstor/tls/%s.crt\nRAWSTOR_TLS_KEY=/etc/rawstor/tls/%s.key\nRAWSTOR_TLS_CA=/etc/rawstor/tls/ca.crt\n' $1 $1

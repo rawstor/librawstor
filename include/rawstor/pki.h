@@ -31,9 +31,9 @@ extern "C" {
 
 /** The role of the process a certificate is for. */
 enum RawstorPkiRole {
-    /** A rawstor-ost; `name` is its id, the one in the MDS topology. */
+    /** A rawstor-ost; `name` is its id, the one in the MDS topology, a UUID. */
     RAWSTOR_PKI_OST,
-    /** A rawstor-mds; `name` is its name. */
+    /** A rawstor-mds; `name` is its id, a UUID like an OST's. */
     RAWSTOR_PKI_MDS,
     /** An operator or a control plane; `name` is its name. */
     RAWSTOR_PKI_ADMIN,
@@ -61,9 +61,9 @@ int rawstor_pki_init(
  * cannot be written.
  *
  * `tenant` is for a client only and NULL otherwise. `name` may be NULL for an
- * OST, which then gets a new id. The SPIFFE ID the certificate names (see
- * docs/security.md) is copied to `identity`, if it is not NULL, with room for
- * RAWSTOR_PKI_IDENTITY_SIZE bytes: `size` is checked before anything is
+ * OST or an MDS, which then gets a new id. The SPIFFE ID the certificate names
+ * (see docs/security.md) is copied to `identity`, if it is not NULL, with room
+ * for RAWSTOR_PKI_IDENTITY_SIZE bytes: `size` is checked before anything is
  * issued.
  */
 int rawstor_pki_issue(

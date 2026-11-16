@@ -47,21 +47,21 @@ The one way to run without TLS is to say so, with `--insecure`: see
 | `RAWSTOR_TLS_KEY` | The private key of the certificate, PEM. |
 | `RAWSTOR_TLS_CA` | The CAs a peer's certificate must chain to, PEM; several may be listed. |
 | `RAWSTOR_TLS_CRL` | Optional: a CRL, PEM, checked for the peer's certificate. It must cover the CA. |
-| `RAWSTOR_TLS_MDS_ID` | Optional: the name of the MDS this process connects to, the last segment of its SPIFFE ID (`mds-1` for `spiffe://cluster.example/mds/mds-1`). Every `mds://` connection must then present exactly that ID. |
+| `RAWSTOR_TLS_MDS_ID` | Optional: the id of the MDS this process connects to, a UUID, the last segment of its SPIFFE ID (`0198f1a2-…` for `spiffe://cluster.example/mds/0198f1a2-…`). Every `mds://` connection must then present exactly that ID. |
 
 The SPIFFE ID of a process says what it is:
 
 | ID | Process |
 |----|---------|
 | `spiffe://<trust_domain>/ost/<ost_id>` | an OST, `ost_id` being its id in the MDS topology |
-| `spiffe://<trust_domain>/mds/<name>` | an MDS |
+| `spiffe://<trust_domain>/mds/<mds_id>` | an MDS |
 | `spiffe://<trust_domain>/admin/<name>` | an operator or control plane |
 | `spiffe://<trust_domain>/tenant/<tenant_id>/client/<name>` | a tenant's client |
 
 A client takes a server to be an OST or an MDS by its ID: an `ost://` address
 needs an OST and an `mds://` one an MDS. An OST the MDS has resolved must also
 present the ID the MDS named for it, so one OST cannot answer for another. The
-MDS is held to the name in `RAWSTOR_TLS_MDS_ID` when it is set; without it, as
+MDS is held to the id in `RAWSTOR_TLS_MDS_ID` when it is set; without it, as
 for an `ost://` address the MDS has not named, any server of that role in the
 trust domain is accepted, so set it wherever a client talks to one MDS.
 
@@ -87,7 +87,7 @@ needs no TLS settings itself. The CA is a directory with its certificate,
 ```
 rawstor pki init --trust-domain cluster.example ca
 rawstor pki issue --ca ca --cert ost.crt --key ost.key ost       # a new id
-rawstor pki issue --ca ca --cert mds.crt --key mds.key mds mds-1
+rawstor pki issue --ca ca --cert mds.crt --key mds.key mds       # a new id
 rawstor pki issue --ca ca --cert hv1.crt --key hv1.key admin hv1
 rawstor pki issue --ca ca --cert vm.crt --key vm.key client <tenant uuid> vm-1
 rawstor pki renew --ca ca --cert ost.crt --key ost.key
@@ -96,8 +96,9 @@ rawstor pki renew --ca ca --cert ost.crt --key ost.key
 A CA is made for the trust domain of one cluster and keeps it, so every
 certificate it issues is in it. `issue` writes a certificate and a new key
 (mode 0600) for a process, replacing the files. The process is `ost [ID]` (the
-id is the one in the MDS topology, a UUID; without it a new one is made),
-`mds NAME`, `admin NAME` or `client TENANT NAME`. `renew` does the same for the
+id is the one in the MDS topology, a UUID), `mds [ID]` (the id of the MDS, a UUID
+as well), each with a new id if it is not given, `admin NAME` or
+`client TENANT NAME`. `renew` does the same for the
 process of a certificate this CA issued, over the same files, and the running
 process reads them again on `SIGHUP` or `SIGUSR1`.
 

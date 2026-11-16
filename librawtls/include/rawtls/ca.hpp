@@ -59,9 +59,10 @@ public:
      * both as PEM and replacing what is there; the key is written with mode
      * 0600. Returns the SPIFFE ID.
      *
-     * `name` is the OST id of an ost (a new one if empty), the name of an mds
-     * or an admin, and the name of a client of the tenant `tenant`, which only
-     * a client has. The shapes are those of SpiffeId.
+     * `name` is the OST id of an ost and the MDS id of an mds, UUIDs that are
+     * made if empty, the name of an admin, and the name of a client of the
+     * tenant `tenant`, which only a client has. The shapes are those of
+     * SpiffeId.
      *
      * Both files are written aside and then renamed over the old ones, so a
      * failure to write leaves the old pair as it was.
