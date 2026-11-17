@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Python `rawstor.initialize(insecure=True)` supports running without TLS certificates.
+
 - All systemd services accept additional command-line arguments through `EXTRA_ARGS` in their configuration files, including `--insecure`.
 
 - Certificate role `none` denies unlisted objects; explicit object permissions override role defaults, supporting credentials scoped to one vhost object.

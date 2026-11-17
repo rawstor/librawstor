@@ -173,3 +173,86 @@ class TestTenants(unittest.TestCase):
                 sorted([self.TENANT, self.OTHER, rawstor.DEFAULT_TENANT]))
             self.assertEqual(
                 sorted(listed), sorted([owned, foreign, fallback]))
+
+
+class TestInitialization(unittest.TestCase):
+    def run_python(self, code, tls=None):
+        import os
+        import subprocess
+        import sys
+
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith("RAWSTOR_TLS_")}
+        env.update(tls or {})
+        result = subprocess.run([sys.executable, "-c", code], env=env,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_invalid_mode(self):
+        self.run_python("""
+import rawstor
+try:
+    rawstor.initialize(insecure='false')
+except TypeError:
+    pass
+else:
+    raise AssertionError('accepted a non-boolean mode')
+rawstor.initialize(insecure=True)
+""")
+
+    def test_insecure_without_certificates(self):
+        self.run_python("""
+import rawstor, tempfile
+rawstor.initialize(insecure=True)
+rawstor.initialize(insecure=True)
+with tempfile.TemporaryDirectory() as directory:
+    location = rawstor.Location('file://' + directory)
+    target = location.create(size=1 << 20, width=1)
+    assert list(location.objects()) == [target]
+    target.remove()
+try:
+    rawstor.initialize()
+except RuntimeError:
+    pass
+else:
+    raise AssertionError('TLS mode changed')
+""")
+
+    def test_tls_required_and_retry(self):
+        self.run_python("""
+import rawstor
+try:
+    rawstor.Location
+except RuntimeError:
+    pass
+else:
+    raise AssertionError('accepted missing TLS credentials')
+rawstor.initialize(insecure=True)
+assert rawstor.Location
+""")
+
+    def test_insecure_rejects_tls_settings(self):
+        self.run_python("""
+import rawstor
+try:
+    rawstor.initialize(insecure=True)
+except RuntimeError:
+    pass
+else:
+    raise AssertionError('accepted TLS settings with insecure')
+""", {"RAWSTOR_TLS_CA": "/nonexistent/ca.crt"})
+
+    def test_initialized_tls_cannot_change(self):
+        import os
+        self.run_python("""
+import rawstor
+assert rawstor.Target
+rawstor.initialize()
+try:
+    rawstor.initialize(insecure=True)
+except RuntimeError:
+    pass
+else:
+    raise AssertionError('TLS mode changed')
+""", {k: v for k, v in os.environ.items()
+      if k.startswith("RAWSTOR_TLS_")})

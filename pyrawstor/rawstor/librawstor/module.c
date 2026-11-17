@@ -47,7 +47,24 @@ static struct PyModuleDef librawstor_module = {
 };
 
 PyMODINIT_FUNC PyInit_librawstor() {
-    int res = rawstor_initialize(NULL);
+    PyObject* package = PyImport_ImportModule("rawstor");
+    if (package == NULL) {
+        return NULL;
+    }
+    PyObject* insecure =
+        PyObject_GetAttrString(package, "_initialize_insecure");
+    Py_DECREF(package);
+    if (insecure == NULL) {
+        return NULL;
+    }
+    int enabled = PyObject_IsTrue(insecure);
+    Py_DECREF(insecure);
+    if (enabled < 0) {
+        return NULL;
+    }
+    struct RawstorOpts opts = {0};
+    opts.insecure = enabled ? 1u : 0u;
+    int res = rawstor_initialize(&opts);
     if (res < 0) {
         PyErr_Format(
             PyExc_RuntimeError, "rawstor_initialize() failed: %s",
