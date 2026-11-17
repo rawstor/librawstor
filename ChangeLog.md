@@ -11,13 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - An object UUID can stand in for a target: `rawstor object show|remove|resize|transfer|chunks|slots|resolve`, `rawstor version ...`, `rawstor-vhost`, `rawstor-vduse` and Python `Target` accept `LOCATION UUID`, or a bare `UUID` with the location taken from `RAWSTOR_LOCATION`.
 - Python `rawstor.initialize(insecure=True)` supports running without TLS certificates.
-
 - All systemd services accept additional command-line arguments through `EXTRA_ARGS` in their configuration files, including `--insecure`.
-
 - Certificate role `none` denies unlisted objects; explicit object permissions override role defaults, supporting credentials scoped to one vhost object.
-
 - TLS account authorization with CA-signed roles and object restrictions, independently checked by MDS and OST; PKI CLI/C/Python APIs issue, inspect and renew the signed permissions.
-
 - Accounts ([design](docs/accounts.md)): an object has an owner account, named in a location as optional user information (`ost://<account>@host:port`); `list` shows the objects an account owns and each one's account, or every object without an account; `create` without an account creates for the default account; an MDS keeps an account registry, and `rawstor account create`/`list`/`remove` manage it, and removing an account removes its objects with their versions; `rawstor object transfer TARGET ACCOUNT` (`rawstor_target_transfer()`) makes another account the owner of an object; pyrawstor has `Location.accounts()`/`create_account()`/`remove_account()`, `Target.transfer()`, `Target.account`, `ObjectMeta.account` and `DEFAULT_ACCOUNT`.
 - TLS 1.3 with mutual authentication between the client library and every service ([design](docs/security.md)), set with `RAWSTOR_TLS_TRUST_DOMAIN`, `RAWSTOR_TLS_CERT`, `RAWSTOR_TLS_KEY` and `RAWSTOR_TLS_CA` ([configuration](docs/configuration.md#tls)); a process without them refuses to start unless it is run with `--insecure` (`RawstorOpts::insecure` in a program; systemd services can pass the flag through `EXTRA_ARGS`), which turns TLS off, and with it every authentication, and refuses to start if it has both: a peer is identified by the SPIFFE ID in its certificate, an OST the MDS resolved must present its own (`RAWSTOR_TLS_MDS_ID` pins the MDS likewise), and the certificate is read again on `SIGHUP`/`SIGUSR1` (`rawstor_tls_request_reload()`). OpenSSL 3.0 or newer is a build dependency.
 - `rawstor pki init`/`issue`/`renew` make a small CA and the certificates TLS needs and `rawstor pki show` reads one, `rawstor_pki_init()`/`rawstor_pki_issue()`/`rawstor_pki_renew()`/`rawstor_pki_show()` do the same for a program, and pyrawstor has `rawstor.pki`; importing `rawstor` no longer starts librawstor until `Target` or `Location` is used.
@@ -98,13 +94,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Provider admins can initialize mirrored object membership, including MDS witnesses, without data-write permissions.
-
 - CLI object listings preserve explicitly supplied URI accounts and report the owner separately without adding it to unqualified URIs.
-
 - PKI renewal and inspection verify the same certificate they read, using only the CA public key for signature checks.
-
 - PKI publication failures restore the previous key and allow incomplete CA initialization to be retried.
-
 - A mirror member that rejoins after an earlier resync of it was aborted, or its writer died, no longer serves stale data: the new resync copies every range the earlier one had recorded as written, instead of skipping it, which left old data in the member after the rejoin.
 - `rawstor-vhost` and `rawstor-vduse` no longer freeze or crash when an OST that was down for longer than the retries last comes back: a replaced member connection is now closed only after every call on it has finished, its metadata and register calls included.
 - `rawstor-vhost` and `rawstor-vduse` no longer crash (use after free) when a mirror member comes back while writes to it are still in flight: the broken connection it replaces is now closed after those writes finish instead of being freed under them.
