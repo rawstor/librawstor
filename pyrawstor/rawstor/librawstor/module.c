@@ -57,8 +57,13 @@ PyMODINIT_FUNC PyInit_librawstor() {
     if (insecure == NULL) {
         return NULL;
     }
-    int enabled = PyObject_IsTrue(insecure);
+    PyObject* requested = PyObject_CallMethod(insecure, "get", NULL);
     Py_DECREF(insecure);
+    if (requested == NULL) {
+        return NULL;
+    }
+    int enabled = PyObject_IsTrue(requested);
+    Py_DECREF(requested);
     if (enabled < 0) {
         return NULL;
     }
@@ -79,9 +84,9 @@ PyMODINIT_FUNC PyInit_librawstor() {
         return NULL;
     }
 
-    if (py_rawstor_types_init(module) < 0) {
+    if (PyModule_AddIntConstant(module, "_insecure", enabled) < 0 ||
+        py_rawstor_types_init(module) < 0) {
         Py_DECREF(module);
-        rawstor_terminate();
         return NULL;
     }
 

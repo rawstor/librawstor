@@ -1,6 +1,8 @@
+from contextvars import ContextVar as _ContextVar
+
 from .constants import *  # noqa: F401,F403
 
-_initialize_insecure = False
+_initialize_insecure = _ContextVar("rawstor_initialize_insecure", default=False)
 
 
 def initialize(*, insecure=False):
@@ -11,25 +13,22 @@ def initialize(*, insecure=False):
     mode are allowed; changing the mode after initialization raises RuntimeError.
     Without this call, Target and Location start rawstor with TLS enabled.
     """
-    global _initialize_insecure
     import importlib
-    import sys
 
     if not isinstance(insecure, bool):
         raise TypeError("insecure must be a bool")
-    if __name__ + ".librawstor" in sys.modules:
-        if insecure != _initialize_insecure:
-            raise RuntimeError(
-                "rawstor is already initialized with a different TLS mode"
-            )
-        return
-    previous = _initialize_insecure
-    _initialize_insecure = insecure
+    # The import lock serializes extension initialization. Keep the requested
+    # mode local to this context while waiting for that lock, and compare it
+    # with the mode the extension actually initialized afterwards.
+    token = _initialize_insecure.set(insecure)
     try:
-        importlib.import_module(".librawstor", __name__)
-    except Exception:
-        _initialize_insecure = previous
-        raise
+        module = importlib.import_module(".librawstor", __name__)
+    finally:
+        _initialize_insecure.reset(token)
+    if insecure != module._insecure:
+        raise RuntimeError(
+            "rawstor is already initialized with a different TLS mode"
+        )
 
 
 # Target and Location load the librawstor extension, and loading it starts
