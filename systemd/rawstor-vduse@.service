@@ -44,8 +44,8 @@ LimitNOFILE=65536
 # thread (and one connection to the backend) per virtqueue the driver
 # enables, out of the host's number of CPUs advertised (the most Linux's
 # virtio_blk will use); to cap the number of connections this instance
-# opens to the backend target, pass --num-queues via an ExecStart=
-# drop-in. write-through (WRITE_CACHE=off)
+# opens to the backend target, set EXTRA_ARGS="--num-queues N"
+# in /etc/rawstor-vduse.conf. write-through (WRITE_CACHE=off)
 # makes every guest write durable on completion by forcing a journal
 # commit per write -- fine on a host whose filesystem commits quickly,
 # but observed to stall write RTTs into the tens of seconds under
@@ -71,14 +71,17 @@ Environment=WRITE_CACHE=on
 #Environment=RAWSTOR_OPTS_WRITE_THROTTLE_LIMIT=128
 #Environment=RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY=256M
 # TLS (docs/configuration.md#tls): the instance needs these, set here or in the
-# file below, and exits with EX_CONFIG without them. A service has no way to run
-# without TLS.
+# file below, and exits with EX_CONFIG without them unless EXTRA_ARGS includes
+# --insecure (plaintext, no authentication).
 #Environment=RAWSTOR_TLS_TRUST_DOMAIN=cluster.example
 #Environment=RAWSTOR_TLS_CERT=/etc/rawstor/tls/cert.pem
 #Environment=RAWSTOR_TLS_KEY=/etc/rawstor/tls/key.pem
 #Environment=RAWSTOR_TLS_CA=/etc/rawstor/tls/ca.pem
+# Additional command-line arguments, split into words by systemd.
+# Set in the configuration file below, e.g. EXTRA_ARGS="--insecure".
+Environment=EXTRA_ARGS=
 EnvironmentFile=-/etc/rawstor-vduse.conf
-ExecStart=/usr/bin/rawstor-vduse --write-cache=${WRITE_CACHE} ${LOCATION}/%i
+ExecStart=/usr/bin/rawstor-vduse $EXTRA_ARGS --write-cache=${WRITE_CACHE} ${LOCATION}/%i
 # Reads the TLS certificate, key and CAs again for the connections made after
 # it (SIGUSR1; SIGHUP re-reads the size of the object).
 ExecReload=/bin/kill -USR1 $MAINPID

@@ -147,11 +147,25 @@ Any other CA that writes the URI SAN fits as well, see
 `--insecure` on the command line of `rawstor`, `rawstor-ost`, `rawstor-mds`,
 `rawstor-vhost`, `rawstor-vduse` and `rawstor-vhost-qemu` runs a process without
 TLS: its connections are plaintext and **no peer is authenticated**, so every
-peer that can reach a port can do everything. It is a choice of whoever starts
-the process, not of its environment: there is no environment variable for it, and
-a systemd instance cannot run this way, so it needs TLS. A program that links
+peer that can reach a port can do everything. A program that links
 librawstor sets `RawstorOpts::insecure`. Use it for a storage network that no
 untrusted party can reach, and for development and tests.
+
+The shipped systemd services accept additional command-line arguments through
+`EXTRA_ARGS` in their existing configuration files:
+
+| Service | Configuration file |
+|---|---|
+| `rawstor-ost@<uuid>` | `/etc/rawstor/ost/<uuid>.conf` |
+| `rawstor-mds@<uuid>` | `/etc/rawstor/mds/<uuid>.conf` |
+| `rawstor-vhost@<uuid>` | `/etc/rawstor-vhost.conf` |
+| `rawstor-vduse@<uuid>` | `/etc/rawstor-vduse.conf` |
+
+For example, `EXTRA_ARGS="--insecure"` runs a service without TLS;
+`EXTRA_ARGS="--insecure --readonly"` also makes a vhost or vduse backend read-only.
+The default is empty. systemd splits the value into arguments, respecting quoted
+words; shell commands and variable expansion inside the value are not supported.
+Restart the affected service instances after changing the configuration.
 
 Insecure mode and the TLS settings exclude each other: a process started with
 `--insecure` that has any `RAWSTOR_TLS_*` set, complete or not, refuses to
