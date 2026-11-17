@@ -31,7 +31,7 @@ vhost-user.
 |--------|-------------|
 | `-h, --help` | Show help message and exit. |
 | `--insecure` | Run without TLS: plaintext, and no peer is authenticated. Without it the process needs [TLS settings](configuration.md#tls) and refuses to start without them. |
-| `TARGET` | Comma‑separated list of rawstor backend targets (see [Concepts](concepts.md)). Creates `/dev/vduse/UUID`, where `UUID` is the target object's own UUID -- there is no separate name to pick, since the UUID already uniquely and stably identifies it. |
+| `TARGET` | Comma‑separated list of rawstor backend targets (see [Concepts](concepts.md)); or `LOCATION UUID`, or a bare `UUID` with `LOCATION` from `RAWSTOR_LOCATION` (see [Object UUID instead of a target](concepts.md#object-uuid-instead-of-a-target)). Creates `/dev/vduse/UUID`, where `UUID` is the target object's own UUID -- there is no separate name to pick, since the UUID already uniquely and stably identifies it. |
 | `--queue-size SIZE` | Virtqueue size, a power of two, of each virtqueue's own queue. Default: `256`, max `1024`. |
 | `--num-queues N` | Number of virtqueues advertised to the guest. Each one the driver actually enables is serviced by its own thread and its own connection to `TARGET`, started at that point (Linux's `virtio_blk` enables up to its CPU count). Default: the host's number of CPUs. |
 | `--write-cache on\|off` | Advertise a writeback (`on`) or write-through (`off`, default) cache to the guest. |

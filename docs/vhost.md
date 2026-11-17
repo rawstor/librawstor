@@ -25,7 +25,7 @@ multiple in-flight requests on a virtqueue may complete out of order.
 | `-h, --help` | Show help message and exit. |
 | `--insecure` | Run without TLS: plaintext, and no peer is authenticated. Without it the process needs [TLS settings](configuration.md#tls) and refuses to start without them. |
 | `-s, --socket-path PATH` | Location of the vhost-user Unix domain socket. |
-| `TARGET` | Comma‑separated list of rawstor backend targets (see [Concepts](concepts.md)). |
+| `TARGET` | Comma‑separated list of rawstor backend targets (see [Concepts](concepts.md)); or `LOCATION UUID`, or a bare `UUID` with `LOCATION` from `RAWSTOR_LOCATION` (see [Object UUID instead of a target](concepts.md#object-uuid-instead-of-a-target)). |
 | `--queue-size SIZE` | RawIO queue (`io_uring`) depth of each virtqueue's own queue. Default: `4096`. |
 | `--write-cache on\|off` | Advertise a writeback (`on`) or write-through (`off`, default) cache to the guest; write-through makes every write durable on completion, writeback relies on the guest issuing an explicit flush. |
 | `--readonly` | Export the object read-only: advertises `VIRTIO_BLK_F_RO` to the guest and opens `TARGET` with `RAWSTOR_READONLY` (writes fail; the mirror quorum is still required). Required to export a version target. |

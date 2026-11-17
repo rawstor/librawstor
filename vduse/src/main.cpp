@@ -6,6 +6,7 @@
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.hpp>
 #include <rawstd/pipe.hpp>
+#include <rawstd/target.h>
 
 #include <rawstor.h>
 
@@ -23,6 +24,7 @@
 #include <sysexits.h>
 
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <system_error>
 
@@ -248,9 +250,29 @@ int main(int argc, char** argv) {
         }
     }
 
+    std::unique_ptr<char, decltype(&std::free)> resolved_target(
+        nullptr, &std::free
+    );
     if (optind < argc) {
-        target_arg = argv[optind];
-        optind++;
+        int consumed = 0;
+        resolved_target.reset(rawstd_target_resolve(
+            argv[optind], optind + 1 < argc ? argv[optind + 1] : nullptr,
+            &consumed
+        ));
+        if (!resolved_target) {
+            if (errno == ENOENT) {
+                std::cerr << argv[optind]
+                          << " is an object id: location required (set "
+                             "RAWSTOR_LOCATION or pass LOCATION UUID)"
+                          << std::endl;
+            } else {
+                std::cerr << "Failed to resolve target: " << strerror(errno)
+                          << std::endl;
+            }
+            return EX_USAGE;
+        }
+        target_arg = resolved_target.get();
+        optind += consumed;
     }
 
     if (optind < argc) {

@@ -17,6 +17,7 @@
 
 #include <rawstd/exitcode.h>
 #include <rawstd/gcc.h>
+#include <rawstd/target.h>
 #include <rawstd/units.h>
 
 #include <rawstor.h>
@@ -117,6 +118,12 @@ static void object_usage(void) {
         "former, except chunks\n"
         "and slots, which take either.\n"
         "\n"
+        "Wherever a TARGET is expected, `LOCATION UUID` works too (the "
+        "UUID is appended\n"
+        "to every URI of LOCATION), and a bare UUID takes LOCATION from "
+        "the\n"
+        "RAWSTOR_LOCATION environment variable.\n"
+        "\n"
         "Run `rawstor object <subcommand> --help` to show its usage.\n"
     );
 }
@@ -183,6 +190,36 @@ static void version(void) {
 }
 
 static void sact_handler(int RAWSTD_UNUSED s) {
+}
+
+static char* resolved_target = NULL;
+
+/* Takes the TARGET positional argument at optind into *target: a target as
+ * is, `LOCATION UUID` (consumes two arguments), or a bare `UUID` resolved
+ * against RAWSTOR_LOCATION. Returns 0, or EX_USAGE. */
+static int take_target(int argc, char** argv, char** target) {
+    int consumed = 0;
+    char* resolved = rawstd_target_resolve(
+        argv[optind], optind + 1 < argc ? argv[optind + 1] : NULL, &consumed
+    );
+    if (resolved == NULL) {
+        if (errno == ENOENT) {
+            fprintf(
+                stderr,
+                "%s is an object id: location required (set "
+                "RAWSTOR_LOCATION or pass LOCATION UUID)\n",
+                argv[optind]
+            );
+        } else {
+            fprintf(stderr, "Failed to resolve target: %s\n", strerror(errno));
+        }
+        return EX_USAGE;
+    }
+    free(resolved_target);
+    resolved_target = resolved;
+    *target = resolved;
+    optind += consumed;
+    return 0;
 }
 
 static void command_create_usage(void) {
@@ -553,8 +590,10 @@ static int command_remove(int argc, char** argv, enum TargetType type) {
     }
 
     if (optind < argc) {
-        target_arg = argv[optind];
-        optind++;
+        int tres = take_target(argc, argv, &target_arg);
+        if (tres != 0) {
+            return tres;
+        }
     }
 
     if (optind < argc) {
@@ -881,8 +920,10 @@ static int command_resize(int argc, char** argv) {
     }
 
     if (optind < argc) {
-        target_arg = argv[optind];
-        optind++;
+        int tres = take_target(argc, argv, &target_arg);
+        if (tres != 0) {
+            return tres;
+        }
     }
 
     if (optind < argc) {
@@ -960,20 +1001,27 @@ static int command_transfer(int argc, char** argv) {
         }
     }
 
-    char* args[2] = {NULL, NULL};
-    if (account_args(argc, argv, args, 2) != 0) {
+    char* target_arg = NULL;
+    if (optind < argc) {
+        int tres = take_target(argc, argv, &target_arg);
+        if (tres != 0) {
+            return tres;
+        }
+    }
+    char* args[1] = {NULL};
+    if (account_args(argc, argv, args, 1) != 0) {
         return EX_USAGE;
     }
-    if (args[0] == NULL) {
+    if (target_arg == NULL) {
         fprintf(stderr, "target required\n");
         return EX_USAGE;
     }
-    if (args[1] == NULL) {
+    if (args[0] == NULL) {
         fprintf(stderr, "account required\n");
         return EX_USAGE;
     }
 
-    return rawstor_cli_transfer(args[0], args[1]);
+    return rawstor_cli_transfer(target_arg, args[0]);
 }
 
 static void command_list_usage(void) {
@@ -1255,8 +1303,10 @@ static int command_show(int argc, char** argv, enum TargetType type) {
     }
 
     if (optind < argc) {
-        target_arg = argv[optind];
-        optind++;
+        int tres = take_target(argc, argv, &target_arg);
+        if (tres != 0) {
+            return tres;
+        }
     }
 
     if (optind < argc) {
@@ -1367,8 +1417,10 @@ static int command_resolve(int argc, char** argv) {
     }
 
     if (optind < argc) {
-        target_arg = argv[optind];
-        optind++;
+        int tres = take_target(argc, argv, &target_arg);
+        if (tres != 0) {
+            return tres;
+        }
     }
 
     if (optind < argc) {
@@ -1516,8 +1568,10 @@ static int command_create_version(int argc, char** argv) {
     }
 
     if (optind < argc) {
-        target_arg = argv[optind];
-        optind++;
+        int tres = take_target(argc, argv, &target_arg);
+        if (tres != 0) {
+            return tres;
+        }
     }
 
     if (optind < argc) {
@@ -1594,8 +1648,10 @@ static int command_list_versions(int argc, char** argv) {
     }
 
     if (optind < argc) {
-        target_arg = argv[optind];
-        optind++;
+        int tres = take_target(argc, argv, &target_arg);
+        if (tres != 0) {
+            return tres;
+        }
     }
 
     if (optind < argc) {
@@ -1678,8 +1734,10 @@ static int command_chunks(int argc, char** argv) {
     }
 
     if (optind < argc) {
-        target_arg = argv[optind];
-        optind++;
+        int tres = take_target(argc, argv, &target_arg);
+        if (tres != 0) {
+            return tres;
+        }
     }
 
     if (optind < argc) {
@@ -1767,8 +1825,10 @@ static int command_slots(int argc, char** argv) {
     }
 
     if (optind < argc) {
-        target_arg = argv[optind];
-        optind++;
+        int tres = take_target(argc, argv, &target_arg);
+        if (tres != 0) {
+            return tres;
+        }
     }
 
     if (optind < argc) {
@@ -1869,8 +1929,10 @@ static int command_testio(int argc, char** argv) {
     }
 
     if (optind < argc) {
-        target_arg = argv[optind];
-        optind++;
+        int tres = take_target(argc, argv, &target_arg);
+        if (tres != 0) {
+            return tres;
+        }
     }
 
     if (optind < argc) {
