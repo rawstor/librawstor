@@ -39,12 +39,8 @@ TEST_F(TargetTest, FullTargetIsReturnedAsIs) {
 }
 
 TEST_F(TargetTest, LocationAndUuid) {
-    EXPECT_EQ(
-        resolve("ost://h:1", U, 2), std::string("ost://h:1/") + U
-    );
-    EXPECT_EQ(
-        resolve("ost://h:1/", U, 2), std::string("ost://h:1/") + U
-    );
+    EXPECT_EQ(resolve("ost://h:1", U, 2), std::string("ost://h:1/") + U);
+    EXPECT_EQ(resolve("ost://h:1/", U, 2), std::string("ost://h:1/") + U);
     EXPECT_EQ(
         resolve("file:///var/rawstor", U, 2),
         std::string("file:///var/rawstor/") + U
