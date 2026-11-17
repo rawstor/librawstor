@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 
 from . import librawstor
@@ -100,6 +101,52 @@ class Target:
           already carries its own bound version raises OSError (EINVAL).
         """
         return Target(librawstor.object_create_version(self._uri, uuid))
+
+    def export(self, path: str | os.PathLike) -> None:
+        """Write this object -- or, if this target names a bound version,
+        that version -- to the file `path`, created or truncated. A regular
+        file is written sparse. Nothing coordinates with other users of the
+        object: exporting the live version of an object that is open (and
+        possibly dirty) elsewhere reads whatever the storage holds, which is
+        the caller's business to avoid -- export a version instead for a
+        consistent point. See rawstor_target_export(), <rawstor/target.h>."""
+        librawstor.object_export(self._uri, os.fspath(path))
+
+    def create_from_file(
+        self, path: str | os.PathLike, *, width: int, size: int = 0,
+        chunk_size: int = 0, stripe_width: int = 0,
+        failure_domain: int | str = OBJ_DOMAIN_DEFAULT
+    ) -> None:
+        """Create this object and fill it with the contents of the file
+        `path`. `size` of 0 is the size of the file; a larger one pads with
+        zeros, a smaller one is EINVAL. If anything fails once the object
+        exists, it is removed again. See
+        rawstor_target_create_from_file(), <rawstor/target.h>."""
+        librawstor.object_create_from_file(
+            self._uri, os.fspath(path),
+            object_spec(
+                size=size, width=width, chunk_size=chunk_size,
+                stripe_width=stripe_width, failure_domain=failure_domain))
+
+    def create_from(
+        self, source: "Target | str", *, width: int, size: int = 0,
+        chunk_size: int = 0, stripe_width: int = 0,
+        failure_domain: int | str = OBJ_DOMAIN_DEFAULT
+    ) -> None:
+        """Create this object as a copy of `source`, another object or one
+        of its versions (a Target whose URI names a bound version, e.g. from
+        create_version() or versions()). `size` of 0 is the size of the
+        source. Nothing is inherited from the source: `width` and the other
+        placement parameters are this object's own. If anything fails once
+        the object exists, it is removed again. See
+        rawstor_target_create_from_target(), <rawstor/target.h>."""
+        if isinstance(source, Target):
+            source = source.uri
+        librawstor.object_create_from_target(
+            self._uri, source,
+            object_spec(
+                size=size, width=width, chunk_size=chunk_size,
+                stripe_width=stripe_width, failure_domain=failure_domain))
 
     def spec(self) -> librawstor.ObjectSpec:
         return librawstor.object_spec(self._uri)

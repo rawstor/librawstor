@@ -356,6 +356,36 @@ independent mechanisms use the same id, at different layers:
   a comma-separated list of its own — it binds whichever single URI it's
   attached to.
 
+## Image
+
+An **image** is a whole object (or one of its versions) as a plain file.
+Three calls move data between files and objects, each reading and writing
+the object through the ordinary `Object` path, so any backend, mirrored or
+`mds://` multi-chunk, works the same way:
+
+- `rawstor_target_export(target, path)` writes the object to `path`
+  (created or truncated). A target that names a bound version exports that
+  version. A regular file is written sparse — blocks that read as zero
+  become holes; a block device gets every block.
+- `rawstor_target_create_from_file(target, path, spec)` creates a new
+  object and fills it from a file or block device.
+- `rawstor_target_create_from_target(target, source, spec)` creates a new
+  object as a copy of another object, or of one of its versions, possibly
+  on another location, backend or account.
+
+`spec.width` is mandatory, as for `rawstor_target_create()`; nothing is
+inherited from a source. `spec.size` of 0 means the size of the source, a
+larger one pads the object with zeros, a smaller one is `-EINVAL`. A
+backend with a size granularity (an `mds://` object's chunk size) needs a
+size that respects it. If anything fails once the new object exists, it is
+removed again.
+
+Nothing coordinates with other users of the objects involved. The live
+version of an object that some client has open — and may have written to
+without flushing — is read as the storage holds it; keeping such an object
+quiescent is the caller's responsibility. A version is a consistent point
+and is the safe thing to export or copy while an object is in use.
+
 ## Chunk offset (not for manual entry)
 
 A chunk's own byte offset within its parent `mds://` object

@@ -1532,3 +1532,86 @@ PyObject* py_rawstor_location_info(PyObject* Py_UNUSED(self), PyObject* args) {
 
     return (PyObject*)py_info;
 }
+
+PyObject* py_rawstor_object_export(PyObject* Py_UNUSED(self), PyObject* args) {
+    const char* target;
+    const char* path;
+    if (!PyArg_ParseTuple(args, "ss", &target, &path)) {
+        return NULL;
+    }
+
+    RawstorSyncOp op;
+    int ires = rawstor_sync_op_init(&op);
+    if (ires < 0) {
+        set_os_error(-ires);
+        return NULL;
+    }
+    int sres =
+        rawstor_target_export(op.queue, target, path, rawstor_sync_op_cb, &op);
+    ssize_t res = rawstor_sync_op_wait(&op, sres);
+    rawstor_sync_op_destroy(&op);
+    if (res < 0) {
+        set_os_error((int)-res);
+        return NULL;
+    }
+
+    Py_RETURN_NONE;
+}
+
+// Shared by object_create_from_file() and object_create_from_target(): the
+// "ssO" arguments are the new target, the source (a path or a target) and
+// an ObjectSpec.
+static PyObject* create_from(
+    PyObject* args,
+    int (*create)(
+        RawIOQueue*, const char*, const char*, const struct RawstorObjectSpec*,
+        int (*)(ssize_t, void*), void*
+    )
+) {
+    const char* target;
+    const char* source;
+    PyObject* spec_obj;
+    if (!PyArg_ParseTuple(args, "ssO", &target, &source, &spec_obj)) {
+        return NULL;
+    }
+    if (!PyObject_TypeCheck(spec_obj, PyObjectSpecType)) {
+        PyErr_SetString(PyExc_TypeError, "spec must be an ObjectSpec instance");
+        return NULL;
+    }
+
+    PyObjectSpec* py_spec = (PyObjectSpec*)spec_obj;
+    struct RawstorObjectSpec spec = {
+        .size = py_spec->size,
+        .width = py_spec->width,
+        .chunk_size = py_spec->chunk_size,
+        .stripe_width = py_spec->stripe_width,
+        .failure_domain = py_spec->failure_domain,
+    };
+
+    RawstorSyncOp op;
+    int ires = rawstor_sync_op_init(&op);
+    if (ires < 0) {
+        set_os_error(-ires);
+        return NULL;
+    }
+    int sres = create(op.queue, target, source, &spec, rawstor_sync_op_cb, &op);
+    ssize_t res = rawstor_sync_op_wait(&op, sres);
+    rawstor_sync_op_destroy(&op);
+    if (res < 0) {
+        set_os_error((int)-res);
+        return NULL;
+    }
+
+    Py_RETURN_NONE;
+}
+
+PyObject*
+py_rawstor_object_create_from_file(PyObject* Py_UNUSED(self), PyObject* args) {
+    return create_from(args, rawstor_target_create_from_file);
+}
+
+PyObject* py_rawstor_object_create_from_target(
+    PyObject* Py_UNUSED(self), PyObject* args
+) {
+    return create_from(args, rawstor_target_create_from_target);
+}
