@@ -94,8 +94,8 @@ static void issue_usage(void) {
         "OST's; a new\n"
         "                        one is made without it\n"
         "  admin NAME            An operator or a control plane\n"
-        "  client TENANT NAME    A tenant's client, such as rawstor-vhost; "
-        "TENANT is a UUID\n"
+        "  client ACCOUNT NAME    An account's client, such as rawstor-vhost; "
+        "ACCOUNT is a UUID\n"
         "\n"
         "options:\n"
         "  --ca DIR              The CA made by `pki init`\n"
@@ -116,7 +116,7 @@ static void issue_usage(void) {
         "(default: 7d)\n" RAWSTOR_CLI_OUTPUT_USAGE "\n"
         "Columns: identity (the SPIFFE ID), role, trust_domain, id (of an ost "
         "or an mds),\n"
-        "name (of an admin or a client), tenant_id (of a client), not_after "
+        "name (of an admin or a client), account_id (of a client), not_after "
         "(when the\n"
         "certificate expires, UTC) and issued (yes); the ones that do not "
         "apply are empty,\n"
@@ -317,9 +317,9 @@ static int command_init(int argc, char** argv) {
 }
 
 /* The role and its names from the arguments after the options: `ost [ID]`,
- * `mds [ID]`, `admin NAME`, `client TENANT NAME`. Returns 0, or EX_USAGE. */
+ * `mds [ID]`, `admin NAME`, `client ACCOUNT NAME`. Returns 0, or EX_USAGE. */
 static int parse_process(
-    int argc, char** argv, enum RawstorPkiRole* role, const char** tenant,
+    int argc, char** argv, enum RawstorPkiRole* role, const char** account,
     const char** name
 ) {
     if (optind == argc) {
@@ -328,7 +328,7 @@ static int parse_process(
     }
     const char* kind = argv[optind++];
     int rest = argc - optind;
-    *tenant = NULL;
+    *account = NULL;
     *name = NULL;
     int min;
     int max;
@@ -355,7 +355,7 @@ static int parse_process(
     if (rest < min) {
         fprintf(
             stderr, "%s needs %s\n", kind,
-            *role == RAWSTOR_PKI_CLIENT ? "a tenant and a name" : "a name"
+            *role == RAWSTOR_PKI_CLIENT ? "an account and a name" : "a name"
         );
         return EX_USAGE;
     }
@@ -364,7 +364,7 @@ static int parse_process(
         return EX_USAGE;
     }
     if (*role == RAWSTOR_PKI_CLIENT) {
-        *tenant = argv[optind];
+        *account = argv[optind];
         *name = argv[optind + 1];
     } else if (rest == 1) {
         *name = argv[optind];
@@ -375,7 +375,7 @@ static int parse_process(
 static const char* const identity_columns[] = {
     "identity",     "role",
     "trust_domain", "id",
-    "name",         "tenant_id",
+    "name",         "account_id",
     "not_after",    "issued",
     "access_role",  "object_permissions",
 };
@@ -394,7 +394,7 @@ static const enum RawstorCliColumnType identity_types[] = {
  *   spiffe://<trust domain>/ost/<id>
  *   spiffe://<trust domain>/mds/<id>
  *   spiffe://<trust domain>/admin/<name>
- *   spiffe://<trust domain>/tenant/<tenant>/client/<name>
+ *   spiffe://<trust domain>/account/<account>/client/<name>
  */
 static RawstorCliTable* identity_table(const struct RawstorPkiInfo* info) {
     char text[RAWSTOR_PKI_IDENTITY_SIZE];
@@ -406,15 +406,15 @@ static RawstorCliTable* identity_table(const struct RawstorPkiInfo* info) {
     const char* role = path;
     const char* id = "";
     const char* name = "";
-    const char* tenant_id = "";
+    const char* account_id = "";
     char* slash = strchr(path, '/');
     *slash++ = '\0';
     if (strcmp(role, "ost") == 0 || strcmp(role, "mds") == 0) {
         id = slash;
-    } else if (strcmp(role, "tenant") == 0) {
-        /* tenant/<tenant>/client/<name> */
+    } else if (strcmp(role, "account") == 0) {
+        /* account/<account>/client/<name> */
         role = "client";
-        tenant_id = slash;
+        account_id = slash;
         char* rest = strchr(slash, '/');
         *rest++ = '\0';
         name = strchr(rest, '/') + 1;
@@ -453,7 +453,7 @@ static RawstorCliTable* identity_table(const struct RawstorPkiInfo* info) {
         rawstor_cli_cell_string(domain),
         rawstor_cli_cell_optional(id),
         rawstor_cli_cell_optional(name),
-        rawstor_cli_cell_optional(tenant_id),
+        rawstor_cli_cell_optional(account_id),
         rawstor_cli_cell_optional(not_after),
         rawstor_cli_cell_optional(issued),
         rawstor_cli_cell_optional(access_role),
@@ -636,9 +636,9 @@ static int command_issue(int argc, char** argv, int renew) {
         }
     } else {
         enum RawstorPkiRole role;
-        const char* tenant;
+        const char* account;
         const char* name;
-        res = parse_process(argc, argv, &role, &tenant, &name);
+        res = parse_process(argc, argv, &role, &account, &name);
         if (res != 0) {
             return res;
         }
@@ -651,7 +651,7 @@ static int command_issue(int argc, char** argv, int renew) {
             return EX_USAGE;
         }
         res = rawstor_pki_issue(
-            ca, role, tenant, name, validity, cert, key, NULL, 0, &permissions
+            ca, role, account, name, validity, cert, key, NULL, 0, &permissions
         );
         if (res != 0) {
             return report("Failed to issue the certificate", res);

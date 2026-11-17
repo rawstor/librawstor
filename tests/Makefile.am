@@ -38,7 +38,7 @@ test_all_SOURCES = main.cpp \
                    test_tls.cpp \
                    test_member_state.cpp \
                    test_subprocess.cpp \
-                   test_tenant.cpp \
+                   test_account.cpp \
                    test_session_replace.cpp \
                    test_mirror.cpp \
                    test_multichunk.cpp \

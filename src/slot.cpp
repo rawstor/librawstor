@@ -1148,7 +1148,7 @@ const rawstd::URI* Slot::location() const noexcept {
 
 rawstd::Task<void> Slot::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token, RawstdUUID tenant, RawstdUUID version_id
+    RawstdUUID& token, RawstdUUID account, RawstdUUID version_id
 ) {
     OperationGuard operation(*this);
 
@@ -1160,7 +1160,7 @@ rawstd::Task<void> Slot::list_chunks(
     try {
         co_await _with_retry(
             func_name, trace_event, &Backend::list_chunks, id, limit, chunks,
-            token, tenant, version_id
+            token, account, version_id
         );
         _finish(t_call);
     } catch (...) {
@@ -1194,7 +1194,7 @@ rawstd::Task<void> Slot::set_owner(
     }
 }
 
-rawstd::Task<void> Slot::create_tenant(const RawstdUUID& tenant) {
+rawstd::Task<void> Slot::create_account(const RawstdUUID& account) {
     OperationGuard operation(*this);
 
     const char* func_name = __FUNCTION__;
@@ -1204,8 +1204,8 @@ rawstd::Task<void> Slot::create_tenant(const RawstdUUID& tenant) {
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::create_tenant,
-            new_idempotency_key(), tenant
+            func_name, trace_event, &Backend::create_account,
+            new_idempotency_key(), account
         );
         _finish(t_call);
     } catch (...) {
@@ -1214,7 +1214,7 @@ rawstd::Task<void> Slot::create_tenant(const RawstdUUID& tenant) {
     }
 }
 
-rawstd::Task<void> Slot::remove_tenant(const RawstdUUID& tenant) {
+rawstd::Task<void> Slot::remove_account(const RawstdUUID& account) {
     OperationGuard operation(*this);
 
     const char* func_name = __FUNCTION__;
@@ -1224,8 +1224,8 @@ rawstd::Task<void> Slot::remove_tenant(const RawstdUUID& tenant) {
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::remove_tenant,
-            new_idempotency_key(), tenant
+            func_name, trace_event, &Backend::remove_account,
+            new_idempotency_key(), account
         );
         _finish(t_call);
     } catch (...) {
@@ -1234,8 +1234,8 @@ rawstd::Task<void> Slot::remove_tenant(const RawstdUUID& tenant) {
     }
 }
 
-rawstd::Task<void> Slot::list_tenants(
-    unsigned int limit, std::vector<RawstdUUID>& tenants, RawstdUUID& token
+rawstd::Task<void> Slot::list_accounts(
+    unsigned int limit, std::vector<RawstdUUID>& accounts, RawstdUUID& token
 ) {
     OperationGuard operation(*this);
 
@@ -1246,7 +1246,7 @@ rawstd::Task<void> Slot::list_tenants(
 
     try {
         co_await _with_retry(
-            func_name, trace_event, &Backend::list_tenants, limit, tenants,
+            func_name, trace_event, &Backend::list_accounts, limit, accounts,
             token
         );
         _finish(t_call);
@@ -1314,7 +1314,7 @@ rawstd::Task<void> Slot::create(
     const RawstdUUID& id, uint64_t offset, const RawstorObjectSpec& sp,
     RawstorMemberRole member_role, const RawstdUUID& owner
 ) {
-    // Every object has an owner (docs/tenants.md).
+    // Every object has an owner (docs/accounts.md).
     if (rawstd_uuid_is_nil(&owner)) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }

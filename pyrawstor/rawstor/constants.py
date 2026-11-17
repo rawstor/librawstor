@@ -35,9 +35,9 @@ FORCE = 2
 MEMBER_DATA = 1
 MEMBER_WITNESS = 2
 
-# The tenant that owns an object created without naming one
-# (RAWSTOR_DEFAULT_TENANT, <rawstor/location.h>).
-DEFAULT_TENANT = "00000000-0000-0000-0000-000000000001"
+# The account that owns an object created without naming one
+# (RAWSTOR_DEFAULT_ACCOUNT, <rawstor/location.h>).
+DEFAULT_ACCOUNT = "00000000-0000-0000-0000-000000000001"
 
 # The names the CLI's own --failure-domain takes.
 FAILURE_DOMAINS = {

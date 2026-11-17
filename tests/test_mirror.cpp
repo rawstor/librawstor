@@ -899,7 +899,7 @@ TEST(MirrorResyncTest, write_failing_on_rejoining_member_degrades_it) {
     // The second member is a scripted OST holding a stale copy.
     rawstor::tests::Server server(8812, 256);
     RawstorFrameMetaPayload stale = {
-        .tenant_id = {},
+        .account_id = {},
         .size = spec.size,
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
@@ -1051,7 +1051,7 @@ TEST(MirrorResyncTest, member_refusing_its_rejoin_is_excluded_again) {
     // The second member is a scripted OST holding a stale copy.
     rawstor::tests::Server server(8813, 256);
     RawstorFrameMetaPayload stale = {
-        .tenant_id = {},
+        .account_id = {},
         .size = spec.size,
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
@@ -1557,7 +1557,7 @@ TEST(MirrorResyncTest, resync_renews_the_register_while_a_write_is_pending) {
     // three leases to answer the copy.
     rawstor::tests::Server server(8814, 256);
     RawstorFrameMetaPayload stale = {
-        .tenant_id = {},
+        .account_id = {},
         .size = spec.size,
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
@@ -2087,7 +2087,7 @@ TEST(MirrorResyncTest, closing_during_the_rejoin_keeps_the_member) {
     // answer the decision that brings it back.
     rawstor::tests::Server server(8817, 256);
     RawstorFrameMetaPayload stale = {
-        .tenant_id = {},
+        .account_id = {},
         .size = spec.size,
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
@@ -2822,7 +2822,7 @@ TEST(MirrorOstTest, read_failover_and_repair) {
         "ost://127.0.0.1:8754/00000000-0000-7000-8000-0000000000b0";
 
     RawstorFrameMetaPayload legacy = {
-        .tenant_id = {},
+        .account_id = {},
         .size = 1ull << 20,
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
@@ -2908,7 +2908,7 @@ TEST(MirrorOstTest, two_members_freeze_below_majority) {
         "ost://127.0.0.1:8754/00000000-0000-7000-8000-0000000000b1";
 
     RawstorFrameMetaPayload legacy = {
-        .tenant_id = {},
+        .account_id = {},
         .size = 1ull << 20,
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
@@ -2997,7 +2997,7 @@ TEST(MirrorOstTest, all_mirrors_stale_write_reports_eio) {
         "ost://127.0.0.1:8756/00000000-0000-7000-8000-0000000000b2";
 
     RawstorFrameMetaPayload legacy = {
-        .tenant_id = {},
+        .account_id = {},
         .size = 1ull << 20,
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
@@ -3071,7 +3071,7 @@ TEST(MirrorOstTest, session_loss_while_dirty_excludes_member) {
         "ost://127.0.0.1:8758/00000000-0000-7000-8000-0000000000b3";
 
     RawstorFrameMetaPayload legacy = {
-        .tenant_id = {},
+        .account_id = {},
         .size = 1ull << 20,
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
@@ -3208,7 +3208,7 @@ namespace {
 
 RawstorFrameMetaPayload clean_legacy_meta() {
     return RawstorFrameMetaPayload{
-        .tenant_id = {},
+        .account_id = {},
         .size = 1ull << 20,
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,

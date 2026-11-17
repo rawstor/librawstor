@@ -514,14 +514,14 @@ std::string CA::issue_id(
 }
 
 std::string CA::issue(
-    Role role, const std::string& tenant, const std::string& name,
+    Role role, const std::string& account, const std::string& name,
     std::chrono::seconds validity, const std::string& cert_file,
     const std::string& key_file, const Permissions& permissions
 ) const {
     ERR_clear_error();
     std::string id = "spiffe://" + _trust_domain;
-    if (role != Role::client && !tenant.empty()) {
-        raise(EINVAL, "Only a client has a tenant");
+    if (role != Role::client && !account.empty()) {
+        raise(EINVAL, "Only a client has an account");
     }
     switch (role) {
     case Role::ost:
@@ -536,10 +536,10 @@ std::string CA::issue(
         id += "/admin/" + name;
         break;
     case Role::client:
-        if (tenant.empty() || name.empty()) {
-            raise(EINVAL, "A client needs a tenant and a name");
+        if (account.empty() || name.empty()) {
+            raise(EINVAL, "A client needs an account and a name");
         }
-        id += "/tenant/" + tenant + "/client/" + name;
+        id += "/account/" + account + "/client/" + name;
         break;
     }
     return issue_id(id, validity, cert_file, key_file, permissions);

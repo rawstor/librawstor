@@ -23,7 +23,7 @@ namespace tls {
  */
 void initialize();
 
-// The authenticated client tenant, or the built-in default for a provider.
+// The authenticated client account, or the built-in default for a provider.
 RawstdUUID default_owner();
 
 void terminate() noexcept;

@@ -41,13 +41,13 @@ static PyObject* py_pki_init(PyObject* Py_UNUSED(self), PyObject* args) {
     Py_RETURN_NONE;
 }
 
-/* issue(dir, role, tenant, name, validity, cert_file, key_file) -> identity,
- * the role being the RawstorPkiRole as an int and tenant and name None where
+/* issue(dir, role, account, name, validity, cert_file, key_file) -> identity,
+ * the role being the RawstorPkiRole as an int and account and name None where
  * the role has none. */
 static PyObject* py_pki_issue(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* dir;
     int role;
-    const char* tenant;
+    const char* account;
     const char* name;
     unsigned long validity;
     const char* cert_file;
@@ -55,7 +55,7 @@ static PyObject* py_pki_issue(PyObject* Py_UNUSED(self), PyObject* args) {
     unsigned int access_role = 0;
     PyObject* object_permissions = Py_None;
     if (!PyArg_ParseTuple(
-            args, "sizzkss|IO", &dir, &role, &tenant, &name, &validity,
+            args, "sizzkss|IO", &dir, &role, &account, &name, &validity,
             &cert_file, &key_file, &access_role, &object_permissions
         )) {
         return NULL;
@@ -112,7 +112,7 @@ static PyObject* py_pki_issue(PyObject* Py_UNUSED(self), PyObject* args) {
     int res;
     Py_BEGIN_ALLOW_THREADS;
     res = rawstor_pki_issue(
-        dir, (enum RawstorPkiRole)role, tenant, name, validity, cert_file,
+        dir, (enum RawstorPkiRole)role, account, name, validity, cert_file,
         key_file, identity, sizeof(identity), &permissions
     );
     Py_END_ALLOW_THREADS;

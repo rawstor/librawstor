@@ -58,7 +58,7 @@ def ca_file(directory: Path) -> str:
 def _issue(
     directory: Path,
     role: int,
-    tenant: Optional[str],
+    account: Optional[str],
     name: Optional[str],
     cert_file: Path,
     key_file: Path,
@@ -69,7 +69,7 @@ def _issue(
     return libpki.issue(
         os.fspath(directory),
         role,
-        tenant,
+        account,
         name,
         _seconds(validity),
         os.fspath(cert_file),
@@ -119,7 +119,7 @@ def issue_admin(
 
 def issue_client(
     directory: Path,
-    tenant: str,
+    account: str,
     name: str,
     cert_file: Path,
     key_file: Path,
@@ -128,7 +128,7 @@ def issue_client(
     role: str,
     object_permissions: Optional[Mapping[str, int]] = None,
 ) -> str:
-    """Issue tenant credentials with a none, reader, writer or manager role.
+    """Issue account credentials with a none, reader, writer or manager role.
 
     Object masks override the role for each named UUID, including its versions;
     zero denies access. Other objects retain the role's permissions.
@@ -136,7 +136,7 @@ def issue_client(
     roles = {"none": 0, "reader": 1, "writer": 2, "manager": 3}
     if role not in roles:
         raise ValueError("role must be none, reader, writer or manager")
-    return _issue(directory, _CLIENT, tenant, name, cert_file, key_file, validity,
+    return _issue(directory, _CLIENT, account, name, cert_file, key_file, validity,
                   roles[role], object_permissions)
 
 
@@ -167,7 +167,7 @@ def show(cert_file: Path, directory: Optional[Path] = None) -> Info:
         datetime.datetime.fromtimestamp(not_after, datetime.timezone.utc),
         issued,
         ({0: "none", 1: "reader", 2: "writer", 3: "manager"}[access_role]
-         if "/tenant/" in identity else None),
+         if "/account/" in identity else None),
         object_permissions,
     )
 

@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-/** Permissions and tenant roles signed into client certificates. */
+/** Permissions and account roles signed into client certificates. */
 #define RAWSTOR_PERM_READ 1u
 #define RAWSTOR_PERM_WRITE 2u
 #define RAWSTOR_PERM_MANAGE 4u
@@ -48,8 +48,8 @@ enum RawstorPkiRole {
     RAWSTOR_PKI_MDS,
     /** An operator or a control plane; `name` is its name. */
     RAWSTOR_PKI_ADMIN,
-    /** A tenant's client, such as rawstor-vhost; `tenant` is the tenant's id
-     * and `name` the client's name. */
+    /** An account's client, such as rawstor-vhost; `account` is the account's
+     * id and `name` the client's name. */
     RAWSTOR_PKI_CLIENT,
 };
 
@@ -88,15 +88,15 @@ struct RawstorPkiPermissions {
  * there; the key is written with mode 0600. The old pair stays if the new one
  * cannot be written.
  *
- * `tenant` is for a client only and NULL otherwise. `name` may be NULL for an
+ * `account` is for a client only and NULL otherwise. `name` may be NULL for an
  * OST or an MDS, which then gets a new id. The SPIFFE ID the certificate names
  * (see docs/security.md) is copied to `identity`, if it is not NULL, with room
  * for RAWSTOR_PKI_IDENTITY_SIZE bytes: `size` is checked before anything is
- * issued. `permissions` applies to tenant clients only; NULL grants no tenant
+ * issued. `permissions` applies to account clients only; NULL grants no account
  * permissions.
  */
 int rawstor_pki_issue(
-    const char* dir, enum RawstorPkiRole role, const char* tenant,
+    const char* dir, enum RawstorPkiRole role, const char* account,
     const char* name, unsigned long validity, const char* cert_file,
     const char* key_file, char* identity, size_t size,
     const struct RawstorPkiPermissions* permissions
@@ -122,7 +122,7 @@ struct RawstorPkiInfo {
     /** Whether the CA given to rawstor_pki_show() signed it: 1 or 0, and -1 if
      * no CA was given. */
     int issued;
-    /** Signed tenant role and object restrictions; zero for provider
+    /** Signed account role and object restrictions; zero for provider
      * certificates. */
     struct RawstorPkiPermissions permissions;
 };

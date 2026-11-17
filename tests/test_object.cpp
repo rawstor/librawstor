@@ -721,7 +721,7 @@ TEST(ObjectResizeTest, grows_and_creates_new_chunks) {
 }
 
 // The chunks a grow adds belong to the owner of the object, whichever address
-// the grow is asked through (docs/tenants.md).
+// the grow is asked through (docs/accounts.md).
 TEST(ObjectResizeTest, new_chunks_belong_to_the_owner_of_the_object) {
     rawstor::tests::ObjectEnv env(8898, 8899);
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
@@ -729,7 +729,7 @@ TEST(ObjectResizeTest, new_chunks_belong_to_the_owner_of_the_object) {
     rawstd::URI mds(env.location());
     RawstdUUID owner;
     ASSERT_EQ(rawstd_uuid7_init(&owner), 0);
-    run(*queue, rawstor::Location({mds}).create_tenant(*queue, owner));
+    run(*queue, rawstor::Location({mds}).create_account(*queue, owner));
 
     const char* id = "018f4e2a-3000-7000-8000-000000000040";
     RawstorObjectSpec spec{};
@@ -737,11 +737,11 @@ TEST(ObjectResizeTest, new_chunks_belong_to_the_owner_of_the_object) {
     spec.width = 1;
     spec.chunk_size = 512ull << 10;
     run(*queue, rawstor::Target(
-                    {rawstd::URI(rawstor::tests::with_tenant(mds, owner), id)}
+                    {rawstd::URI(rawstor::tests::with_account(mds, owner), id)}
                 )
                     .create(*queue, spec));
 
-    // Grown through an address that names no tenant.
+    // Grown through an address that names no account.
     run(*queue,
         rawstor::Target({rawstd::URI(mds, id)}).resize(*queue, 2ull << 20));
 
@@ -752,24 +752,24 @@ TEST(ObjectResizeTest, new_chunks_belong_to_the_owner_of_the_object) {
         auto metas = run(*queue, chunk.meta(*queue));
         ASSERT_FALSE(metas.empty());
         RawstdUUID got;
-        memcpy(got.bytes, metas.front().tenant_id, sizeof(got.bytes));
+        memcpy(got.bytes, metas.front().account_id, sizeof(got.bytes));
         EXPECT_EQ(rawstd_uuid_cmp(&got, &owner), 0) << "offset " << offset;
     }
 
     run(*queue, rawstor::Target({rawstd::URI(mds, id)}).remove(*queue));
 }
 
-// The registry is read a page at a time through the MDS: each tenant once, in
-// ascending order, the default tenant among them.
-TEST(ObjectTenantTest, the_registry_is_listed_a_page_at_a_time) {
+// The registry is read a page at a time through the MDS: each account once, in
+// ascending order, the default account among them.
+TEST(ObjectAccountTest, the_registry_is_listed_a_page_at_a_time) {
     rawstor::tests::ObjectEnv env(8900, 8901);
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
 
     rawstor::Location location({rawstd::URI(env.location())});
     for (int i = 0; i < 4; ++i) {
-        RawstdUUID tenant;
-        ASSERT_EQ(rawstd_uuid7_init(&tenant), 0);
-        run(*queue, location.create_tenant(*queue, tenant));
+        RawstdUUID account;
+        ASSERT_EQ(rawstd_uuid7_init(&account), 0);
+        run(*queue, location.create_account(*queue, account));
     }
 
     std::vector<RawstdUUID> all;
@@ -777,13 +777,13 @@ TEST(ObjectTenantTest, the_registry_is_listed_a_page_at_a_time) {
     size_t pages = 0;
     do {
         std::vector<RawstdUUID> page;
-        run(*queue, location.tenants(*queue, 2, page, token));
+        run(*queue, location.accounts(*queue, 2, page, token));
         EXPECT_LE(page.size(), 2u);
         all.insert(all.end(), page.begin(), page.end());
         ++pages;
     } while (!rawstor_pagination_token_empty(&token));
 
-    // The default tenant and the four created.
+    // The default account and the four created.
     ASSERT_EQ(all.size(), 5u);
     EXPECT_GE(pages, 3u);
     for (size_t i = 1; i < all.size(); ++i) {
@@ -792,8 +792,8 @@ TEST(ObjectTenantTest, the_registry_is_listed_a_page_at_a_time) {
 }
 
 // A transfer through an MDS moves the object, in the MDS and in every chunk
-// on the OSTs; an MDS refuses a tenant it does not know.
-TEST(ObjectTenantTest, a_transfer_moves_the_object_and_its_chunks) {
+// on the OSTs; an MDS refuses an account it does not know.
+TEST(ObjectAccountTest, a_transfer_moves_the_object_and_its_chunks) {
     rawstor::tests::ObjectEnv env(8902, 8903);
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
 
@@ -803,8 +803,8 @@ TEST(ObjectTenantTest, a_transfer_moves_the_object_and_its_chunks) {
     RawstdUUID other;
     ASSERT_EQ(rawstd_uuid7_init(&acme), 0);
     ASSERT_EQ(rawstd_uuid7_init(&other), 0);
-    run(*queue, admin.create_tenant(*queue, acme));
-    run(*queue, admin.create_tenant(*queue, other));
+    run(*queue, admin.create_account(*queue, acme));
+    run(*queue, admin.create_account(*queue, other));
 
     const char* id = "018f4e2a-3000-7000-8000-000000000041";
     RawstorObjectSpec spec{};
@@ -812,7 +812,7 @@ TEST(ObjectTenantTest, a_transfer_moves_the_object_and_its_chunks) {
     spec.width = 1;
     spec.chunk_size = 512ull << 10;
     rawstor::Target target(
-        {rawstd::URI(rawstor::tests::with_tenant(mds, acme), id)}
+        {rawstd::URI(rawstor::tests::with_account(mds, acme), id)}
     );
     run(*queue, target.create(*queue, spec));
 
@@ -820,7 +820,7 @@ TEST(ObjectTenantTest, a_transfer_moves_the_object_and_its_chunks) {
     ASSERT_EQ(rawstd_uuid7_init(&unknown), 0);
     try {
         run(*queue, target.transfer(*queue, unknown));
-        FAIL() << "transferred to an unregistered tenant";
+        FAIL() << "transferred to an unregistered account";
     } catch (const std::system_error& e) {
         EXPECT_EQ(e.code().value(), ENOENT);
     }
@@ -834,15 +834,15 @@ TEST(ObjectTenantTest, a_transfer_moves_the_object_and_its_chunks) {
         auto metas = run(*queue, chunk.meta(*queue));
         ASSERT_FALSE(metas.empty());
         RawstdUUID got;
-        memcpy(got.bytes, metas.front().tenant_id, sizeof(got.bytes));
+        memcpy(got.bytes, metas.front().account_id, sizeof(got.bytes));
         EXPECT_EQ(rawstd_uuid_cmp(&got, &other), 0) << "offset " << offset;
     }
 
-    auto count_for = [&](const RawstdUUID& tenant) {
+    auto count_for = [&](const RawstdUUID& account) {
         std::list<rawstor::Target> targets;
         RawstorPaginationToken token = {};
         run(*queue,
-            rawstor::Location({rawstor::tests::with_tenant(mds, tenant)})
+            rawstor::Location({rawstor::tests::with_account(mds, account)})
                 .list(*queue, 0, targets, token));
         return targets.size();
     };
@@ -852,9 +852,9 @@ TEST(ObjectTenantTest, a_transfer_moves_the_object_and_its_chunks) {
     run(*queue, rawstor::Target({rawstd::URI(mds, id)}).remove(*queue));
 }
 
-// Removing a tenant removes the objects it owns, each with its chunks; the
-// default tenant is refused before any object is touched.
-TEST(ObjectTenantTest, removing_a_tenant_removes_its_objects) {
+// Removing an account removes the objects it owns, each with its chunks; the
+// default account is refused before any object is touched.
+TEST(ObjectAccountTest, removing_a_account_removes_its_objects) {
     rawstor::tests::ObjectEnv env(8904, 8905);
     std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
 
@@ -862,7 +862,7 @@ TEST(ObjectTenantTest, removing_a_tenant_removes_its_objects) {
     rawstor::Location admin({mds});
     RawstdUUID acme;
     ASSERT_EQ(rawstd_uuid7_init(&acme), 0);
-    run(*queue, admin.create_tenant(*queue, acme));
+    run(*queue, admin.create_account(*queue, acme));
 
     RawstorObjectSpec spec{};
     spec.size = 1ull << 20;
@@ -876,19 +876,19 @@ TEST(ObjectTenantTest, removing_a_tenant_removes_its_objects) {
     for (const char* id : ids) {
         run(*queue,
             rawstor::Target(
-                {rawstd::URI(rawstor::tests::with_tenant(mds, acme), id)}
+                {rawstd::URI(rawstor::tests::with_account(mds, acme), id)}
             )
                 .create(*queue, spec));
     }
-    // An object of the default tenant stays.
+    // An object of the default account stays.
     const char* kept = "018f4e2a-3000-7000-8000-000000000054";
     run(*queue, rawstor::Target({rawstd::URI(mds, kept)}).create(*queue, spec));
 
-    auto count_for = [&](const RawstdUUID& tenant) {
+    auto count_for = [&](const RawstdUUID& account) {
         std::list<rawstor::Target> targets;
         RawstorPaginationToken token = {};
         run(*queue,
-            rawstor::Location({rawstor::tests::with_tenant(mds, tenant)})
+            rawstor::Location({rawstor::tests::with_account(mds, account)})
                 .list(*queue, 0, targets, token));
         return targets.size();
     };
@@ -896,21 +896,21 @@ TEST(ObjectTenantTest, removing_a_tenant_removes_its_objects) {
 
     try {
         run(*queue,
-            admin.remove_tenant(*queue, rawstor::tests::default_owner()));
-        FAIL() << "removed the default tenant";
+            admin.remove_account(*queue, rawstor::tests::default_owner()));
+        FAIL() << "removed the default account";
     } catch (const std::system_error& e) {
         EXPECT_EQ(e.code().value(), EPERM);
     }
     EXPECT_EQ(count_for(rawstor::tests::default_owner()), 1u);
 
-    run(*queue, admin.remove_tenant(*queue, acme));
+    run(*queue, admin.remove_account(*queue, acme));
     EXPECT_EQ(count_for(acme), 0u);
     EXPECT_EQ(count_for(rawstor::tests::default_owner()), 1u);
 
-    // The tenant is gone too.
+    // The account is gone too.
     try {
-        run(*queue, admin.remove_tenant(*queue, acme));
-        FAIL() << "removed a tenant twice";
+        run(*queue, admin.remove_account(*queue, acme));
+        FAIL() << "removed an account twice";
     } catch (const std::system_error& e) {
         EXPECT_EQ(e.code().value(), ENOENT);
     }

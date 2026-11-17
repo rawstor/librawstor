@@ -232,10 +232,10 @@ struct RawstorObjectConfig {
  */
 struct RawstorObjectMeta {
     /**
-     * The tenant that owns the object (docs/tenants.md); all zero for an
+     * The account that owns the object (docs/accounts.md); all zero for an
      * object created without one.
      */
-    uint8_t tenant_id[16];
+    uint8_t account_id[16];
     struct RawstorObjectSpec spec;
     enum RawstorMemberRole member_role;
     enum RawstorObjectSyncStateValue state;
@@ -679,16 +679,16 @@ int rawstor_target_id(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Retrieve the tenant that owns the object a target string addresses.
+ * @brief Retrieve the account that owns the object a target string addresses.
  *
  * A target names its owner as the user information of its URIs
- * (`ost://<tenant>@host:port/<uuid>`); one that names none belongs to the
- * default tenant (docs/tenants.md). The string is written into the provided
+ * (`ost://<account>@host:port/<uuid>`); one that names none belongs to the
+ * default account (docs/accounts.md). The string is written into the provided
  * buffer as a UUID. This is purely a syntactic operation on @p target -- no
  * backend is contacted, and the object need not exist.
  *
- * @param target  Target string; every URI of it must name the same tenant.
- * @param buf     Output buffer that will receive the tenant UUID string. Can
+ * @param target  Target string; every URI of it must name the same account.
+ * @param buf     Output buffer that will receive the account UUID string. Can
  *                be NULL if only the required buffer length is needed.
  * @param size    Size of the output buffer in bytes (including space for the
  *                terminating null byte).
@@ -696,11 +696,11 @@ int rawstor_target_id(
  * @return On success, the number of characters that would have been written
  *         to buf (excluding the terminating null byte), as snprintf() does. A
  *         negative errno is returned if @p target is not valid target syntax,
- *         names a tenant that is not a UUID, or names different tenants.
+ *         names an account that is not a UUID, or names different accounts.
  *
  * @see rawstor_target_id
  */
-int rawstor_target_tenant(
+int rawstor_target_account(
     const char* target, char* buf, size_t size
 ) RAWSTOR_NOEXCEPT;
 
@@ -1081,12 +1081,12 @@ int rawstor_target_resize(
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously make another tenant the owner of an object.
+ * @brief Asynchronously make another account the owner of an object.
  *
  * The owner is recorded with every member of the object (every copy of every
  * chunk), and, for an `mds://` target, in the MDS first. The target need not
  * name the current owner. Afterwards the object is addressed by a target that
- * names @p tenant (see @ref rawstor_target_tenant); the old address still
+ * names @p account (see @ref rawstor_target_account); the old address still
  * finds it, since an object is found by its id.
  *
  * A failure part-way (an unreachable member) can leave members with different
@@ -1094,20 +1094,20 @@ int rawstor_target_resize(
  *
  * @param queue     Queue used to drive the asynchronous operation.
  * @param target    The object.
- * @param tenant    UUID string of the new owner, not the nil UUID. An MDS
- *                  answers @c -ENOENT for a tenant it does not know.
+ * @param account    UUID string of the new owner, not the nil UUID. An MDS
+ *                  answers @c -ENOENT for an account it does not know.
  * @param cb        Callback invoked on completion; @p result is zero on
  *                  success, or a negative errno.
  * @param data      Passed to @p cb.
  *
  * @return 0 if the operation was started; a negative errno otherwise
- *         (@c -EINVAL for a bad @p tenant), in which case @p cb is never
+ *         (@c -EINVAL for a bad @p account), in which case @p cb is never
  *         invoked.
  *
- * @see https://github.com/rawstor/librawstor/blob/main/docs/tenants.md
+ * @see https://github.com/rawstor/librawstor/blob/main/docs/accounts.md
  */
 int rawstor_target_transfer(
-    RawIOQueue* queue, const char* target, const char* tenant,
+    RawIOQueue* queue, const char* target, const char* account,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 

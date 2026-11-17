@@ -69,13 +69,13 @@ PlacementPolicy make_policy(unsigned width) {
     return PlacementPolicy{width, Level::OST, 1, 0};
 }
 
-// Every tenant of the registry, read a page at a time.
+// Every account of the registry, read a page at a time.
 std::vector<RawstdUUID>
-all_tenants(ObjectStore& store, unsigned int limit = 2) {
+all_accounts(ObjectStore& store, unsigned int limit = 2) {
     std::vector<RawstdUUID> ret;
     RawstdUUID token{};
     do {
-        std::vector<RawstdUUID> page = store.list_tenants(token, limit);
+        std::vector<RawstdUUID> page = store.list_accounts(token, limit);
         EXPECT_LE(page.size(), limit);
         ret.insert(ret.end(), page.begin(), page.end());
     } while (!rawstd_uuid_is_nil(&token));
@@ -1095,7 +1095,7 @@ TEST_F(
     );
 }
 
-// ---- tenants (docs/tenants.md) ----
+// ---- accounts (docs/accounts.md) ----
 
 namespace {
 
@@ -1110,10 +1110,10 @@ int errno_of(const std::function<void()>& call) {
 
 } // namespace
 
-TEST_F(ObjectStoreTest, an_object_is_owned_by_the_tenant_that_created_it) {
+TEST_F(ObjectStoreTest, an_object_is_owned_by_the_account_that_created_it) {
     ObjectStore store = make_store();
     RawstdUUID acme = make_id();
-    store.create_tenant(RawstdUUID{}, acme);
+    store.create_account(RawstdUUID{}, acme);
     RawstdUUID owned = make_id();
     RawstdUUID unowned = make_id();
 
@@ -1140,12 +1140,12 @@ TEST_F(ObjectStoreTest, an_object_is_owned_by_the_tenant_that_created_it) {
     );
 }
 
-TEST_F(ObjectStoreTest, listing_shows_the_objects_a_tenant_owns) {
+TEST_F(ObjectStoreTest, listing_shows_the_objects_a_account_owns) {
     ObjectStore store = make_store();
     RawstdUUID acme = make_id();
     RawstdUUID other = make_id();
-    store.create_tenant(RawstdUUID{}, acme);
-    store.create_tenant(RawstdUUID{}, other);
+    store.create_account(RawstdUUID{}, acme);
+    store.create_account(RawstdUUID{}, other);
     RawstdUUID in_acme = make_id();
     RawstdUUID in_other = make_id();
     RawstdUUID in_none = make_id();
@@ -1165,7 +1165,7 @@ TEST_F(ObjectStoreTest, listing_shows_the_objects_a_tenant_owns) {
     ASSERT_EQ(entries.size(), 1u);
     EXPECT_EQ(rawstd_uuid_cmp(&entries[0].id, &in_acme), 0);
 
-    // An administrator names no tenant and sees every object.
+    // An administrator names no account and sees every object.
     token = {};
     auto all = store.list_chunks(RawstdUUID{}, token, 0);
     ASSERT_EQ(all.size(), 3u);
@@ -1176,15 +1176,15 @@ TEST_F(ObjectStoreTest, listing_shows_the_objects_a_tenant_owns) {
             rawstd_uuid_cmp(&entry.id, &in_acme) == 0    ? acme
             : rawstd_uuid_cmp(&entry.id, &in_other) == 0 ? other
                                                          : RawstdUUID{};
-        EXPECT_EQ(rawstd_uuid_cmp(&entry.tenant, &owner), 0);
+        EXPECT_EQ(rawstd_uuid_cmp(&entry.account, &owner), 0);
     }
 
-    // A tenant that owns nothing sees nothing.
+    // An account that owns nothing sees nothing.
     token = {};
     EXPECT_TRUE(store.list_chunks(make_id(), token, 0).empty());
 }
 
-TEST_F(ObjectStoreTest, an_owner_is_a_registered_tenant) {
+TEST_F(ObjectStoreTest, an_owner_is_a_registered_account) {
     ObjectStore store = make_store();
     RawstdUUID acme = make_id();
 
@@ -1198,45 +1198,45 @@ TEST_F(ObjectStoreTest, an_owner_is_a_registered_tenant) {
         ENOENT
     );
 
-    store.create_tenant(RawstdUUID{}, acme);
+    store.create_account(RawstdUUID{}, acme);
     store.create(
         acme, RawstdUUID{}, make_id(), chunk_size, chunk_size, make_policy(1)
     );
 }
 
-// A page ends where the next one starts: every tenant once, in order, and no
+// A page ends where the next one starts: every account once, in order, and no
 // token after the last page; limit 0 is everything.
-TEST_F(ObjectStoreTest, tenants_are_listed_a_page_at_a_time) {
+TEST_F(ObjectStoreTest, accounts_are_listed_a_page_at_a_time) {
     ObjectStore store = make_store();
     for (int i = 0; i < 4; ++i) {
-        store.create_tenant(RawstdUUID{}, make_id());
+        store.create_account(RawstdUUID{}, make_id());
     }
 
-    std::vector<RawstdUUID> paged = all_tenants(store, 2);
+    std::vector<RawstdUUID> paged = all_accounts(store, 2);
     ASSERT_EQ(paged.size(), 5u);
     for (size_t i = 1; i < paged.size(); ++i) {
         EXPECT_LT(rawstd_uuid_cmp(&paged[i - 1], &paged[i]), 0);
     }
 
     RawstdUUID token{};
-    std::vector<RawstdUUID> page = store.list_tenants(token, 0);
+    std::vector<RawstdUUID> page = store.list_accounts(token, 0);
     EXPECT_EQ(page.size(), 5u);
     EXPECT_TRUE(rawstd_uuid_is_nil(&token));
 
     token = {};
-    page = store.list_tenants(token, 2);
+    page = store.list_accounts(token, 2);
     EXPECT_EQ(page.size(), 2u);
     EXPECT_EQ(rawstd_uuid_cmp(&token, &page.back()), 0);
 }
 
-// A transfer moves the object between tenants: listings follow it, the old
+// A transfer moves the object between accounts: listings follow it, the old
 // owner can then be removed, and the new one must be registered.
-TEST_F(ObjectStoreTest, an_object_is_transferred_to_another_tenant) {
+TEST_F(ObjectStoreTest, an_object_is_transferred_to_another_account) {
     ObjectStore store = make_store();
     RawstdUUID acme = make_id();
     RawstdUUID other = make_id();
-    store.create_tenant(RawstdUUID{}, acme);
-    store.create_tenant(RawstdUUID{}, other);
+    store.create_account(RawstdUUID{}, acme);
+    store.create_account(RawstdUUID{}, other);
     RawstdUUID id = make_id();
     store.create(
         acme, RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1)
@@ -1254,7 +1254,7 @@ TEST_F(ObjectStoreTest, an_object_is_transferred_to_another_tenant) {
         ENOENT
     );
     EXPECT_EQ(
-        errno_of([&] { store.remove_tenant(RawstdUUID{}, acme); }), EBUSY
+        errno_of([&] { store.remove_account(RawstdUUID{}, acme); }), EBUSY
     );
 
     store.transfer(RawstdUUID{}, id, other);
@@ -1265,7 +1265,7 @@ TEST_F(ObjectStoreTest, an_object_is_transferred_to_another_tenant) {
     EXPECT_EQ(store.list_chunks(other, token, 0).size(), 1u);
     token = {};
     EXPECT_TRUE(store.list_chunks(acme, token, 0).empty());
-    store.remove_tenant(RawstdUUID{}, acme);
+    store.remove_account(RawstdUUID{}, acme);
 }
 
 // A transfer resent after a lost reply is answered, not applied again: it
@@ -1274,8 +1274,8 @@ TEST_F(ObjectStoreTest, a_replayed_transfer_does_not_undo_a_later_one) {
     ObjectStore store = make_store();
     RawstdUUID first = make_id();
     RawstdUUID second = make_id();
-    store.create_tenant(RawstdUUID{}, first);
-    store.create_tenant(RawstdUUID{}, second);
+    store.create_account(RawstdUUID{}, first);
+    store.create_account(RawstdUUID{}, second);
     RawstdUUID id = make_id();
     store.create(
         first, RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1)
@@ -1307,92 +1307,94 @@ TEST_F(ObjectStoreTest, resize_reports_the_owner) {
     ObjectStore store = make_store();
     RawstdUUID acme = make_id();
     RawstdUUID other = make_id();
-    store.create_tenant(RawstdUUID{}, acme);
-    store.create_tenant(RawstdUUID{}, other);
+    store.create_account(RawstdUUID{}, acme);
+    store.create_account(RawstdUUID{}, other);
     RawstdUUID id = make_id();
     store.create(
         acme, RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1)
     );
 
     ResizeResult grown = store.resize(RawstdUUID{}, id, 2 * chunk_size);
-    EXPECT_EQ(rawstd_uuid_cmp(&grown.tenant, &acme), 0);
+    EXPECT_EQ(rawstd_uuid_cmp(&grown.account, &acme), 0);
 
     store.transfer(RawstdUUID{}, id, other);
     grown = store.resize(RawstdUUID{}, id, 3 * chunk_size);
-    EXPECT_EQ(rawstd_uuid_cmp(&grown.tenant, &other), 0);
+    EXPECT_EQ(rawstd_uuid_cmp(&grown.account, &other), 0);
 
     // A repeat applies nothing and reports the owner as it is then.
     RawstdUUID key = make_id();
     ResizeResult first = store.resize(key, id, 4 * chunk_size);
-    EXPECT_EQ(rawstd_uuid_cmp(&first.tenant, &other), 0);
+    EXPECT_EQ(rawstd_uuid_cmp(&first.account, &other), 0);
     store.transfer(RawstdUUID{}, id, acme);
     ResizeResult again = store.resize(key, id, 4 * chunk_size);
     EXPECT_EQ(again.old_nchunks, first.old_nchunks);
-    EXPECT_EQ(rawstd_uuid_cmp(&again.tenant, &acme), 0);
+    EXPECT_EQ(rawstd_uuid_cmp(&again.account, &acme), 0);
 }
 
-TEST_F(ObjectStoreTest, tenants_are_created_and_removed) {
+TEST_F(ObjectStoreTest, accounts_are_created_and_removed) {
     ObjectStore store = make_store();
     RawstdUUID acme = make_id();
 
-    // The default tenant is registered with every store, and stays.
-    ASSERT_EQ(all_tenants(store).size(), 1u);
-    RawstdUUID default_tenant = all_tenants(store).front();
+    // The default account is registered with every store, and stays.
+    ASSERT_EQ(all_accounts(store).size(), 1u);
+    RawstdUUID default_account = all_accounts(store).front();
     EXPECT_EQ(
-        errno_of([&] { store.create_tenant(RawstdUUID{}, default_tenant); }),
+        errno_of([&] { store.create_account(RawstdUUID{}, default_account); }),
         EEXIST
     );
     EXPECT_EQ(
-        errno_of([&] { store.remove_tenant(RawstdUUID{}, default_tenant); }),
+        errno_of([&] { store.remove_account(RawstdUUID{}, default_account); }),
         EPERM
     );
     EXPECT_EQ(
-        errno_of([&] { store.create_tenant(RawstdUUID{}, RawstdUUID{}); }),
+        errno_of([&] { store.create_account(RawstdUUID{}, RawstdUUID{}); }),
         EINVAL
     );
 
-    store.create_tenant(RawstdUUID{}, acme);
-    EXPECT_EQ(all_tenants(store).size(), 2u);
+    store.create_account(RawstdUUID{}, acme);
+    EXPECT_EQ(all_accounts(store).size(), 2u);
     EXPECT_EQ(
-        errno_of([&] { store.create_tenant(RawstdUUID{}, acme); }), EEXIST
+        errno_of([&] { store.create_account(RawstdUUID{}, acme); }), EEXIST
     );
 
-    // A tenant that owns an object is not removed; one that owns none is.
+    // An account that owns an object is not removed; one that owns none is.
     RawstdUUID id = make_id();
     store.create(
         acme, RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1)
     );
     EXPECT_EQ(
-        errno_of([&] { store.remove_tenant(RawstdUUID{}, acme); }), EBUSY
+        errno_of([&] { store.remove_account(RawstdUUID{}, acme); }), EBUSY
     );
     store.remove(RawstdUUID{}, id);
-    store.remove_tenant(RawstdUUID{}, acme);
-    EXPECT_EQ(all_tenants(store).size(), 1u);
+    store.remove_account(RawstdUUID{}, acme);
+    EXPECT_EQ(all_accounts(store).size(), 1u);
     EXPECT_EQ(
-        errno_of([&] { store.remove_tenant(RawstdUUID{}, acme); }), ENOENT
+        errno_of([&] { store.remove_account(RawstdUUID{}, acme); }), ENOENT
     );
 }
 
-// A retried TENANT_CREATE answers from its record, but a tenant removed since
-// is registered again instead of being reported created and left missing.
-TEST_F(ObjectStoreTest, a_replayed_tenant_creation_restores_a_removed_tenant) {
+// A retried ACCOUNT_CREATE answers from its record, but an account removed
+// since is registered again instead of being reported created and left missing.
+TEST_F(
+    ObjectStoreTest, a_replayed_account_creation_restores_a_removed_account
+) {
     ObjectStore store = make_store();
     RawstdUUID acme = make_id();
     RawstdUUID key = make_id();
 
-    store.create_tenant(key, acme);
-    store.remove_tenant(RawstdUUID{}, acme);
-    EXPECT_EQ(all_tenants(store).size(), 1u);
+    store.create_account(key, acme);
+    store.remove_account(RawstdUUID{}, acme);
+    EXPECT_EQ(all_accounts(store).size(), 1u);
 
-    store.create_tenant(key, acme);
-    EXPECT_EQ(all_tenants(store).size(), 2u);
+    store.create_account(key, acme);
+    EXPECT_EQ(all_accounts(store).size(), 2u);
     store.create(
         acme, RawstdUUID{}, make_id(), chunk_size, chunk_size, make_policy(1)
     );
 
-    // Replayed again while it exists: still just the one tenant.
-    store.create_tenant(key, acme);
-    EXPECT_EQ(all_tenants(store).size(), 2u);
+    // Replayed again while it exists: still just the one account.
+    store.create_account(key, acme);
+    EXPECT_EQ(all_accounts(store).size(), 2u);
 }
 
 // The owner is part of the chunk's own metadata, so a rebuilt map has it.
@@ -1403,18 +1405,18 @@ TEST_F(ObjectStoreTest, reconstruct_restores_the_owner) {
     RawstdUUID ost_id = make_id();
 
     RawstorObjectMeta meta = make_meta(chunk_size, 1);
-    memcpy(meta.tenant_id, acme.bytes, sizeof(meta.tenant_id));
+    memcpy(meta.account_id, acme.bytes, sizeof(meta.account_id));
     std::vector<ScanRecord> records{ScanRecord{ost_id, id, 0, meta}};
     store.reconstruct(records);
 
-    // The tenant is registered again, and owns the object.
-    ASSERT_EQ(all_tenants(store).size(), 2u);
+    // The account is registered again, and owns the object.
+    ASSERT_EQ(all_accounts(store).size(), 2u);
     RawstdUUID token{};
     auto entries = store.list_chunks(acme, token, 0);
     ASSERT_EQ(entries.size(), 1u);
     EXPECT_EQ(rawstd_uuid_cmp(&entries[0].id, &id), 0);
     EXPECT_EQ(
-        errno_of([&] { store.remove_tenant(RawstdUUID{}, acme); }), EBUSY
+        errno_of([&] { store.remove_account(RawstdUUID{}, acme); }), EBUSY
     );
 }
 
@@ -1423,16 +1425,16 @@ TEST_F(
     authorization_uses_certificate_roles_and_object_restrictions
 ) {
     ObjectStore store = make_store();
-    RawstdUUID tenant = make_id(), other = make_id(), object = make_id();
-    store.create_tenant(make_id(), tenant);
-    store.create_tenant(make_id(), other);
+    RawstdUUID account = make_id(), other = make_id(), object = make_id();
+    store.create_account(make_id(), account);
+    store.create_account(make_id(), other);
     store.create(
-        tenant, make_id(), object, chunk_size, chunk_size, make_policy(1)
+        account, make_id(), object, chunk_size, chunk_size, make_policy(1)
     );
-    RawstdUUIDString tenant_text;
-    rawstd_uuid_to_string(&tenant, &tenant_text);
-    std::string identity = std::string("spiffe://cluster.example/tenant/") +
-                           tenant_text + "/client/user";
+    RawstdUUIDString account_text;
+    rawstd_uuid_to_string(&account, &account_text);
+    std::string identity = std::string("spiffe://cluster.example/account/") +
+                           account_text + "/client/user";
     rawtls::SpiffeId peer(identity);
     auto error = [&](int expected, auto call) {
         try {
@@ -1454,7 +1456,7 @@ TEST_F(
     error(ENOENT, [&] {
         store.authorize(&peer, RAWSTOR_CMD_OBJ_CREATE, {}, other);
     });
-    error(EACCES, [&] { store.authorize(&peer, RAWSTOR_CMD_TENANT_CREATE); });
+    error(EACCES, [&] { store.authorize(&peer, RAWSTOR_CMD_ACCOUNT_CREATE); });
     peer.permissions({RAWSTOR_ROLE_MANAGER, {}});
     EXPECT_EQ(
         store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE, object).permissions,
@@ -1468,10 +1470,10 @@ TEST_F(
         {}, make_id(), unowned, chunk_size, chunk_size, make_policy(1)
     );
     error(ENOENT, [&] {
-        store.authorize(&peer, RAWSTOR_CMD_OBJ_CREATE, foreign, tenant);
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_CREATE, foreign, account);
     });
     error(ENOENT, [&] {
-        store.authorize(&peer, RAWSTOR_CMD_OBJ_CREATE, unowned, tenant);
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_CREATE, unowned, account);
     });
     error(ENOENT, [&] { store.authorize(&peer, RAWSTOR_CMD_OBJ_REMOVE); });
     RawstdUUIDString object_text;
@@ -1493,19 +1495,19 @@ TEST_F(
 }
 
 TEST_F(
-    ObjectStoreTest, a_tenant_can_authorize_only_its_own_recorded_remove_retry
+    ObjectStoreTest, a_account_can_authorize_only_its_own_recorded_remove_retry
 ) {
     ObjectStore store = make_store();
-    RawstdUUID tenant = make_id(), object = make_id(), mutation = make_id();
-    store.create_tenant(make_id(), tenant);
+    RawstdUUID account = make_id(), object = make_id(), mutation = make_id();
+    store.create_account(make_id(), account);
     RawstdUUIDString text;
-    rawstd_uuid_to_string(&tenant, &text);
-    std::string identity = std::string("spiffe://cluster.example/tenant/") +
+    rawstd_uuid_to_string(&account, &text);
+    std::string identity = std::string("spiffe://cluster.example/account/") +
                            text + "/client/manager";
     rawtls::SpiffeId peer(identity);
     peer.permissions({RAWSTOR_ROLE_MANAGER, {}});
     store.create(
-        tenant, make_id(), object, chunk_size, chunk_size, make_policy(1)
+        account, make_id(), object, chunk_size, chunk_size, make_policy(1)
     );
     store.remove(mutation, object);
     EXPECT_NO_THROW(
@@ -1529,11 +1531,11 @@ TEST_F(
     ObjectStoreTest, witness_authorization_uses_certificate_policy_and_owner
 ) {
     ObjectStore store = make_store();
-    RawstdUUID tenant = make_id(), foreign = make_id(), object = make_id();
+    RawstdUUID account = make_id(), foreign = make_id(), object = make_id();
     RawstdUUIDString text;
-    rawstd_uuid_to_string(&tenant, &text);
+    rawstd_uuid_to_string(&account, &text);
     rawtls::SpiffeId peer(
-        std::string("spiffe://cluster.example/tenant/") + text +
+        std::string("spiffe://cluster.example/account/") + text +
         "/client/writer"
     );
     peer.permissions({RAWSTOR_ROLE_MANAGER, {}});
@@ -1547,12 +1549,14 @@ TEST_F(
         std::system_error
     );
     EXPECT_THROW(
-        store.authorize_witness(&peer, RAWSTOR_CMD_ALLOCATE, object, 0, tenant),
+        store.authorize_witness(
+            &peer, RAWSTOR_CMD_ALLOCATE, object, 0, account
+        ),
         std::system_error
     );
     store.remove_witness(object, 0);
     EXPECT_NO_THROW(
-        store.authorize_witness(&peer, RAWSTOR_CMD_ALLOCATE, object, 0, tenant)
+        store.authorize_witness(&peer, RAWSTOR_CMD_ALLOCATE, object, 0, account)
     );
     EXPECT_THROW(
         store.authorize_witness(
@@ -1560,7 +1564,7 @@ TEST_F(
         ),
         std::system_error
     );
-    store.create_witness(tenant, object, 0, spec);
+    store.create_witness(account, object, 0, spec);
     EXPECT_NO_THROW(
         store.authorize_witness(&peer, RAWSTOR_CMD_META, object, 0)
     );
@@ -1577,21 +1581,21 @@ TEST_F(
 
 TEST_F(
     ObjectStoreTest,
-    none_can_resolve_only_granted_objects_without_listing_tenant
+    none_can_resolve_only_granted_objects_without_listing_account
 ) {
     ObjectStore store = make_store();
-    RawstdUUID tenant = make_id(), object = make_id(), other = make_id();
-    store.create_tenant(make_id(), tenant);
+    RawstdUUID account = make_id(), object = make_id(), other = make_id();
+    store.create_account(make_id(), account);
     for (const auto& id : {object, other}) {
         store.create(
-            tenant, make_id(), id, chunk_size, chunk_size, make_policy(1)
+            account, make_id(), id, chunk_size, chunk_size, make_policy(1)
         );
     }
-    RawstdUUIDString tenant_text, object_text;
-    rawstd_uuid_to_string(&tenant, &tenant_text);
+    RawstdUUIDString account_text, object_text;
+    rawstd_uuid_to_string(&account, &account_text);
     rawstd_uuid_to_string(&object, &object_text);
     rawtls::SpiffeId peer(
-        std::string("spiffe://cluster.example/tenant/") + tenant_text +
+        std::string("spiffe://cluster.example/account/") + account_text +
         "/client/vhost"
     );
     peer.permissions({RAWSTOR_ROLE_NONE, {{object_text, 3}}});
@@ -1607,7 +1611,7 @@ TEST_F(
         std::system_error
     );
     EXPECT_THROW(
-        store.authorize(&peer, RAWSTOR_CMD_OBJ_CREATE, make_id(), tenant),
+        store.authorize(&peer, RAWSTOR_CMD_OBJ_CREATE, make_id(), account),
         std::system_error
     );
     EXPECT_THROW(store.authorize(&peer, RAWSTOR_CMD_LIST), std::system_error);

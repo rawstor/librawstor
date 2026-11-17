@@ -793,7 +793,7 @@ TEST(OstLifecycleTest, create_spec_remove) {
     std::string target = rawstd::URI(location_uri, uuid).str();
 
     RawstorFrameMetaPayload meta_body = {
-        .tenant_id = {},
+        .account_id = {},
         .size = 1ull << 20,
         .state = RAWSTOR_OBJECT_SYNC_STATE_DIRTY,
         .chunk_shift = 20,
@@ -898,7 +898,7 @@ TEST(OstLifecycleTest, meta_of_bound_version_carries_version_id) {
         rawstd::URI(rawstd::URI(location_uri, uuid), version_str).str();
 
     RawstorFrameMetaPayload meta_body = {
-        .tenant_id = {},
+        .account_id = {},
         .size = 1ull << 20,
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
@@ -1040,7 +1040,7 @@ TEST(OstLifecycleTest, create_at_default_spec_remove) {
     std::string target(65536, '\0');
 
     RawstorFrameMetaPayload meta_body = {
-        .tenant_id = {},
+        .account_id = {},
         .size = 1ull << 20,
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,
@@ -1116,7 +1116,7 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
     std::string target(65536, '\0');
 
     RawstorFrameMetaPayload meta_body = {
-        .tenant_id = {},
+        .account_id = {},
         .size = 1ull << 20,
         .state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         .chunk_shift = 0,

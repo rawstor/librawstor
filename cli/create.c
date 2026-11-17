@@ -12,7 +12,7 @@
 #include <string.h>
 
 static const char* const created_columns[] = {
-    "object_id", "tenant",     "target",         "size",
+    "object_id", "account",    "target",         "size",
     "mirrors",   "chunk_size", "failure_domain", "stripe_width",
 };
 static const enum RawstorCliColumnType created_types[] = {
@@ -61,21 +61,21 @@ static int print_created(
         target, uuid, sizeof(uuid), version, sizeof(version)
     );
     /* The owner is read back: it is what was stored, not what was asked. */
-    char tenant[64] = "";
+    char account[64] = "";
     RawstorCliOp op;
     if (rawstor_cli_op_init(&op) == 0) {
-        int ores = rawstor_cli_op_owner(&op, target, tenant, sizeof(tenant));
+        int ores = rawstor_cli_op_owner(&op, target, account, sizeof(account));
         rawstor_cli_op_destroy(&op);
         if (ores < 0) {
             fprintf(
                 stderr, "rawstor_target_meta() failed: %s\n", strerror(-ores)
             );
-            tenant[0] = '\0';
+            account[0] = '\0';
         }
     }
     RawstorCliCell cells[] = {
         rawstor_cli_cell_optional(uuid),
-        rawstor_cli_cell_optional(tenant),
+        rawstor_cli_cell_optional(account),
         rawstor_cli_cell_string(target),
         rawstor_cli_cell_size(spec->size),
         rawstor_cli_cell_number(mirrors_buf, spec->width),

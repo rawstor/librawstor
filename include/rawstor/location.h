@@ -188,23 +188,23 @@ int rawstor_location_info(
  * https://github.com/rawstor/librawstor/blob/main/docs/concepts.md
  */
 /**
- * @brief The tenant that owns an object created without naming one, as a UUID
- *        string (docs/tenants.md).
+ * @brief The account that owns an object created without naming one, as a UUID
+ *        string (docs/accounts.md).
  *
  * Every MDS registers it, and it can be neither created nor removed. A target
- * names its owner as user information and names none for this tenant: an
+ * names its owner as user information and names none for this account: an
  * address without one stands for it.
  */
-#define RAWSTOR_DEFAULT_TENANT "00000000-0000-0000-0000-000000000001"
+#define RAWSTOR_DEFAULT_ACCOUNT "00000000-0000-0000-0000-000000000001"
 
 /**
- * @brief Asynchronously list a page of the tenants registered in an MDS.
+ * @brief Asynchronously list a page of the accounts registered in an MDS.
  *
- * Every URI of @p location must be an `mds://` one: only an MDS keeps a tenant
- * registry, and any other store answers -ENOTSUP. The tenants come as UUID
- * strings in ascending order, in a list the caller releases with
- * @ref rawstor_string_list_delete. A tenant is named in a location by
- * optional user information (`mds://<tenant>@host:port`).
+ * Every URI of @p location must be an `mds://` one: only an MDS keeps an
+ * account registry, and any other store answers -ENOTSUP. The accounts come as
+ * UUID strings in ascending order, in a list the caller releases with
+ * @ref rawstor_string_list_delete. An account is named in a location by
+ * optional user information (`mds://<account>@host:port`).
  *
  * Paginated like @ref rawstor_location_list: start with an empty token, and
  * pass the token returned by a call to the next one until
@@ -212,8 +212,8 @@ int rawstor_location_info(
  *
  * @param queue     RawIO queue.
  * @param location  Location, comma-separated like every location.
- * @param limit     Most tenants to return; 0 means the library default.
- * @param tenants   Receives the list on success.
+ * @param limit     Most accounts to return; 0 means the library default.
+ * @param accounts   Receives the list on success.
  * @param token     In: where to resume (empty to start). Out: where the next
  *                  page resumes, empty after the last one. Must stay valid
  *                  until @p cb runs.
@@ -222,56 +222,57 @@ int rawstor_location_info(
  *
  * @return 0 if the operation was started, a negative errno otherwise.
  *
- * @see https://github.com/rawstor/librawstor/blob/main/docs/tenants.md
+ * @see https://github.com/rawstor/librawstor/blob/main/docs/accounts.md
  */
-int rawstor_location_tenants(
+int rawstor_location_accounts(
     RawIOQueue* queue, const char* location, unsigned int limit,
-    RawstorStringList** tenants, RawstorPaginationToken* token,
+    RawstorStringList** accounts, RawstorPaginationToken* token,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously register a tenant in an MDS.
+ * @brief Asynchronously register an account in an MDS.
  *
- * @p location must name exactly one `mds://` URI. @p tenant is a UUID string
+ * @p location must name exactly one `mds://` URI. @p account is a UUID string
  * (not the nil UUID); the MDS answers -EEXIST if it is registered already.
- * The default tenant is registered with every MDS.
+ * The default account is registered with every MDS.
  *
  * @return 0 if the operation was started, a negative errno otherwise.
  */
-int rawstor_location_create_tenant(
-    RawIOQueue* queue, const char* location, const char* tenant,
+int rawstor_location_create_account(
+    RawIOQueue* queue, const char* location, const char* account,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
- * @brief Asynchronously remove a tenant from an MDS, with its objects.
+ * @brief Asynchronously remove an account from an MDS, with its objects.
  *
- * @p location must name exactly one `mds://` URI. Every object the tenant owns
- * is removed first, each with its versions, then the tenant itself: -EPERM
- * for the default tenant, which is refused before anything is removed, and
- * -ENOENT for an unknown tenant. A failure part-way leaves the objects not
- * yet removed and the tenant registered; repeating the call finishes the job.
- * An object created for the tenant while it is being removed can make the
+ * @p location must name exactly one `mds://` URI. Every object the account owns
+ * is removed first, each with its versions, then the account itself: -EPERM
+ * for the default account, which is refused before anything is removed, and
+ * -ENOENT for an unknown account. A failure part-way leaves the objects not
+ * yet removed and the account registered; repeating the call finishes the job.
+ * An object created for the account while it is being removed can make the
  * last step answer -EBUSY.
  *
  * @return 0 if the operation was started, a negative errno otherwise.
  */
-int rawstor_location_remove_tenant(
-    RawIOQueue* queue, const char* location, const char* tenant,
+int rawstor_location_remove_account(
+    RawIOQueue* queue, const char* location, const char* account,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
 /**
  * @brief Asynchronously list the objects of a location.
  *
- * @p targets receives the target of each object. A target names the tenant
- * that owns its object as user information (`ost://<tenant>@host:port/<uuid>`),
- * and none for an object of the default tenant; @ref rawstor_target_tenant
- * reads it back. Free the list with @ref rawstor_string_list_delete.
+ * @p targets receives the target of each object. A target names the account
+ * that owns its object as user information
+ * (`ost://<account>@host:port/<uuid>`), and none for an object of the default
+ * account; @ref rawstor_target_account reads it back. Free the list with @ref
+ * rawstor_string_list_delete.
  *
- * Only the objects of the tenant @p location names as user information
- * (`ost://<tenant>@host:port`) are listed (docs/tenants.md); a location
+ * Only the objects of the account @p location names as user information
+ * (`ost://<account>@host:port`) are listed (docs/accounts.md); a location
  * without one lists every object of the store.
  *
  * @param queue     Queue used to drive the asynchronous listing.
@@ -301,9 +302,9 @@ int rawstor_location_list(
  * otherwise, the provided UUID is used. The object metadata (size, etc.) is
  * provided via the @p spec structure.
  *
- * The tenant @p location names as user information owns the object, and the
- * default tenant when it names none (docs/tenants.md); the target names its
- * owner the same way, and none for the default tenant.
+ * The account @p location names as user information owns the object, and the
+ * default account when it names none (docs/accounts.md); the target names its
+ * owner the same way, and none for the default account.
  *
  * The function constructs the full target identifier from @p location and
  * @p uuid according to the library's target format (e.g.,

@@ -108,12 +108,12 @@ std::vector<rawstd::URI> build_create_uris(
     return ret;
 }
 
-// Tenants (docs/tenants.md): the tenant of a location is the user information
-// of its URI, optional; the nil UUID stands for "no tenant".
+// Accounts (docs/accounts.md): the account of a location is the user
+// information of its URI, optional; the nil UUID stands for "no account".
 
-// The tenant `uri` names: the nil UUID without user information, EINVAL for
+// The account `uri` names: the nil UUID without user information, EINVAL for
 // anything that is not a non-nil UUID.
-RawstdUUID tenant_of(const rawstd::URI& uri) {
+RawstdUUID account_of(const rawstd::URI& uri) {
     const std::string& name = uri.username();
     if (name.empty()) {
         return RawstdUUID{};
@@ -123,7 +123,7 @@ RawstdUUID tenant_of(const rawstd::URI& uri) {
         rawstd_uuid_is_nil(&id)) {
         // Not the whole URI: its user information may carry a password.
         rawstd_error(
-            "%s://%s%s: tenant \"%s\" is not a UUID\n", uri.scheme().c_str(),
+            "%s://%s%s: account \"%s\" is not a UUID\n", uri.scheme().c_str(),
             uri.host().c_str(), uri.path().str().c_str(), name.c_str()
         );
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -131,29 +131,29 @@ RawstdUUID tenant_of(const rawstd::URI& uri) {
     return id;
 }
 
-// The tenant that owns what is created without naming one.
-RawstdUUID default_tenant() {
+// The account that owns what is created without naming one.
+RawstdUUID default_account() {
     RawstdUUID id;
-    rawstd_uuid_from_string(&id, RAWSTOR_DEFAULT_TENANT);
+    rawstd_uuid_from_string(&id, RAWSTOR_DEFAULT_ACCOUNT);
     return id;
 }
 
-// The tenant an address names for an object owned by `owner`: none for the
-// default tenant, which an address without one stands for.
-RawstdUUID named_tenant(const RawstdUUID& owner) {
-    RawstdUUID fallback = default_tenant();
+// The account an address names for an object owned by `owner`: none for the
+// default account, which an address without one stands for.
+RawstdUUID named_account(const RawstdUUID& owner) {
+    RawstdUUID fallback = default_account();
     if (rawstd_uuid_is_nil(&owner) || rawstd_uuid_cmp(&owner, &fallback) == 0) {
         return RawstdUUID{};
     }
     return owner;
 }
 
-// `uri` with `tenant` as its user information, none for the nil UUID.
-rawstd::URI with_tenant(const rawstd::URI& uri, const RawstdUUID& tenant) {
+// `uri` with `account` as its user information, none for the nil UUID.
+rawstd::URI with_account(const rawstd::URI& uri, const RawstdUUID& account) {
     std::string info;
-    if (!rawstd_uuid_is_nil(&tenant)) {
+    if (!rawstd_uuid_is_nil(&account)) {
         RawstdUUIDString text;
-        rawstd_uuid_to_string(&tenant, &text);
+        rawstd_uuid_to_string(&account, &text);
         info = text;
     }
     std::string ret = uri.scheme() + "://";
@@ -165,9 +165,9 @@ rawstd::URI with_tenant(const rawstd::URI& uri, const RawstdUUID& tenant) {
 }
 
 // `uri` as the address of an object owned by `owner`: it names the owner, the
-// default tenant by naming none.
+// default account by naming none.
 rawstd::URI address_of(const rawstd::URI& uri, const RawstdUUID& owner) {
-    return with_tenant(uri, named_tenant(owner));
+    return with_account(uri, named_account(owner));
 }
 
 // The same for every URI of one object.
@@ -234,7 +234,7 @@ rawstd::Task<std::pair<std::vector<rawstor::ChunkGroup>, RawstdUUID>> list_one(
     std::exception_ptr error;
     try {
         co_await slot->list_chunks(
-            RawstdUUID{}, limit, ret.first, ret.second, tenant_of(location)
+            RawstdUUID{}, limit, ret.first, ret.second, account_of(location)
         );
     } catch (...) {
         error = std::current_exception();
@@ -249,9 +249,9 @@ rawstd::Task<std::pair<std::vector<rawstor::ChunkGroup>, RawstdUUID>> list_one(
 // C ABI adapter for rawstor_location_info(): `loc`/`queue` are captured by
 // value/pointer into the coroutine's own frame rather than taken as a
 // pre-built Task<RawstorLocationInfo> -- unlike ost/src/client.cpp's own
-// One URI's worth of Location::tenants() work, shaped like list_one(): the
+// One URI's worth of Location::accounts() work, shaped like list_one(): the
 // page it found and the token it reported.
-rawstd::Task<std::pair<std::vector<RawstdUUID>, RawstdUUID>> tenants_one(
+rawstd::Task<std::pair<std::vector<RawstdUUID>, RawstdUUID>> accounts_one(
     rawio::Queue& queue, const rawstd::URI& location, unsigned int limit,
     RawstdUUID token
 ) {
@@ -261,7 +261,7 @@ rawstd::Task<std::pair<std::vector<RawstdUUID>, RawstdUUID>> tenants_one(
         co_await rawstor::Slot::create(queue, location);
     std::exception_ptr error;
     try {
-        co_await slot->list_tenants(limit, ret.first, ret.second);
+        co_await slot->list_accounts(limit, ret.first, ret.second);
     } catch (...) {
         error = std::current_exception();
     }
@@ -383,27 +383,27 @@ void launch_list_op(
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
-// Location::tenants() as a RawstorStringList of UUID strings, for
-// rawstor_location_tenants(); same launch-a-coroutine shape as
+// Location::accounts() as a RawstorStringList of UUID strings, for
+// rawstor_location_accounts(); same launch-a-coroutine shape as
 // launch_list_op_coro() above.
-rawstd::DetachedTask launch_tenants_op_coro(
+rawstd::DetachedTask launch_accounts_op_coro(
     rawstor::Location loc, rawio::Queue* queue, unsigned int limit,
-    RawstorStringList** tenants, RawstorPaginationToken* token,
+    RawstorStringList** accounts, RawstorPaginationToken* token,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = 0;
     RawstorStringList* list = nullptr;
     try {
         std::vector<RawstdUUID> found;
-        co_await loc.tenants(*queue, limit, found, *token);
+        co_await loc.accounts(*queue, limit, found, *token);
 
         list = (RawstorStringList*)rawstd_list_create(sizeof(const char*));
         if (list == nullptr) {
             throw std::bad_alloc();
         }
-        for (const RawstdUUID& tenant : found) {
+        for (const RawstdUUID& account : found) {
             RawstdUUIDString text;
-            rawstd_uuid_to_string(&tenant, &text);
+            rawstd_uuid_to_string(&account, &text);
 
             char* str = (char*)malloc(sizeof(text));
             if (str == nullptr) {
@@ -419,7 +419,7 @@ rawstd::DetachedTask launch_tenants_op_coro(
             *it = str;
         }
 
-        *tenants = list;
+        *accounts = list;
     } catch (const std::system_error& e) {
         rawstor_string_list_delete(list);
         result = -e.code().value();
@@ -441,17 +441,17 @@ rawstd::DetachedTask launch_tenants_op_coro(
     }
 }
 
-// create_tenant()/remove_tenant() for rawstor_location_*_tenant().
-rawstd::DetachedTask launch_tenant_mutation_coro(
-    rawstor::Location loc, rawio::Queue* queue, RawstdUUID tenant, bool create,
+// create_account()/remove_account() for rawstor_location_*_account().
+rawstd::DetachedTask launch_account_mutation_coro(
+    rawstor::Location loc, rawio::Queue* queue, RawstdUUID account, bool create,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = 0;
     try {
         if (create) {
-            co_await loc.create_tenant(*queue, tenant);
+            co_await loc.create_account(*queue, account);
         } else {
-            co_await loc.remove_tenant(*queue, tenant);
+            co_await loc.remove_account(*queue, account);
         }
     } catch (const std::system_error& e) {
         result = -e.code().value();
@@ -470,18 +470,18 @@ rawstd::DetachedTask launch_tenant_mutation_coro(
     }
 }
 
-int launch_tenant_mutation(
-    RawIOQueue* queue, const char* location, const char* tenant, bool create,
+int launch_account_mutation(
+    RawIOQueue* queue, const char* location, const char* account, bool create,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         RawstdUUID id;
-        if (rawstd_uuid_from_string(&id, tenant) < 0 ||
+        if (rawstd_uuid_from_string(&id, account) < 0 ||
             rawstd_uuid_is_nil(&id)) {
             return -EINVAL;
         }
         rawstor::Location loc(rawstd::URI::uriv(location));
-        launch_tenant_mutation_coro(
+        launch_account_mutation_coro(
             std::move(loc), static_cast<rawio::Queue*>(queue), id, create, cb,
             data
         );
@@ -500,13 +500,13 @@ int launch_tenant_mutation(
     }
 }
 
-void launch_tenants_op(
+void launch_accounts_op(
     rawstor::Location loc, rawio::Queue* queue, unsigned int limit,
-    RawstorStringList** tenants, RawstorPaginationToken* token,
+    RawstorStringList** accounts, RawstorPaginationToken* token,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
-    launch_tenants_op_coro(
-        std::move(loc), queue, limit, tenants, token, cb, data
+    launch_accounts_op_coro(
+        std::move(loc), queue, limit, accounts, token, cb, data
     );
     rawstd::DetachedTask::rethrow_if_pending();
 }
@@ -558,15 +558,15 @@ namespace rawstor {
 // Validated once, here: _uris never changes after construction, so
 // nothing past this point can un-validate it, and no public method below
 // needs to re-check it (same pattern as Target's own constructor).
-rawstd::Task<void> Location::tenants(
-    rawio::Queue& queue, unsigned int limit, std::vector<RawstdUUID>& tenants,
+rawstd::Task<void> Location::accounts(
+    rawio::Queue& queue, unsigned int limit, std::vector<RawstdUUID>& accounts,
     RawstorPaginationToken& token
 ) const {
     RawstdUUID token_id = decode_token(token);
 
     std::vector<std::pair<std::vector<RawstdUUID>, RawstdUUID>> listings =
         co_await rawstd::gather(_uris.size(), [&](size_t i) {
-            return tenants_one(queue, _uris[i], limit, token_id);
+            return accounts_one(queue, _uris[i], limit, token_id);
         });
 
     // Merged across every URI. A URI that has more reports where its page
@@ -592,18 +592,18 @@ rawstd::Task<void> Location::tenants(
     }
 
     std::vector<RawstdUUID> ret;
-    for (const RawstdUUID& tenant : merged) {
-        if (!rawstd_uuid_is_nil(&next) && id_less(next, tenant)) {
+    for (const RawstdUUID& account : merged) {
+        if (!rawstd_uuid_is_nil(&next) && id_less(next, account)) {
             break;
         }
         if (ret.size() == limit) {
             next = ret.back();
             break;
         }
-        ret.push_back(tenant);
+        ret.push_back(account);
     }
 
-    tenants.swap(ret);
+    accounts.swap(ret);
     encode_token(next, token);
 }
 
@@ -611,10 +611,10 @@ rawstd::Task<void> Location::tenants(
 
 namespace {
 
-// The tenant registry is the MDS's own: one mds:// URI.
-rawstd::Task<void> tenant_op(
+// The account registry is the MDS's own: one mds:// URI.
+rawstd::Task<void> account_op(
     rawio::Queue& queue, const std::vector<rawstd::URI>& uris,
-    const RawstdUUID& tenant, bool create
+    const RawstdUUID& account, bool create
 ) {
     if (uris.size() != 1 || uris.front().scheme() != "mds") {
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
@@ -624,9 +624,9 @@ rawstd::Task<void> tenant_op(
     std::exception_ptr error;
     try {
         if (create) {
-            co_await slot->create_tenant(tenant);
+            co_await slot->create_account(account);
         } else {
-            co_await slot->remove_tenant(tenant);
+            co_await slot->remove_account(account);
         }
     } catch (...) {
         error = std::current_exception();
@@ -642,26 +642,26 @@ rawstd::Task<void> tenant_op(
 namespace rawstor {
 
 rawstd::Task<void>
-Location::create_tenant(rawio::Queue& queue, const RawstdUUID& tenant) const {
-    return tenant_op(queue, _uris, tenant, true);
+Location::create_account(rawio::Queue& queue, const RawstdUUID& account) const {
+    return account_op(queue, _uris, account, true);
 }
 
 rawstd::Task<void>
-Location::remove_tenant(rawio::Queue& queue, const RawstdUUID& tenant) const {
+Location::remove_account(rawio::Queue& queue, const RawstdUUID& account) const {
     if (_uris.size() != 1 || _uris.front().scheme() != "mds") {
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     }
 
     // Refused before anything is removed.
-    RawstdUUID fallback = default_tenant();
-    if (rawstd_uuid_cmp(&tenant, &fallback) == 0) {
+    RawstdUUID fallback = default_account();
+    if (rawstd_uuid_cmp(&account, &fallback) == 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EPERM);
     }
 
-    // The tenant goes with its objects, each with its versions, the way
+    // The account goes with its objects, each with its versions, the way
     // an object goes with its versions: a page at a time, removing what the
     // page lists, which does not move the listing's resume point.
-    Location owned({with_tenant(_uris.front(), tenant)});
+    Location owned({with_account(_uris.front(), account)});
     RawstorPaginationToken token = {};
     RawstdUUID next{};
     do {
@@ -681,7 +681,7 @@ Location::remove_tenant(rawio::Queue& queue, const RawstdUUID& tenant) const {
         next = decode_token(token);
     } while (!rawstd_uuid_is_nil(&next));
 
-    co_await tenant_op(queue, _uris, tenant, false);
+    co_await account_op(queue, _uris, account, false);
 }
 
 Location::Location(const std::vector<rawstd::URI>& uris) : _uris(uris) {
@@ -750,9 +750,9 @@ rawstd::Task<void> Location::list(
                 targets_map[group.id];
             RawstdUUIDString uuid_string;
             rawstd_uuid_to_string(&group.id, &uuid_string);
-            // The target names the owner of the object, not the tenant the
+            // The target names the owner of the object, not the account the
             // listing was asked for.
-            const rawstd::URI owned = address_of(location, group.tenant);
+            const rawstd::URI owned = address_of(location, group.account);
             if (group.offsets.empty()) {
                 entries.emplace_back(0, rawstd::URI(owned, uuid_string));
                 continue;
@@ -858,15 +858,15 @@ rawstd::Task<Target> Location::create(
 
 } // namespace rawstor
 
-int rawstor_location_tenants(
+int rawstor_location_accounts(
     RawIOQueue* queue, const char* location, unsigned int limit,
-    RawstorStringList** tenants, RawstorPaginationToken* token,
+    RawstorStringList** accounts, RawstorPaginationToken* token,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         rawstor::Location loc(rawstd::URI::uriv(location));
-        launch_tenants_op(
-            std::move(loc), static_cast<rawio::Queue*>(queue), limit, tenants,
+        launch_accounts_op(
+            std::move(loc), static_cast<rawio::Queue*>(queue), limit, accounts,
             token, cb, data
         );
         return 0;
@@ -883,18 +883,18 @@ int rawstor_location_tenants(
     }
 }
 
-int rawstor_location_create_tenant(
-    RawIOQueue* queue, const char* location, const char* tenant,
+int rawstor_location_create_account(
+    RawIOQueue* queue, const char* location, const char* account,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
-    return launch_tenant_mutation(queue, location, tenant, true, cb, data);
+    return launch_account_mutation(queue, location, account, true, cb, data);
 }
 
-int rawstor_location_remove_tenant(
-    RawIOQueue* queue, const char* location, const char* tenant,
+int rawstor_location_remove_account(
+    RawIOQueue* queue, const char* location, const char* account,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
-    return launch_tenant_mutation(queue, location, tenant, false, cb, data);
+    return launch_account_mutation(queue, location, account, false, cb, data);
 }
 
 int rawstor_location_list(

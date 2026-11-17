@@ -243,7 +243,7 @@ TEST(TlsTest, a_server_of_another_ca_is_refused) {
     IssueOptions options;
     options.uris = {
         "spiffe://" + domain +
-        "/tenant/018f4e2a-0000-7000-8000-0000000000cc/"
+        "/account/018f4e2a-0000-7000-8000-0000000000cc/"
         "client/vm1"
     };
     Identity foreign_client = foreign.issue("foreign-client", options);
@@ -267,7 +267,7 @@ TEST(TlsTest, a_client_of_another_ca_is_refused_by_the_server) {
     IssueOptions options;
     options.uris = {
         "spiffe://" + domain +
-        "/tenant/018f4e2a-0000-7000-8000-0000000000cc/"
+        "/account/018f4e2a-0000-7000-8000-0000000000cc/"
         "client/vm1"
     };
     Identity foreign_client = foreign.issue("foreign-client", options);
@@ -300,7 +300,7 @@ TEST(TlsTest, the_wrong_ost_identity_is_refused) {
     IssueOptions options;
     options.uris = {
         "spiffe://" + domain +
-        "/tenant/018f4e2a-0000-7000-8000-0000000000cc/"
+        "/account/018f4e2a-0000-7000-8000-0000000000cc/"
         "client/vm1"
     };
     Identity client = tls.pki.issue("client", options);
@@ -326,7 +326,7 @@ TEST(TlsTest, a_renewed_certificate_is_used_after_a_reload) {
     IssueOptions client_options;
     client_options.uris = {
         "spiffe://" + domain +
-        "/tenant/018f4e2a-0000-7000-8000-0000000000cc/"
+        "/account/018f4e2a-0000-7000-8000-0000000000cc/"
         "client/vm1"
     };
     Identity client = tls.pki.issue("client", client_options);

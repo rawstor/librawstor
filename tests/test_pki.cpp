@@ -116,7 +116,7 @@ TEST_F(PkiTest, every_role_has_its_shape) {
     ASSERT_EQ(rawstor_pki_init(ca.c_str(), "cluster.example", 86400), 0);
     std::string cert = path("x.crt");
     std::string key = path("x.key");
-    const char* tenant = "0198f1a2-3b4c-7d5e-8f90-0123456789ab";
+    const char* account = "0198f1a2-3b4c-7d5e-8f90-0123456789ab";
     ASSERT_EQ(
         rawstor_pki_issue(
             ca.c_str(), RAWSTOR_PKI_MDS, nullptr, mds_id, 3600, cert.c_str(),
@@ -138,14 +138,15 @@ TEST_F(PkiTest, every_role_has_its_shape) {
     EXPECT_EQ(std::string(identity), "spiffe://cluster.example/admin/ops");
     ASSERT_EQ(
         rawstor_pki_issue(
-            ca.c_str(), RAWSTOR_PKI_CLIENT, tenant, "vm-1", 3600, cert.c_str(),
+            ca.c_str(), RAWSTOR_PKI_CLIENT, account, "vm-1", 3600, cert.c_str(),
             key.c_str(), identity, sizeof(identity), nullptr
         ),
         0
     );
     EXPECT_EQ(
-        std::string(identity), std::string("spiffe://cluster.example/tenant/") +
-                                   tenant + "/client/vm-1"
+        std::string(identity),
+        std::string("spiffe://cluster.example/account/") + account +
+            "/client/vm-1"
     );
 }
 

@@ -64,7 +64,7 @@ ssize_t rawstor_cli_op_chunks(
 }
 
 int rawstor_cli_op_owner(
-    RawstorCliOp* op, const char* target, char* tenant, size_t tenant_size
+    RawstorCliOp* op, const char* target, char* account, size_t account_size
 ) {
     struct RawstorObjectMeta meta;
     memset(&meta, 0, sizeof(meta));
@@ -77,12 +77,12 @@ int rawstor_cli_op_owner(
         return (int)result;
     }
     struct RawstdUUID owner;
-    memcpy(owner.bytes, meta.tenant_id, sizeof(owner.bytes));
-    tenant[0] = '\0';
+    memcpy(owner.bytes, meta.account_id, sizeof(owner.bytes));
+    account[0] = '\0';
     if (!rawstd_uuid_is_nil(&owner)) {
         RawstdUUIDString text;
         rawstd_uuid_to_string(&owner, &text);
-        snprintf(tenant, tenant_size, "%s", text);
+        snprintf(account, account_size, "%s", text);
     }
     return 0;
 }

@@ -108,7 +108,7 @@ void rawstor_cli_target_location(
     const char* target, char* location, size_t location_size
 );
 
-/* Render a listed target with only the tenant explicitly present in each
+/* Render a listed target with only the account explicitly present in each
  * source location. The caller frees the result; NULL sets errno on failure. */
 char* rawstor_cli_list_target(const char* target, const char* location);
 

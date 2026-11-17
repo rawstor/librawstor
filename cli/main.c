@@ -1,3 +1,4 @@
+#include "account.h"
 #include "chunks.h"
 #include "create.h"
 #include "create_version.h"
@@ -10,7 +11,6 @@
 #include "resolve.h"
 #include "show.h"
 #include "slots.h"
-#include "tenant.h"
 #include "testio.h"
 
 #include "config.h"
@@ -74,7 +74,7 @@ static void usage(void) {
         "  location              Show information about a location\n"
         "  object                Work with rawstor objects\n"
         "  pki                   Issue the certificates TLS needs\n"
-        "  tenant                Work with tenants\n"
+        "  account                Work with accounts\n"
         "  testio                Test rawstor IO routines\n"
         "  version               Work with versions of an object\n"
         "\n"
@@ -108,7 +108,7 @@ static void object_usage(void) {
         "  show                  Show rawstor object\n"
         "  slots                 List the member slots of an object's "
         "chunks\n"
-        "  transfer              Make another tenant the owner of an "
+        "  transfer              Make another account the owner of an "
         "object\n"
         "\n"
         "An object is addressed as TARGET, a version of it as "
@@ -201,11 +201,11 @@ static void command_create_usage(void) {
         "RAWSTOR_LOCATION environment variable.\n"
         "                        If -u is omitted, a random UUIDv7 is "
         "generated.\n"
-        "                        The tenant LOCATION names as user "
+        "                        The account LOCATION names as user "
         "information\n"
-        "                        (mds://tenant@host) owns the object, and "
+        "                        (mds://account@host) owns the object, and "
         "the default\n"
-        "                        tenant when it names none.\n"
+        "                        account when it names none.\n"
         "  -u, --uuid UUID       Explicit UUID for the object (only valid "
         "when creating by location).\n"
         "\n"
@@ -575,14 +575,14 @@ static int command_remove(int argc, char** argv, enum TargetType type) {
     return rawstor_cli_remove(target_arg, type == TARGET_VERSION);
 }
 
-static void command_tenant_create_usage(void) {
+static void command_account_create_usage(void) {
     fprintf(
         stdout,
         "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
-        "usage: rawstor [options] tenant create LOCATION [-u UUID]\n"
+        "usage: rawstor [options] account create LOCATION [-u UUID]\n"
         "\n"
-        "Registers a tenant in the MDS at LOCATION and prints its id.\n"
+        "Registers an account in the MDS at LOCATION and prints its id.\n"
         "\n"
         "  LOCATION              An mds:// location. If omitted, falls back "
         "to the\n"
@@ -595,14 +595,14 @@ static void command_tenant_create_usage(void) {
     );
 }
 
-static void command_tenant_list_usage(void) {
+static void command_account_list_usage(void) {
     fprintf(
         stdout,
         "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
-        "usage: rawstor [options] tenant list(ls) LOCATION\n"
+        "usage: rawstor [options] account list(ls) LOCATION\n"
         "\n"
-        "Lists the tenants registered in the MDS at LOCATION, one id per "
+        "Lists the accounts registered in the MDS at LOCATION, one id per "
         "line.\n"
         "\n"
         "  LOCATION              An mds:// location. If omitted, falls back "
@@ -615,23 +615,23 @@ static void command_tenant_list_usage(void) {
     );
 }
 
-static void command_tenant_remove_usage(void) {
+static void command_account_remove_usage(void) {
     fprintf(
         stdout,
         "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
-        "usage: rawstor [options] tenant remove(rm) [LOCATION] TENANT\n"
+        "usage: rawstor [options] account remove(rm) [LOCATION] ACCOUNT\n"
         "\n"
-        "Removes a tenant from the MDS at LOCATION together with the "
+        "Removes an account from the MDS at LOCATION together with the "
         "objects it\n"
-        "owns, each with its versions. The default tenant is never "
+        "owns, each with its versions. The default account is never "
         "removed, and\n"
         "nothing is removed in that case.\n"
         "\n"
         "  LOCATION              An mds:// location. If omitted, falls back "
         "to the\n"
         "                        RAWSTOR_LOCATION environment variable.\n"
-        "  TENANT                The UUID of the tenant to remove.\n"
+        "  ACCOUNT                The UUID of the account to remove.\n"
         "\n"
         "command options:\n"
         "  -h, --help            Show this help message and exit\n"
@@ -640,7 +640,7 @@ static void command_tenant_remove_usage(void) {
 
 /* The positional arguments after the options: at most `max` of them, put into
  * args[]. Returns 0, or EX_USAGE. */
-static int tenant_args(int argc, char** argv, char** args, int max) {
+static int account_args(int argc, char** argv, char** args, int max) {
     int n = 0;
     while (optind < argc) {
         if (n == max) {
@@ -652,8 +652,8 @@ static int tenant_args(int argc, char** argv, char** args, int max) {
     return 0;
 }
 
-/* The location a tenant command works on: `arg`, or RAWSTOR_LOCATION. */
-static const char* tenant_location(const char* arg) {
+/* The location an account command works on: `arg`, or RAWSTOR_LOCATION. */
+static const char* account_location(const char* arg) {
     if (arg == NULL) {
         arg = getenv("RAWSTOR_LOCATION");
     }
@@ -663,7 +663,7 @@ static const char* tenant_location(const char* arg) {
     return arg;
 }
 
-static int command_tenant_create(int argc, char** argv) {
+static int command_account_create(int argc, char** argv) {
     const char* optstring = "hu:";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
@@ -684,7 +684,7 @@ static int command_tenant_create(int argc, char** argv) {
 
         switch (c) {
         case 'h':
-            command_tenant_create_usage();
+            command_account_create_usage();
             return EXIT_SUCCESS;
 
         case 'u':
@@ -711,19 +711,19 @@ static int command_tenant_create(int argc, char** argv) {
     }
 
     char* args[1] = {NULL};
-    int res = tenant_args(argc, argv, args, 1);
+    int res = account_args(argc, argv, args, 1);
     if (res != 0) {
         return res;
     }
-    const char* location = tenant_location(args[0]);
+    const char* location = account_location(args[0]);
     if (location == NULL) {
         return EX_USAGE;
     }
 
-    return rawstor_cli_tenant_create(location, uuid_arg, &output_arg);
+    return rawstor_cli_account_create(location, uuid_arg, &output_arg);
 }
 
-static int command_tenant_list(int argc, char** argv) {
+static int command_account_list(int argc, char** argv) {
     const char* optstring = "h";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
@@ -742,7 +742,7 @@ static int command_tenant_list(int argc, char** argv) {
 
         switch (c) {
         case 'h':
-            command_tenant_list_usage();
+            command_account_list_usage();
             return EXIT_SUCCESS;
 
         case RAWSTOR_CLI_OPT_FORMAT:
@@ -765,19 +765,19 @@ static int command_tenant_list(int argc, char** argv) {
     }
 
     char* args[1] = {NULL};
-    int res = tenant_args(argc, argv, args, 1);
+    int res = account_args(argc, argv, args, 1);
     if (res != 0) {
         return res;
     }
-    const char* location = tenant_location(args[0]);
+    const char* location = account_location(args[0]);
     if (location == NULL) {
         return EX_USAGE;
     }
 
-    return rawstor_cli_tenant_list(location, &output_arg);
+    return rawstor_cli_account_list(location, &output_arg);
 }
 
-static int command_tenant_remove(int argc, char** argv) {
+static int command_account_remove(int argc, char** argv) {
     const char* optstring = "h";
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
@@ -793,7 +793,7 @@ static int command_tenant_remove(int argc, char** argv) {
 
         switch (c) {
         case 'h':
-            command_tenant_remove_usage();
+            command_account_remove_usage();
             return EXIT_SUCCESS;
 
         default:
@@ -802,22 +802,23 @@ static int command_tenant_remove(int argc, char** argv) {
     }
 
     char* args[2] = {NULL, NULL};
-    int res = tenant_args(argc, argv, args, 2);
+    int res = account_args(argc, argv, args, 2);
     if (res != 0) {
         return res;
     }
-    /* A lone argument is the tenant: the location is then the environment's. */
-    char* tenant = args[1] != NULL ? args[1] : args[0];
-    const char* location = tenant_location(args[1] != NULL ? args[0] : NULL);
+    /* A lone argument is the account: the location is then the environment's.
+     */
+    char* account = args[1] != NULL ? args[1] : args[0];
+    const char* location = account_location(args[1] != NULL ? args[0] : NULL);
     if (location == NULL) {
         return EX_USAGE;
     }
-    if (tenant == NULL) {
-        fprintf(stderr, "tenant required\n");
+    if (account == NULL) {
+        fprintf(stderr, "account required\n");
         return EX_USAGE;
     }
 
-    return rawstor_cli_tenant_remove(location, tenant);
+    return rawstor_cli_account_remove(location, account);
 }
 
 static void command_resize_usage(void) {
@@ -917,18 +918,18 @@ static void command_transfer_usage(void) {
         stdout,
         "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
-        "usage: rawstor [options] object transfer TARGET TENANT\n"
+        "usage: rawstor [options] object transfer TARGET ACCOUNT\n"
         "\n"
-        "Makes TENANT the owner of the object: its record on every copy "
+        "Makes ACCOUNT the owner of the object: its record on every copy "
         "of every\n"
         "chunk, and for an mds:// object the MDS's own, which refuses a "
-        "tenant it\n"
+        "account it\n"
         "does not know (-ENOENT). If a copy is unreachable the transfer "
         "fails\n"
         "part-way; run it again to finish.\n"
         "\n"
         "  TARGET                The object.\n"
-        "  TENANT                The UUID of the new owner.\n"
+        "  ACCOUNT                The UUID of the new owner.\n"
         "\n"
         "command options:\n"
         "  -h, --help            Show this help message and exit\n"
@@ -960,7 +961,7 @@ static int command_transfer(int argc, char** argv) {
     }
 
     char* args[2] = {NULL, NULL};
-    if (tenant_args(argc, argv, args, 2) != 0) {
+    if (account_args(argc, argv, args, 2) != 0) {
         return EX_USAGE;
     }
     if (args[0] == NULL) {
@@ -968,7 +969,7 @@ static int command_transfer(int argc, char** argv) {
         return EX_USAGE;
     }
     if (args[1] == NULL) {
-        fprintf(stderr, "tenant required\n");
+        fprintf(stderr, "account required\n");
         return EX_USAGE;
     }
 
@@ -986,9 +987,9 @@ static void command_list_usage(void) {
                 "backend locations.\n"
                 "                        If omitted, falls back to the "
                 "RAWSTOR_LOCATION environment variable.\n"
-                "                        The tenant LOCATION names as user "
+                "                        The account LOCATION names as user "
                 "information\n"
-                "                        (mds://tenant@host) limits the "
+                "                        (mds://account@host) limits the "
                 "listing to its\n"
                 "                        objects; without one, every object "
                 "is listed.\n"
@@ -1932,54 +1933,54 @@ static int command_testio(int argc, char** argv) {
     );
 }
 
-static void tenant_usage(void) {
+static void account_usage(void) {
     fprintf(
         stdout,
         "Rawstor CLI " PACKAGE_VERSION "\n"
         "\n"
-        "usage: rawstor [options] tenant <subcommand> [command_options]\n"
+        "usage: rawstor [options] account <subcommand> [command_options]\n"
         "\n"
-        "An object has one tenant, its owner. A location names a tenant as "
+        "An object has one account, its owner. A location names an account as "
         "optional\n"
-        "user information: mds://TENANT@host:port. `object create` through "
+        "user information: mds://ACCOUNT@host:port. `object create` through "
         "it makes\n"
-        "objects owned by that tenant, `object list` shows the objects it "
+        "objects owned by that account, `object list` shows the objects it "
         "owns; without\n"
         "one, `object list` shows every object, and `object create` makes "
         "them for the\n"
-        "default tenant. The tenants themselves are registered in an "
+        "default account. The accounts themselves are registered in an "
         "MDS.\n"
         "\n"
         "subcommand:\n"
-        "  create                Register a tenant in an MDS\n"
-        "  list(ls)              List the tenants registered in an MDS\n"
-        "  remove(rm)            Remove an empty tenant from an MDS\n"
+        "  create                Register an account in an MDS\n"
+        "  list(ls)              List the accounts registered in an MDS\n"
+        "  remove(rm)            Remove an empty account from an MDS\n"
         "\n"
-        "Run `rawstor tenant <subcommand> --help` to show its usage.\n"
+        "Run `rawstor account <subcommand> --help` to show its usage.\n"
     );
 }
 
-static int run_tenant(int argc, char** argv) {
+static int run_account(int argc, char** argv) {
     if (argc < 2) {
-        tenant_usage();
+        account_usage();
         return EX_USAGE;
     }
     const char* sub = argv[1];
     if (strcmp(sub, "-h") == 0 || strcmp(sub, "--help") == 0 ||
         strcmp(sub, "help") == 0) {
-        tenant_usage();
+        account_usage();
         return EXIT_SUCCESS;
     }
     argc--;
     argv++;
     if (strcmp(sub, "create") == 0) {
-        return command_tenant_create(argc, argv);
+        return command_account_create(argc, argv);
     } else if (strcmp(sub, "list") == 0 || strcmp(sub, "ls") == 0) {
-        return command_tenant_list(argc, argv);
+        return command_account_list(argc, argv);
     } else if (strcmp(sub, "remove") == 0 || strcmp(sub, "rm") == 0) {
-        return command_tenant_remove(argc, argv);
+        return command_account_remove(argc, argv);
     }
-    fprintf(stderr, "Unexpected tenant subcommand: %s\n", sub);
+    fprintf(stderr, "Unexpected account subcommand: %s\n", sub);
     return EX_USAGE;
 }
 
@@ -2112,8 +2113,8 @@ static int run_command(
         ret = command_show(argc, argv, TARGET_OBJECT);
     } else if (strcmp(command, "info") == 0) {
         ret = command_info(argc, argv);
-    } else if (strcmp(command, "tenant") == 0) {
-        ret = run_tenant(argc, argv);
+    } else if (strcmp(command, "account") == 0) {
+        ret = run_account(argc, argv);
     } else if (strcmp(command, "testio") == 0) {
         ret = command_testio(argc, argv);
     } else if (strcmp(command, "version") == 0) {

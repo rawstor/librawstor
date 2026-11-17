@@ -31,7 +31,7 @@ namespace fs = std::filesystem;
 const std::string ost_id = "0198f1a2-3b4c-7d5e-8f90-a1b2c3d4e5f6";
 const std::string ost_uri = "spiffe://cluster.example/ost/" + ost_id;
 const std::string mds_id = "0198f1a2-3b4c-7d5e-8f90-fedcba987654";
-const std::string tenant = "0198f1a2-3b4c-7d5e-8f90-0123456789ab";
+const std::string account = "0198f1a2-3b4c-7d5e-8f90-0123456789ab";
 const std::chrono::seconds hour(3600);
 
 class Dir final {
@@ -252,10 +252,10 @@ TEST_F(CATest, every_role_gets_its_shape) {
     );
     EXPECT_EQ(
         ca.issue(
-            rawtls::Role::client, tenant, "vm-1", hour, dir.path("c.crt"),
+            rawtls::Role::client, account, "vm-1", hour, dir.path("c.crt"),
             dir.path("c.key")
         ),
-        "spiffe://cluster.example/tenant/" + tenant + "/client/vm-1"
+        "spiffe://cluster.example/account/" + account + "/client/vm-1"
     );
     for (const char* name : {"m", "a", "c"}) {
         EXPECT_NO_THROW(rawtls::Context context(config(name)));
@@ -275,9 +275,9 @@ TEST_F(CATest, issue_checks_what_it_is_asked) {
     expect_errno(EINVAL, issue(rawtls::Role::mds, "", "mds-1"));
     expect_errno(EINVAL, issue(rawtls::Role::mds, "", "a/b"));
     expect_errno(EINVAL, issue(rawtls::Role::admin, "", ""));
-    expect_errno(EINVAL, issue(rawtls::Role::admin, tenant, "ops"));
+    expect_errno(EINVAL, issue(rawtls::Role::admin, account, "ops"));
     expect_errno(EINVAL, issue(rawtls::Role::client, "", "vm"));
-    expect_errno(EINVAL, issue(rawtls::Role::client, tenant, ""));
+    expect_errno(EINVAL, issue(rawtls::Role::client, account, ""));
     expect_errno(EINVAL, issue(rawtls::Role::client, "not-a-uuid", "vm"));
     EXPECT_FALSE(fs::exists(dir.path("x.crt")));
     EXPECT_FALSE(fs::exists(dir.path("x.key")));

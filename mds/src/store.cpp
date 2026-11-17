@@ -28,17 +28,17 @@ namespace {
 using rawstor::mdsserver::PlacementPolicy;
 
 /*
- * An object has one tenant, its owner, recorded when it is created
- * (docs/tenants.md); 16 zero bytes for none. The tenants table is the
- * registry of the tenants an object can be created for.
+ * An object has one account, its owner, recorded when it is created
+ * (docs/accounts.md); 16 zero bytes for none. The accounts table is the
+ * registry of the accounts an object can be created for.
  */
 constexpr const char* SCHEMA =
-    "CREATE TABLE IF NOT EXISTS tenants ("
+    "CREATE TABLE IF NOT EXISTS accounts ("
     " id BLOB PRIMARY KEY, created_at INTEGER NOT NULL"
     ") WITHOUT ROWID;"
     "CREATE TABLE IF NOT EXISTS witnesses ("
     " id BLOB NOT NULL, chunk_offset INTEGER NOT NULL, record BLOB NOT NULL,"
-    " tenant_id BLOB NOT NULL,"
+    " account_id BLOB NOT NULL,"
     " PRIMARY KEY(id, chunk_offset)"
     ") WITHOUT ROWID;"
     "CREATE TABLE IF NOT EXISTS backends ("
@@ -50,7 +50,7 @@ constexpr const char* SCHEMA =
     ") WITHOUT ROWID;"
     "CREATE TABLE IF NOT EXISTS objects ("
     "  id BLOB PRIMARY KEY,"
-    "  tenant_id BLOB NOT NULL,"
+    "  account_id BLOB NOT NULL,"
     "  logical_size INTEGER NOT NULL,"
     "  chunk_size INTEGER NOT NULL,"
     "  width INTEGER NOT NULL,"
@@ -99,7 +99,7 @@ constexpr const char* SCHEMA =
     "CREATE TABLE IF NOT EXISTS removed_owners ("
     " idempotency_key BLOB PRIMARY KEY REFERENCES "
     "applied_mutations(idempotency_key) ON DELETE CASCADE,"
-    " id BLOB NOT NULL, tenant_id BLOB NOT NULL"
+    " id BLOB NOT NULL, account_id BLOB NOT NULL"
     ") WITHOUT ROWID;";
 
 [[noreturn]] void throw_sqlite(sqlite3* db, const char* what) {
@@ -292,8 +292,8 @@ enum class MutationType : unsigned {
     remove = 3,
     commit_version = 4,
     remove_version = 5,
-    create_tenant = 6,
-    remove_tenant = 7,
+    create_account = 6,
+    remove_account = 7,
     transfer = 8,
 };
 
@@ -484,7 +484,7 @@ ObjectStore::ObjectStore(const std::string& path, Topology topology) :
         exec(_db, "PRAGMA foreign_keys=ON;");
         _check_layout();
         exec(_db, SCHEMA);
-        _register_default_tenant();
+        _register_default_account();
         exec(_db, "PRAGMA user_version=1;");
         _sync_backends(*_topology);
     } catch (...) {
@@ -498,7 +498,7 @@ ObjectStore::~ObjectStore() {
 }
 
 /*
- * A store written before objects had a tenant has tables without it; it is
+ * A store written before objects had an account has tables without it; it is
  * refused rather than misread.
  */
 void ObjectStore::_check_layout() {
@@ -521,28 +521,28 @@ void ObjectStore::_check_layout() {
     }
 }
 
-/* Every store registers the default tenant, which can neither be created nor
+/* Every store registers the default account, which can neither be created nor
  * removed. */
-void ObjectStore::_register_default_tenant() {
-    RawstdUUID tenant;
-    rawstd_uuid_from_string(&tenant, RAWSTOR_DEFAULT_TENANT);
+void ObjectStore::_register_default_account() {
+    RawstdUUID account;
+    rawstd_uuid_from_string(&account, RAWSTOR_DEFAULT_ACCOUNT);
     Stmt insert(
-        _db, "INSERT OR IGNORE INTO tenants (id, created_at) VALUES (?, ?);"
+        _db, "INSERT OR IGNORE INTO accounts (id, created_at) VALUES (?, ?);"
     );
-    insert.bind_blob(1, tenant.bytes, sizeof(tenant.bytes))
+    insert.bind_blob(1, account.bytes, sizeof(account.bytes))
         .bind_int64(2, static_cast<uint64_t>(time(nullptr)))
         .step();
 }
 
-/* A nil tenant is none; any other is registered. */
-void ObjectStore::_require_tenant(const RawstdUUID& tenant) {
-    if (rawstd_uuid_is_nil(&tenant)) {
+/* A nil account is none; any other is registered. */
+void ObjectStore::_require_account(const RawstdUUID& account) {
+    if (rawstd_uuid_is_nil(&account)) {
         return;
     }
-    Stmt select(_db, "SELECT 1 FROM tenants WHERE id = ?;");
-    select.bind_blob(1, tenant.bytes, sizeof(tenant.bytes));
+    Stmt select(_db, "SELECT 1 FROM accounts WHERE id = ?;");
+    select.bind_blob(1, account.bytes, sizeof(account.bytes));
     if (!select.step()) {
-        rawstd_error("Unknown tenant\n");
+        rawstd_error("Unknown account\n");
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
 }
@@ -573,7 +573,7 @@ ObjectDescriptor ObjectStore::_descriptor(const RawstdUUID& id) {
 }
 
 void ObjectStore::create_witness(
-    const RawstdUUID& tenant, const RawstdUUID& id, uint64_t offset,
+    const RawstdUUID& account, const RawstdUUID& id, uint64_t offset,
     const RawstorObjectSpec& spec
 ) {
     if (rawstd_uuid_is_nil(&id) || spec.width == 0 ||
@@ -583,7 +583,7 @@ void ObjectStore::create_witness(
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     RawstorObjectMeta meta{};
-    memcpy(meta.tenant_id, tenant.bytes, sizeof(meta.tenant_id));
+    memcpy(meta.account_id, account.bytes, sizeof(meta.account_id));
     meta.spec = spec;
     meta.member_role = RAWSTOR_MEMBER_WITNESS;
     meta.state = RAWSTOR_OBJECT_SYNC_STATE_CLEAN;
@@ -593,13 +593,13 @@ void ObjectStore::create_witness(
     }
     std::lock_guard<std::recursive_mutex> guard(_mutex);
     Stmt stmt(
-        _db, "INSERT INTO witnesses(id,chunk_offset,record,tenant_id) "
+        _db, "INSERT INTO witnesses(id,chunk_offset,record,account_id) "
              "VALUES(?,?,?,?)"
     );
     stmt.bind_blob(1, id.bytes, sizeof(id.bytes))
         .bind_int64(2, offset)
         .bind_blob(3, &record, sizeof(record))
-        .bind_blob(4, tenant.bytes, sizeof(tenant.bytes))
+        .bind_blob(4, account.bytes, sizeof(account.bytes))
         .step();
 }
 
@@ -711,7 +711,7 @@ void ObjectStore::remove_witness(const RawstdUUID& id, uint64_t offset) {
 
 /* The owner of the object, nil if there is none. */
 static RawstdUUID object_owner(sqlite3* db, const RawstdUUID& id) {
-    Stmt select(db, "SELECT tenant_id FROM objects WHERE id = ?;");
+    Stmt select(db, "SELECT account_id FROM objects WHERE id = ?;");
     select.bind_blob(1, id.bytes, sizeof(id.bytes));
     RawstdUUID ret{};
     if (select.step()) {
@@ -722,7 +722,7 @@ static RawstdUUID object_owner(sqlite3* db, const RawstdUUID& id) {
 
 ObjectStore::Access ObjectStore::authorize(
     const rawtls::SpiffeId* peer, RawstorCommandType command,
-    const RawstdUUID& object, const RawstdUUID& tenant,
+    const RawstdUUID& object, const RawstdUUID& account,
     const RawstdUUID& mutation
 ) {
     Access result{
@@ -743,9 +743,9 @@ ObjectStore::Access ObjectStore::authorize(
         case RAWSTOR_CMD_OBJ_COMMIT_VERSION:
         case RAWSTOR_CMD_OBJ_REMOVE_VERSION:
         case RAWSTOR_CMD_LOCATION_INFO:
-        case RAWSTOR_CMD_LIST_TENANTS:
-        case RAWSTOR_CMD_TENANT_CREATE:
-        case RAWSTOR_CMD_TENANT_REMOVE:
+        case RAWSTOR_CMD_LIST_ACCOUNTS:
+        case RAWSTOR_CMD_ACCOUNT_CREATE:
+        case RAWSTOR_CMD_ACCOUNT_REMOVE:
         case RAWSTOR_CMD_OBJ_TRANSFER:
         case RAWSTOR_CMD_SET_OWNER:
         case RAWSTOR_CMD_ALLOCATE:
@@ -759,19 +759,19 @@ ObjectStore::Access ObjectStore::authorize(
     if (peer->role() != rawtls::Role::client) {
         RAWSTD_THROW_SYSTEM_ERROR(EACCES);
     }
-    rawstd_uuid_from_string(&result.tenant, peer->tenant().c_str());
+    rawstd_uuid_from_string(&result.account, peer->account().c_str());
     result.permissions = peer->permissions().mask(
         rawstd_uuid_is_nil(&object) ? nullptr : object.bytes
     );
     // SET_OBJECT only acknowledges an MDS control connection. A scoped client
-    // can connect for its permitted objects without tenant-wide permissions.
+    // can connect for its permitted objects without account-wide permissions.
     if (command == RAWSTOR_CMD_SET_OBJECT && rawstd_uuid_is_nil(&object)) {
         for (const auto& entry : peer->permissions().objects) {
             result.permissions |= entry.second;
         }
     }
-    if (!rawstd_uuid_is_nil(&tenant) &&
-        rawstd_uuid_cmp(&tenant, &result.tenant)) {
+    if (!rawstd_uuid_is_nil(&account) &&
+        rawstd_uuid_cmp(&account, &result.account)) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
     if (rawstd_uuid_is_nil(&object)) {
@@ -798,7 +798,7 @@ ObjectStore::Access ObjectStore::authorize(
         if (rawstd_uuid_is_nil(&owner) && command == RAWSTOR_CMD_OBJ_REMOVE &&
             !rawstd_uuid_is_nil(&mutation)) {
             Stmt removed(
-                _db, "SELECT tenant_id FROM removed_owners WHERE "
+                _db, "SELECT account_id FROM removed_owners WHERE "
                      "idempotency_key=? AND id=?;"
             );
             removed.bind_blob(1, mutation.bytes, sizeof(mutation.bytes))
@@ -807,7 +807,7 @@ ObjectStore::Access ObjectStore::authorize(
                 removed.column_uuid(0, &owner);
             }
         }
-        if (rawstd_uuid_cmp(&owner, &result.tenant) && !new_object) {
+        if (rawstd_uuid_cmp(&owner, &result.account) && !new_object) {
             RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
         }
     }
@@ -841,7 +841,7 @@ ObjectStore::Access ObjectStore::authorize(
 
 ObjectStore::Access ObjectStore::authorize_witness(
     const rawtls::SpiffeId* peer, RawstorCommandType command,
-    const RawstdUUID& object, uint64_t offset, const RawstdUUID& tenant
+    const RawstdUUID& object, uint64_t offset, const RawstdUUID& account
 ) {
     Access result{
         std::unique_lock<std::recursive_mutex>(_mutex), RAWSTOR_PERM_ALL, {}
@@ -855,14 +855,14 @@ ObjectStore::Access ObjectStore::authorize_witness(
         }
         return result;
     }
-    rawstd_uuid_from_string(&result.tenant, peer->tenant().c_str());
+    rawstd_uuid_from_string(&result.account, peer->account().c_str());
     result.permissions = peer->permissions().mask(object.bytes);
     uint32_t required = rawtls::member_permission(command);
     if (!required || (result.permissions & required) != required) {
         RAWSTD_THROW_SYSTEM_ERROR(EACCES);
     }
     if (command == RAWSTOR_CMD_ALLOCATE &&
-        rawstd_uuid_cmp(&tenant, &result.tenant)) {
+        rawstd_uuid_cmp(&account, &result.account)) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
     RawstorObjectMeta meta{};
@@ -874,7 +874,9 @@ ObjectStore::Access ObjectStore::authorize_witness(
         }
         throw;
     }
-    if (memcmp(meta.tenant_id, result.tenant.bytes, sizeof(meta.tenant_id))) {
+    if (memcmp(
+            meta.account_id, result.account.bytes, sizeof(meta.account_id)
+        )) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
     return result;
@@ -882,9 +884,9 @@ ObjectStore::Access ObjectStore::authorize_witness(
 
 RawstdUUID ObjectStore::transfer(
     const RawstdUUID& idempotency_key, const RawstdUUID& id,
-    const RawstdUUID& tenant
+    const RawstdUUID& account
 ) {
-    if (rawstd_uuid_is_nil(&tenant)) {
+    if (rawstd_uuid_is_nil(&account)) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     std::lock_guard<std::recursive_mutex> guard(_mutex);
@@ -893,9 +895,9 @@ RawstdUUID ObjectStore::transfer(
         return object_owner(_db, id);
     }
     Transaction tx(_db);
-    _require_tenant(tenant);
-    Stmt update(_db, "UPDATE objects SET tenant_id=? WHERE id=?");
-    update.bind_blob(1, tenant.bytes, sizeof(tenant.bytes))
+    _require_account(account);
+    Stmt update(_db, "UPDATE objects SET account_id=? WHERE id=?");
+    update.bind_blob(1, account.bytes, sizeof(account.bytes))
         .bind_blob(2, id.bytes, sizeof(id.bytes))
         .step();
     if (sqlite3_changes(_db) == 0) {
@@ -903,24 +905,24 @@ RawstdUUID ObjectStore::transfer(
     }
     record_mutation(_db, idempotency_key, MutationType::transfer, id, {});
     tx.commit();
-    return tenant;
+    return account;
 }
 
 void ObjectStore::set_witness_owner(
-    const RawstdUUID& id, uint64_t offset, const RawstdUUID& tenant
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& account
 ) {
-    if (rawstd_uuid_is_nil(&tenant)) {
+    if (rawstd_uuid_is_nil(&account)) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     std::lock_guard<std::recursive_mutex> guard(_mutex);
     Transaction tx(_db);
     RawstorObjectMeta meta = _load_witness(id, offset);
-    memcpy(meta.tenant_id, tenant.bytes, sizeof(meta.tenant_id));
+    memcpy(meta.account_id, account.bytes, sizeof(meta.account_id));
     _store_witness(id, offset, meta);
     Stmt update(
-        _db, "UPDATE witnesses SET tenant_id=? WHERE id=? AND chunk_offset=?"
+        _db, "UPDATE witnesses SET account_id=? WHERE id=? AND chunk_offset=?"
     );
-    update.bind_blob(1, tenant.bytes, sizeof(tenant.bytes))
+    update.bind_blob(1, account.bytes, sizeof(account.bytes))
         .bind_blob(2, id.bytes, sizeof(id.bytes))
         .bind_int64(3, offset)
         .step();
@@ -928,24 +930,24 @@ void ObjectStore::set_witness_owner(
 }
 
 std::vector<ChunkEntry> ObjectStore::list_chunks(
-    const RawstdUUID& tenant, RawstdUUID& token, unsigned int limit
+    const RawstdUUID& account, RawstdUUID& token, unsigned int limit
 ) {
     std::lock_guard<std::recursive_mutex> guard(_mutex);
-    /* The objects a tenant owns; no tenant lists them all. */
-    const bool all = rawstd_uuid_is_nil(&tenant);
+    /* The objects an account owns; no account lists them all. */
+    const bool all = rawstd_uuid_is_nil(&account);
     Stmt stmt(
         _db,
         "WITH entries AS ("
-        "SELECT id,chunk_offset,1 AS type,tenant_id FROM witnesses "
-        "UNION ALL SELECT id,0,2,tenant_id FROM objects) "
-        "SELECT id,chunk_offset,type,tenant_id FROM entries WHERE id>? AND "
-        "(?=1 OR tenant_id=?) "
+        "SELECT id,chunk_offset,1 AS type,account_id FROM witnesses "
+        "UNION ALL SELECT id,0,2,account_id FROM objects) "
+        "SELECT id,chunk_offset,type,account_id FROM entries WHERE id>? AND "
+        "(?=1 OR account_id=?) "
         "ORDER BY id,type DESC,chunk_offset"
     );
     RawstdUUID after = token;
     stmt.bind_blob(1, after.bytes, sizeof(after.bytes))
         .bind_int64(2, all ? 1 : 0)
-        .bind_blob(3, tenant.bytes, sizeof(tenant.bytes));
+        .bind_blob(3, account.bytes, sizeof(account.bytes));
     std::vector<ChunkEntry> entries;
     RawstdUUID last{};
     unsigned int groups = 0;
@@ -955,7 +957,7 @@ std::vector<ChunkEntry> ObjectStore::list_chunks(
         stmt.column_uuid(0, &entry.id);
         entry.offset = stmt.column_int64(1);
         entry.type = static_cast<RawstorListEntryType>(stmt.column_int64(2));
-        stmt.column_uuid(3, &entry.tenant);
+        stmt.column_uuid(3, &entry.account);
         if (rawstd_uuid_cmp(&entry.id, &last) != 0) {
             if (limit != 0 && groups == limit) {
                 token = last;
@@ -1156,7 +1158,7 @@ Topology ObjectStore::_available_topology() {
 }
 
 ObjectDescriptor ObjectStore::create(
-    const RawstdUUID& tenant, const RawstdUUID& idempotency_key,
+    const RawstdUUID& account, const RawstdUUID& idempotency_key,
     const RawstdUUID& id, uint64_t logical_size, uint64_t chunk_size,
     const PlacementPolicy& policy
 ) {
@@ -1185,8 +1187,8 @@ ObjectDescriptor ObjectStore::create(
 
     uint64_t nchunks = nchunks_of(logical_size, chunk_size);
 
-    /* The owner is a registered tenant, or none. */
-    _require_tenant(tenant);
+    /* The owner is a registered account, or none. */
+    _require_account(account);
 
     /* Hard-fails on an unsatisfiable topology before anything lands. */
     Topology available = _available_topology();
@@ -1197,13 +1199,13 @@ ObjectDescriptor ObjectStore::create(
     {
         Stmt insert(
             _db, "INSERT INTO objects"
-                 " (id, tenant_id, logical_size, chunk_size, width,"
+                 " (id, account_id, logical_size, chunk_size, width,"
                  " failure_domain, stripe_width, placement_seed, map_epoch,"
                  " created_at)"
                  " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
         );
         insert.bind_blob(1, ret.id.bytes, sizeof(ret.id.bytes))
-            .bind_blob(2, tenant.bytes, sizeof(tenant.bytes))
+            .bind_blob(2, account.bytes, sizeof(account.bytes))
             .bind_int64(3, logical_size)
             .bind_int64(4, chunk_size)
             .bind_int64(5, policy.width)
@@ -1299,7 +1301,7 @@ ResizeResult ObjectStore::resize(
         ret.map_epoch = r.get<uint64_t>();
         ret.old_nchunks = r.get<uint64_t>();
         // Not recorded: the owner may have changed since.
-        ret.tenant = object_owner(_db, id);
+        ret.account = object_owner(_db, id);
         return ret;
     }
 
@@ -1348,7 +1350,7 @@ ResizeResult ObjectStore::resize(
     return ResizeResult{
         .map_epoch = map_epoch,
         .old_nchunks = old_chunks,
-        .tenant = object_owner(_db, id)
+        .account = object_owner(_db, id)
     };
 }
 
@@ -1361,7 +1363,7 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
     struct Object {
         uint64_t chunk_size;
         unsigned width;
-        RawstdUUID tenant;
+        RawstdUUID account;
         std::map<uint64_t, Chunk> chunks;
     };
 
@@ -1390,7 +1392,7 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
         if (fresh) {
             o.chunk_size = r.meta.spec.chunk_size;
             o.width = r.meta.spec.width;
-            memcpy(o.tenant.bytes, r.meta.tenant_id, sizeof(o.tenant.bytes));
+            memcpy(o.account.bytes, r.meta.account_id, sizeof(o.account.bytes));
             if (o.chunk_size == 0 || (o.chunk_size & (o.chunk_size - 1)) != 0 ||
                 o.width == 0) {
                 rawstd_error(
@@ -1401,7 +1403,8 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
         } else if (o.chunk_size != r.meta.spec.chunk_size ||
                    o.width != r.meta.spec.width ||
                    memcmp(
-                       o.tenant.bytes, r.meta.tenant_id, sizeof(o.tenant.bytes)
+                       o.account.bytes, r.meta.account_id,
+                       sizeof(o.account.bytes)
                    ) != 0) {
             rawstd_error(
                 "reconstruct: %s: identity conflicts with its object\n", obj_str
@@ -1448,13 +1451,14 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
         RawstdUUIDString id_str;
         rawstd_uuid_to_string(&id, &id_str);
 
-        /* A tenant the scan found as an owner is registered again. */
-        if (!rawstd_uuid_is_nil(&o.tenant)) {
-            Stmt tenant_insert(
-                _db, "INSERT OR IGNORE INTO tenants (id, created_at) "
+        /* An account the scan found as an owner is registered again. */
+        if (!rawstd_uuid_is_nil(&o.account)) {
+            Stmt account_insert(
+                _db, "INSERT OR IGNORE INTO accounts (id, created_at) "
                      "VALUES (?, ?);"
             );
-            tenant_insert.bind_blob(1, o.tenant.bytes, sizeof(o.tenant.bytes))
+            account_insert
+                .bind_blob(1, o.account.bytes, sizeof(o.account.bytes))
                 .bind_int64(2, static_cast<uint64_t>(time(nullptr)))
                 .step();
         }
@@ -1486,13 +1490,13 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
         {
             Stmt insert(
                 _db, "INSERT INTO objects"
-                     " (id, tenant_id, logical_size, chunk_size, width,"
+                     " (id, account_id, logical_size, chunk_size, width,"
                      " failure_domain, stripe_width, placement_seed,"
                      " map_epoch, created_at)"
                      " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
             );
             insert.bind_blob(1, id.bytes, sizeof(id.bytes))
-                .bind_blob(2, o.tenant.bytes, sizeof(o.tenant.bytes))
+                .bind_blob(2, o.account.bytes, sizeof(o.account.bytes))
                 .bind_int64(3, logical_size)
                 .bind_int64(4, o.chunk_size)
                 .bind_int64(5, o.width)
@@ -1577,7 +1581,7 @@ ObjectStore::remove(const RawstdUUID& idempotency_key, const RawstdUUID& id) {
     );
     if (!rawstd_uuid_is_nil(&idempotency_key)) {
         Stmt saved(
-            _db, "INSERT INTO removed_owners(idempotency_key,id,tenant_id) "
+            _db, "INSERT INTO removed_owners(idempotency_key,id,account_id) "
                  "VALUES(?,?,?);"
         );
         saved.bind_blob(1, idempotency_key.bytes, sizeof(idempotency_key.bytes))
@@ -1824,84 +1828,84 @@ std::vector<VersionMember> ObjectStore::remove_version(
     return ret;
 }
 
-void ObjectStore::create_tenant(
-    const RawstdUUID& idempotency_key, const RawstdUUID& tenant
+void ObjectStore::create_account(
+    const RawstdUUID& idempotency_key, const RawstdUUID& account
 ) {
-    if (rawstd_uuid_is_nil(&tenant)) {
+    if (rawstd_uuid_is_nil(&account)) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     std::lock_guard<std::recursive_mutex> lock(_mutex);
-    /* The registry's own mutations are recorded under the tenant they concern.
+    /* The registry's own mutations are recorded under the account they concern.
      */
     if (replay_mutation(
-            _db, idempotency_key, MutationType::create_tenant, tenant
+            _db, idempotency_key, MutationType::create_account, account
         )) {
         // Registered, then removed again by a later request: this retry
         // registers it afresh, as a retried object creation does.
-        Stmt exists(_db, "SELECT 1 FROM tenants WHERE id = ?;");
-        exists.bind_blob(1, tenant.bytes, sizeof(tenant.bytes));
+        Stmt exists(_db, "SELECT 1 FROM accounts WHERE id = ?;");
+        exists.bind_blob(1, account.bytes, sizeof(account.bytes));
         if (exists.step()) {
             return;
         }
     }
 
     Transaction tx(_db);
-    Stmt insert(_db, "INSERT INTO tenants (id, created_at) VALUES (?, ?);");
-    insert.bind_blob(1, tenant.bytes, sizeof(tenant.bytes))
+    Stmt insert(_db, "INSERT INTO accounts (id, created_at) VALUES (?, ?);");
+    insert.bind_blob(1, account.bytes, sizeof(account.bytes))
         .bind_int64(2, static_cast<uint64_t>(time(nullptr)))
         .step();
     record_mutation(
-        _db, idempotency_key, MutationType::create_tenant, tenant, {}
+        _db, idempotency_key, MutationType::create_account, account, {}
     );
     tx.commit();
 }
 
-void ObjectStore::remove_tenant(
-    const RawstdUUID& idempotency_key, const RawstdUUID& tenant
+void ObjectStore::remove_account(
+    const RawstdUUID& idempotency_key, const RawstdUUID& account
 ) {
-    RawstdUUID default_tenant;
-    rawstd_uuid_from_string(&default_tenant, RAWSTOR_DEFAULT_TENANT);
-    if (rawstd_uuid_cmp(&tenant, &default_tenant) == 0) {
+    RawstdUUID default_account;
+    rawstd_uuid_from_string(&default_account, RAWSTOR_DEFAULT_ACCOUNT);
+    if (rawstd_uuid_cmp(&account, &default_account) == 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EPERM);
     }
     std::lock_guard<std::recursive_mutex> lock(_mutex);
     if (replay_mutation(
-            _db, idempotency_key, MutationType::remove_tenant, tenant
+            _db, idempotency_key, MutationType::remove_account, account
         )) {
         return;
     }
 
     Transaction tx(_db);
-    Stmt exists(_db, "SELECT 1 FROM tenants WHERE id = ?;");
-    exists.bind_blob(1, tenant.bytes, sizeof(tenant.bytes));
+    Stmt exists(_db, "SELECT 1 FROM accounts WHERE id = ?;");
+    exists.bind_blob(1, account.bytes, sizeof(account.bytes));
     if (!exists.step()) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
 
-    /* A tenant that owns an object is not empty. */
+    /* An account that owns an object is not empty. */
     {
-        Stmt busy(_db, "SELECT 1 FROM objects WHERE tenant_id = ? LIMIT 1;");
-        busy.bind_blob(1, tenant.bytes, sizeof(tenant.bytes));
+        Stmt busy(_db, "SELECT 1 FROM objects WHERE account_id = ? LIMIT 1;");
+        busy.bind_blob(1, account.bytes, sizeof(account.bytes));
         if (busy.step()) {
-            rawstd_error("The tenant still owns objects\n");
+            rawstd_error("The account still owns objects\n");
             RAWSTD_THROW_SYSTEM_ERROR(EBUSY);
         }
     }
 
     {
-        Stmt del(_db, "DELETE FROM tenants WHERE id = ?;");
-        del.bind_blob(1, tenant.bytes, sizeof(tenant.bytes)).step();
+        Stmt del(_db, "DELETE FROM accounts WHERE id = ?;");
+        del.bind_blob(1, account.bytes, sizeof(account.bytes)).step();
     }
     record_mutation(
-        _db, idempotency_key, MutationType::remove_tenant, tenant, {}
+        _db, idempotency_key, MutationType::remove_account, account, {}
     );
     tx.commit();
 }
 
 std::vector<RawstdUUID>
-ObjectStore::list_tenants(RawstdUUID& token, unsigned int limit) {
+ObjectStore::list_accounts(RawstdUUID& token, unsigned int limit) {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
-    Stmt select(_db, "SELECT id FROM tenants WHERE id>? ORDER BY id;");
+    Stmt select(_db, "SELECT id FROM accounts WHERE id>? ORDER BY id;");
     // The statement reads `after` until it is done; `token` is rewritten.
     const RawstdUUID after = token;
     select.bind_blob(1, after.bytes, sizeof(after.bytes));
@@ -1912,9 +1916,9 @@ ObjectStore::list_tenants(RawstdUUID& token, unsigned int limit) {
             token = ret.back();
             break;
         }
-        RawstdUUID tenant;
-        select.column_uuid(0, &tenant);
-        ret.push_back(tenant);
+        RawstdUUID account;
+        select.column_uuid(0, &account);
+        ret.push_back(account);
     }
     return ret;
 }

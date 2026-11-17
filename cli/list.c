@@ -12,7 +12,7 @@
 #include <string.h>
 
 static const char* const columns[] = {
-    "object_id", "tenant", "target", "location"
+    "object_id", "account", "target", "location"
 };
 static const enum RawstorCliColumnType types[] = {
     RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
@@ -59,9 +59,9 @@ int rawstor_cli_list(const char* location, const RawstorCliOutput* output) {
             rawstor_cli_target_ids(
                 *it, uuid, sizeof(uuid), version, sizeof(version)
             );
-            char tenant[64];
-            if (rawstor_target_tenant(*it, tenant, sizeof(tenant)) < 0) {
-                tenant[0] = '\0';
+            char account[64];
+            if (rawstor_target_account(*it, account, sizeof(account)) < 0) {
+                account[0] = '\0';
             }
             char* target = rawstor_cli_list_target(*it, location);
             if (target == NULL) {
@@ -77,7 +77,7 @@ int rawstor_cli_list(const char* location, const RawstorCliOutput* output) {
             );
             RawstorCliCell cells[] = {
                 rawstor_cli_cell_optional(uuid),
-                rawstor_cli_cell_optional(tenant),
+                rawstor_cli_cell_optional(account),
                 rawstor_cli_cell_string(target),
                 rawstor_cli_cell_string(location_buf),
             };

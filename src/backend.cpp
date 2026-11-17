@@ -78,17 +78,17 @@ Backend::resolve_targets(const RawstdUUID&, const RawstdUUID&) {
 }
 
 rawstd::Task<void>
-Backend::list_tenants(unsigned int, std::vector<RawstdUUID>&, RawstdUUID&) {
+Backend::list_accounts(unsigned int, std::vector<RawstdUUID>&, RawstdUUID&) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
 rawstd::Task<void>
-Backend::create_tenant(const RawstdUUID&, const RawstdUUID&) {
+Backend::create_account(const RawstdUUID&, const RawstdUUID&) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
 rawstd::Task<void>
-Backend::remove_tenant(const RawstdUUID&, const RawstdUUID&) {
+Backend::remove_account(const RawstdUUID&, const RawstdUUID&) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 

@@ -4,7 +4,7 @@ Environment variables tuning the Rawstor client and servers. Defaults are shown 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `RAWSTOR_LOCATION` | *(none)* | Fallback `LOCATION` for `rawstor object create`, `rawstor object list`, `rawstor location info` and `rawstor tenant` when it's omitted from the command line. |
+| `RAWSTOR_LOCATION` | *(none)* | Fallback `LOCATION` for `rawstor object create`, `rawstor object list`, `rawstor location info` and `rawstor account` when it's omitted from the command line. |
 | `RAWSTOR_MDS_OPTS_INFO_INTERVAL` | `300000` | MDS backend INFO/health polling interval in milliseconds; each OST is polled once per interval at its own fixed offset, spreading probes evenly. Must be positive. |
 | `RAWSTOR_MDS_OPTS_INFO_CONCURRENCY` | `128` | Maximum concurrent MDS backend probes, including retries (1–1024); see [MDS health and location information](mds.md#backend-health-and-location-information). |
 | `RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY` | `5000` | Milliseconds after an object create, grow or remove before the OSTs holding its slots are probed again, ahead of their regular slot (`0` probes at once); see [MDS health and location information](mds.md#backend-health-and-location-information). |
@@ -56,7 +56,7 @@ The SPIFFE ID of a process says what it is:
 | `spiffe://<trust_domain>/ost/<ost_id>` | an OST, `ost_id` being its id in the MDS topology |
 | `spiffe://<trust_domain>/mds/<mds_id>` | an MDS |
 | `spiffe://<trust_domain>/admin/<name>` | an operator or control plane |
-| `spiffe://<trust_domain>/tenant/<tenant_id>/client/<name>` | a tenant's client |
+| `spiffe://<trust_domain>/account/<account_id>/client/<name>` | an account's client |
 
 A client takes a server to be an OST or an MDS by its ID: an `ost://` address
 needs an OST and an `mds://` one an MDS. An OST the MDS has resolved must also
@@ -90,13 +90,13 @@ rawstor pki issue --ca ca --cert ost.crt --key ost.key ost       # a new id
 rawstor pki issue --ca ca --cert mds.crt --key mds.key mds       # a new id
 rawstor pki issue --ca ca --cert hv1.crt --key hv1.key admin hv1
 rawstor pki issue --ca ca --cert vm.crt --key vm.key \
-  --role none --object-permissions <object-uuid>:3 client <tenant-uuid> vm-1
+  --role none --object-permissions <object-uuid>:3 client <account-uuid> vm-1
 rawstor pki renew --ca ca --cert ost.crt --key ost.key
 rawstor pki show --cert ost.crt                                  # what it says
 ```
 
 The `vm-1` example grants a virtual machine access only to its disk object:
-replace `<tenant-uuid>` and `<object-uuid>` with the tenant and disk UUIDs.
+replace `<account-uuid>` and `<object-uuid>` with the account and disk UUIDs.
 Mask `3` permits reading, writing and discarding data.
 
 A CA is made for the trust domain of one cluster and keeps it, so every
@@ -104,7 +104,7 @@ certificate it issues is in it. `issue` writes a certificate and a new key
 (mode 0600) for a process, replacing the files. The process is `ost [ID]` (the
 id is the one in the MDS topology, a UUID), `mds [ID]` (the id of the MDS, a UUID
 as well), each with a new id if it is not given, `admin NAME` or
-`client TENANT NAME`. `renew` does the same for the
+`client ACCOUNT NAME`. `renew` does the same for the
 process of a certificate this CA issued, over the same files, and the running
 process reads them again on `SIGHUP` or `SIGUSR1`.
 
@@ -115,7 +115,7 @@ process reads them again on `SIGHUP` or `SIGUSR1`.
 `issue`, `renew` and `show` print what a certificate says, as the other
 commands print their data (`--format table|json|value`, `--column`):
 `identity` (the SPIFFE ID), `role`, `trust_domain`, `id` (of an OST or an MDS),
-`name` (of an admin or a client), `tenant_id` (of a client), `not_after` (when it
+`name` (of an admin or a client), `account_id` (of a client), `not_after` (when it
 expires, UTC) and `issued` (whether the CA signed it). The ones the role does
 not have are empty, `null` in json; `--format value --column id` is how a script
 gets the id of a new OST or MDS.
@@ -193,7 +193,7 @@ mode to the other.
 
 ## Authorization
 
-The client certificate carries its tenant (the SPIFFE identity), access role,
+The client certificate carries its account (the SPIFFE identity), access role,
 and optional object restrictions. Both MDS and OST authorize it directly:
 there is no client registration, permission database, or signing key on MDS.
 A client can use an OST directly while MDS is unavailable.
@@ -202,14 +202,14 @@ Issue client credentials on the CA machine:
 
 ```sh
 rawstor pki issue --ca ca --cert client.crt --key client.key \
-  --role manager client 018f4e2a-2222-7000-8000-000000000001 tenant-manager
+  --role manager client 018f4e2a-2222-7000-8000-000000000001 account-manager
 ```
 
 `--role` is required for a client: `none` grants no default permissions,
 `reader` reads and lists objects, `writer`
 adds writes and discards, and `manager` adds creation, deletion and version
 management. The process role shown as `role=client` is separate from the
-`access_role` shown by `pki show`. Provider `admin` certificates manage tenants,
+`access_role` shown by `pki show`. Provider `admin` certificates manage accounts,
 objects and ownership; `mds` certificates scan OST metadata. Neither provider
 role may write data, and OST certificates grant no provider permissions.
 
@@ -242,17 +242,17 @@ All other objects, including ones created later, are denied. The same grant
 covers the object's versions, whose data remains read-only. Use mask `1` and `rawstor-vhost --readonly` for
 a read-only vhost. Mask `3` grants ordinary data I/O, not allocation, removal,
 version management or repair that needs to allocate a replacement member.
-A `none` client uses the supplied object target; tenant-wide `list` is denied.
+A `none` client uses the supplied object target; account-wide `list` is denied.
 MDS control connections may open to resolve an explicitly permitted object.
 
-With admin credentials, create the tenant in MDS before creating its objects:
+With admin credentials, create the account in MDS before creating its objects:
 
 ```sh
-rawstor tenant create mds://mds:7776 --uuid 018f4e2a-2222-7000-8000-000000000001
+rawstor account create mds://mds:7776 --uuid 018f4e2a-2222-7000-8000-000000000001
 ```
 
-A location without a named tenant uses the client certificate's tenant.
-Naming another tenant is refused. OST checks the owner in local metadata;
+A location without a named account uses the client certificate's account.
+Naming another account is refused. OST checks the owner in local metadata;
 foreign objects return `ENOENT`, insufficient permissions return `EACCES`.
 
 `pki renew` preserves the signed role and restrictions. Use `pki issue` to
@@ -261,7 +261,7 @@ revocation; replacing a file does not revoke copies of it. Reload credentials
 on clients to use the new certificate on new connections. The client library
 reconnects an expired TLS connection with the reloaded credentials when retrying
 I/O. Expiry is checked for
-new commands on established tenant connections as well as during handshakes.
+new commands on established account connections as well as during handshakes.
 A configured CRL is checked on new TLS connections.
 
 The C API in `<rawstor/pki.h>` accepts `RawstorPkiPermissions` in
@@ -270,6 +270,6 @@ Python `pki.issue_client(..., role="none", object_permissions={UUID: 3})` does
 the same; `pki.show()` returns `access_role` and `object_permissions`.
 
 An external CA must issue the [authorization extension](protocol.md#authorization)
-in addition to the SPIFFE SAN. Missing permissions grant no tenant access;
+in addition to the SPIFFE SAN. Missing permissions grant no account access;
 malformed or duplicate extensions are rejected. Plaintext `--insecure`
 deliberately bypasses authentication and authorization.

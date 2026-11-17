@@ -83,7 +83,7 @@ public:
      *
      * `name` is the OST id of an ost and the MDS id of an mds, UUIDs that are
      * made if empty, the name of an admin, and the name of a client of the
-     * tenant `tenant`, which only a client has. The shapes are those of
+     * account `account`, which only a client has. The shapes are those of
      * SpiffeId.
      *
      * Both files are written aside and then renamed over the old ones, so a
@@ -92,7 +92,7 @@ public:
      * the error reports the backup path for recovery.
      */
     std::string issue(
-        Role role, const std::string& tenant, const std::string& name,
+        Role role, const std::string& account, const std::string& name,
         std::chrono::seconds validity, const std::string& cert_file,
         const std::string& key_file, const Permissions& permissions = {}
     ) const;

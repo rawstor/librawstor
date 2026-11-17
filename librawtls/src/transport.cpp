@@ -246,7 +246,7 @@ private:
         parsed->permissions(rawtls::certificate_permissions(cert));
         if (id.role() != rawtls::Role::client &&
             (id.permissions().role || !id.permissions().objects.empty())) {
-            refuse("only tenant clients may carry permissions");
+            refuse("only account clients may carry permissions");
         }
         return *parsed;
     }

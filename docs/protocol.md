@@ -33,11 +33,11 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | `idempotency_key` on mutating `OBJ_*` | ✅ | `mds/src/store.cpp` (`applied_mutations`) |
 | `-ENOSYS` for commands outside a server's role | ✅ | `ost/src/client.cpp`, `mds/src/client.cpp` |
 | `HANDSHAKE`: the first request of every connection, feature bits (no protocol version) | ✅ | `include/rawstor/protocol.h`, OST `ost/src/client.cpp`, MDS `mds/src/client.cpp`, `src/wire_backend.cpp` |
-| Tenant: owner of an object (`ALLOCATE`, `OBJ_CREATE`, `META`), filter of `LIST`; registry `LIST_TENANTS`, `TENANT_CREATE` / `TENANT_REMOVE` on the MDS | ✅ | OST `ost/src/client.cpp`, MDS `mds/src/client.cpp`; [Tenants](tenants.md) |
+| Account: owner of an object (`ALLOCATE`, `OBJ_CREATE`, `META`), filter of `LIST`; registry `LIST_ACCOUNTS`, `ACCOUNT_CREATE` / `ACCOUNT_REMOVE` on the MDS | ✅ | OST `ost/src/client.cpp`, MDS `mds/src/client.cpp`; [Accounts](accounts.md) |
 | Explicit `len` field in the response (`{res, len, hash}`) | ❌ | `res` still carries the payload size |
 | `map_epoch` in the IO frame (epoch-fence) | ❌ | planned in [MDS design](mds.md) |
 | Authentication: mutual TLS on every connection, identity from the certificate | ✅ | [Security design](security.md) (stage 2) |
-| Authorization: certificate tenant roles and object restrictions, checked by MDS and OST | ✅ | [Security design](security.md), `librawtls/authorization.hpp`, MDS and OST dispatch |
+| Authorization: certificate account roles and object restrictions, checked by MDS and OST | ✅ | [Security design](security.md), `librawtls/authorization.hpp`, MDS and OST dispatch |
 
 One binary protocol is spoken by every rawstor server role: `rawstor-ost`
 (object storage) and `rawstor-mds` (metadata server). The authoritative
@@ -127,15 +127,15 @@ role), `0x01..0x1f` data (OST), `0x20..0x3f` metadata shared by OST and MDS,
 | `0x12` | `FREEZE` | OST | Basic (`offset` = chunk offset, `version_id` = the holder's token, `val` = lease in ms) | — |
 | `0x13` | `THAW` | OST | Basic (`offset` = chunk offset, `version_id` = the holder's token) | — |
 | `0x14` | `SET_OWNER` | OST / MDS (witness only) | Basic (`offset` = chunk offset, `version_id` = the new owner) | — |
-| `0x20` | `LIST_TENANTS` | MDS | ListTenants | Tenant rows |
+| `0x20` | `LIST_ACCOUNTS` | MDS | ListAccounts | Account rows |
 | `0x40` | `OBJ_CREATE` | MDS | ObjCreate | ObjCreated |
 | `0x41` | `RESOLVE` | MDS | Basic (`version_id`, nil = live) | ObjDescriptor + chunks |
 | `0x42` | `OBJ_RESIZE` | MDS | ObjOp (`val` = new size) | ObjResized |
 | `0x43` | `OBJ_REMOVE` | MDS | ObjOp | ObjDescriptor + chunks (the removed map) |
 | `0x45` | `OBJ_COMMIT_VERSION` | MDS | ObjCommitVersion + members | ObjVersionCommitted |
 | `0x46` | `OBJ_REMOVE_VERSION` | MDS | ObjOp (`version_id`) | ObjVersionMember records |
-| `0x47` | `TENANT_CREATE` | MDS | TenantOp | — |
-| `0x48` | `TENANT_REMOVE` | MDS | TenantOp | — |
+| `0x47` | `ACCOUNT_CREATE` | MDS | AccountOp | — |
+| `0x48` | `ACCOUNT_REMOVE` | MDS | AccountOp | — |
 | `0x49` | `OBJ_TRANSFER` | MDS | ObjOp (`version_id` = the new owner) | ObjTransferred |
 
 Ids (`object_id`, `version_id`, `ost_id`, ...) are 16-byte UUIDs; a nil
@@ -318,15 +318,15 @@ stamped or `RESYNC` request with `-EOPNOTSUPP`.
 
 ### List — 36 bytes
 
-`limit` ids per page, starting after `token_id` (nil = from the start). `tenant_id`
-limits the listing to the objects that tenant owns; nil lists every object
-([Tenants](tenants.md)).
+`limit` ids per page, starting after `token_id` (nil = from the start). `account_id`
+limits the listing to the objects that account owns; nil lists every object
+([Accounts](accounts.md)).
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
      +---------------------------------------------------------------------------------------+
   0  |                                                                                       |
-     |                                 uint8_t tenant_id[16]                                 |
+     |                                 uint8_t account_id[16]                                 |
      |                                                                                       |
   8  |                                                                                       |
      |                                                                                       |
@@ -342,9 +342,9 @@ limits the listing to the objects that tenant owns; nil lists every object
      +-------------------------------------------+
 ```
 
-### ListTenants — 20 bytes
+### ListAccounts — 20 bytes
 
-`limit` tenants per page (0 = the server's own cap), starting after `token_id`
+`limit` accounts per page (0 = the server's own cap), starting after `token_id`
 (nil = from the start).
 
 ```text
@@ -482,7 +482,7 @@ support). `member_index` is the copy's position among the chunk's members, which
 
 ### Allocate — 60 bytes
 
-Creates one copy of one chunk. `tenant_id` is the tenant that owns the
+Creates one copy of one chunk. `account_id` is the account that owns the
 object (nil for none), recorded in the copy's metadata. `chunk_shift` is `log2(chunk_size)`, 0 for an
 unchunked object; `stripe_width`/`failure_domain`/`width`/`member_role` are the
 chunk's placement identity, stored with it.
@@ -491,7 +491,7 @@ chunk's placement identity, stored with it.
      +0         +1         +2         +3         +4         +5         +6         +7
      +---------------------------------------------------------------------------------------+
   0  |                                                                                       |
-     |                                 uint8_t tenant_id[16]                                 |
+     |                                 uint8_t account_id[16]                                 |
      |                                                                                       |
   8  |                                                                                       |
      |                                                                                       |
@@ -525,7 +525,7 @@ One row per (id, chunk offset); an id with several chunks spans consecutive
 rows. `type` says what the row addresses: `CHUNK` (1) is one chunk stored at
 `chunk_offset`; `OBJECT` (2) is a whole object addressed by id alone, with
 `chunk_offset` 0. The MDS answers one `OBJECT` row per `mds://` object and one
-`CHUNK` row per witness member. `tenant_id` is the owner of the object, all
+`CHUNK` row per witness member. `account_id` is the owner of the object, all
 zero when it has none, whoever asked. `reserved` is all 0. The **last** row is
 always the resume cursor for the next page (a nil id once nothing is left),
 never a result. An empty payload means the far end is already exhausted.
@@ -540,7 +540,7 @@ never a result. An empty payload means the far end is already exhausted.
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
  16  |                                                                                       |
-     |                                 uint8_t tenant_id[16]                                 |
+     |                                 uint8_t account_id[16]                                 |
      |                                                                                       |
  24  |                                                                                       |
      |                                                                                       |
@@ -571,10 +571,10 @@ in no particular order. An empty payload means the object has no versions
 ```
 
 
-### Tenant rows — 16 bytes each
+### Account rows — 16 bytes each
 
-`LIST_TENANTS`' answer: one row per tenant of the page, in ascending order,
-then one more row: the resume cursor, the last tenant of the page while more
+`LIST_ACCOUNTS`' answer: one row per account of the page, in ascending order,
+then one more row: the resume cursor, the last account of the page while more
 follow and nil once nothing is left. An empty payload means the registry is
 already exhausted. An OST answers `-ENOSYS`.
 
@@ -582,7 +582,7 @@ already exhausted. An OST answers `-ENOSYS`.
      +0         +1         +2         +3         +4         +5         +6         +7
      +---------------------------------------------------------------------------------------+
   0  |                                                                                       |
-     |                                 uint8_t tenant_id[16]                                 |
+     |                                 uint8_t account_id[16]                                 |
      |                                                                                       |
   8  |                                                                                       |
      |                                                                                       |
@@ -591,8 +591,8 @@ already exhausted. An OST answers `-ENOSYS`.
 
 ### Meta — 376 bytes
 
-Everything about one stored copy: the tenant that owns its object
-(`tenant_id`), its size, its placement identity, its own
+Everything about one stored copy: the account that owns its object
+(`account_id`), its size, its placement identity, its own
 state (`CLEAN`, `DIRTY`, `LOST`), how many sessions have it open for
 writing right now (`writers`), and the chunk's configuration as last set on
 it (a [Config](#config--312-bytes), at offset 32), and the copy's
@@ -607,7 +607,7 @@ is reserved for an unknown role in an unavailable member's local placeholder.
      +0         +1         +2         +3         +4         +5         +6         +7
      +---------------------------------------------------------------------------------------+
   0  |                                                                                       |
-     |                                 uint8_t tenant_id[16]                                 |
+     |                                 uint8_t account_id[16]                                 |
      |                                                                                       |
   8  |                                                                                       |
      |                                                                                       |
@@ -681,7 +681,7 @@ a nonzero power of two, so 0 (and anything from 64 on) is rejected.
      +0         +1         +2         +3         +4         +5         +6         +7
      +---------------------------------------------------------------------------------------+
   0  |                                                                                       |
-     |                                 uint8_t tenant_id[16]                                 |
+     |                                 uint8_t account_id[16]                                 |
      |                                                                                       |
   8  |                                                                                       |
      |                                                                                       |
@@ -748,7 +748,7 @@ ObjCreated and ObjVersionCommitted are a single `uint64_t map_epoch`.
 
 ### ObjTransferred — 16 bytes
 
-`OBJ_TRANSFER`'s reply: the `tenant_id` that owns the object when the MDS
+`OBJ_TRANSFER`'s reply: the `account_id` that owns the object when the MDS
 answers. A repeat of the request (the same `idempotency_key`) applies nothing
 and reports the owner as it is then, which tells the client whether another
 transfer has come in since its own.
@@ -757,7 +757,7 @@ transfer has come in since its own.
      +0         +1         +2         +3         +4         +5         +6         +7
      +---------------------------------------------------------------------------------------+
   0  |                                                                                       |
-     |                                 uint8_t tenant_id[16]                                 |
+     |                                 uint8_t account_id[16]                                 |
      |                                                                                       |
   8  |                                                                                       |
      |                                                                                       |
@@ -768,7 +768,7 @@ transfer has come in since its own.
 
 `OBJ_RESIZE`'s reply: the new `map_epoch` and the chunk count the object grew
 from, so a retried resize still knows which chunks it has to create, and the
-`tenant_id` that owns the object now, which they are created for.
+`account_id` that owns the object now, which they are created for.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
@@ -776,13 +776,13 @@ from, so a retried resize still knows which chunks it has to create, and the
   0  |                                  uint64_t map_epoch                                   |
      |                                                                                       |
      +-------------------------------------------+-------------------------------------------+
-  8  |           uint32_t old_nchunks            |           tenant_id[0..3]     |
+  8  |           uint32_t old_nchunks            |           account_id[0..3]     |
      |                                           |                               |
      +-------------------------------------------+-------------------------------+
- 16  |                                 uint8_t tenant_id[4..11]                              |
+ 16  |                                 uint8_t account_id[4..11]                              |
      |                                                                                       |
      +-------------------------------------------+-------------------------------------------+
- 24  |         uint8_t tenant_id[12..15]         |
+ 24  |         uint8_t account_id[12..15]         |
      |                                           |
      +-------------------------------------------+
 ```
@@ -902,10 +902,10 @@ ObjVersionMember — 24 bytes:
 ```
 
 
-### TenantOp — 32 bytes
+### AccountOp — 32 bytes
 
-`TENANT_CREATE` registers `tenant_id` (a client-generated UUID, never nil;
-`-EEXIST` if registered); `TENANT_REMOVE` removes a tenant that owns no object
+`ACCOUNT_CREATE` registers `account_id` (a client-generated UUID, never nil;
+`-EEXIST` if registered); `ACCOUNT_REMOVE` removes an account that owns no object
 (`-ENOENT` if unknown, `-EBUSY` while it owns objects). Both are idempotent
 through `idempotency_key`, like every mutating `OBJ_*` request.
 
@@ -913,7 +913,7 @@ through `idempotency_key`, like every mutating `OBJ_*` request.
      +0         +1         +2         +3         +4         +5         +6         +7
      +---------------------------------------------------------------------------------------+
   0  |                                                                                       |
-     |                                 uint8_t tenant_id[16]                                 |
+     |                                 uint8_t account_id[16]                                 |
      |                                                                                       |
   8  |                                                                                       |
      |                                                                                       |
@@ -963,10 +963,10 @@ address was listed.
 MDS and OST read the access policy from the authenticated leaf certificate.
 No authorization payload is added to `RESOLVE` or `OBJ_REMOVE` maps; their
 chunk slots contain the member identity and location. Both services check
-certificate expiry for new tenant commands, the closed command table in
+certificate expiry for new account commands, the closed command table in
 [Security](security.md#roles-and-permissions-per-command), object restrictions and
 the object's owner. Foreign objects return `-ENOENT`; insufficient permissions
-return `-EACCES`. The tenant of an allocation must match the certificate.
+return `-EACCES`. The account of an allocation must match the certificate.
 
 The signed policy is a noncritical private X.509 extension with UUID-derived
 OID `2.25.110097391626234565544022595913142399087` (UUID
@@ -986,19 +986,19 @@ with decimal masks (`read=1`, `write=2`, `manage=4`). Each line,
 including the final one, ends in a newline. At most 128 objects are allowed;
 duplicate objects, nil UUIDs, unknown roles/bits, noncanonical content,
 trailing DER data and duplicate policy extensions are rejected. A missing
-extension grants no tenant permissions. Provider certificates must not carry it.
+extension grants no account permissions. Provider certificates must not carry it.
 
-An explicit object mask overrides the tenant role's default permissions and
+An explicit object mask overrides the account role's default permissions and
 covers all chunks and versions of that object. Objects not listed retain the
 role's defaults. With `none`, every unlisted object is denied. All snapshot
 data is read-only; a manager may manage versions of an allowed object.
-The certificate SAN provides the tenant; it is not duplicated in the policy.
+The certificate SAN provides the account; it is not duplicated in the policy.
 
 The policy is noncritical so standard TLS certificate verification remains
 in effect without suppressing unknown-critical-extension errors. Rawstor
-itself requires a usable policy for tenant access and parses it strictly.
+itself requires a usable policy for account access and parses it strictly.
 The CA signs it along with the identity, expiry and other certificate fields.
 
-A removal retry checks the certificate's current policy and the tenant saved
+A removal retry checks the certificate's current policy and the account saved
 with the removal record. It can return the recorded map only to the owning
-tenant or provider admin; OST independently checks the owner of each member.
+account or provider admin; OST independently checks the owner of each member.

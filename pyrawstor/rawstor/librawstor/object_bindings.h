@@ -36,10 +36,10 @@ PyObject* py_rawstor_object_remove(PyObject* self, PyObject* args);
 PyObject* py_rawstor_object_resize(PyObject* self, PyObject* args);
 PyObject* py_rawstor_object_transfer(PyObject* self, PyObject* args);
 
-PyObject* py_rawstor_tenant_list(PyObject* self, PyObject* args);
-PyObject* py_rawstor_tenant_create(PyObject* self, PyObject* args);
-PyObject* py_rawstor_tenant_remove(PyObject* self, PyObject* args);
-PyObject* py_rawstor_target_tenant(PyObject* self, PyObject* args);
+PyObject* py_rawstor_account_list(PyObject* self, PyObject* args);
+PyObject* py_rawstor_account_create(PyObject* self, PyObject* args);
+PyObject* py_rawstor_account_remove(PyObject* self, PyObject* args);
+PyObject* py_rawstor_target_account(PyObject* self, PyObject* args);
 
 PyObject* py_rawstor_object_chunks(PyObject* self, PyObject* args);
 PyObject* py_rawstor_object_slots(PyObject* self, PyObject* args);

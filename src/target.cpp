@@ -38,9 +38,9 @@
 
 namespace {
 
-// The owner an address stands for (docs/tenants.md): the tenant it names as
-// user information, the default tenant when it names none. EINVAL for a
-// tenant that is not a non-nil UUID.
+// The owner an address stands for (docs/accounts.md): the account it names as
+// user information, the default account when it names none. EINVAL for a
+// account that is not a non-nil UUID.
 RawstdUUID owner_of(const rawstd::URI& uri) {
     RawstdUUID id;
     const std::string& name = uri.username();
@@ -51,7 +51,7 @@ RawstdUUID owner_of(const rawstd::URI& uri) {
         rawstd_uuid_is_nil(&id)) {
         // Not the whole URI: its user information may carry a password.
         rawstd_error(
-            "%s://%s%s: tenant \"%s\" is not a UUID\n", uri.scheme().c_str(),
+            "%s://%s%s: account \"%s\" is not a UUID\n", uri.scheme().c_str(),
             uri.host().c_str(), uri.path().str().c_str(), name.c_str()
         );
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
@@ -66,7 +66,7 @@ RawstdUUID owner_of(const std::vector<rawstd::URI>& uris) {
     for (const rawstd::URI& uri : uris) {
         RawstdUUID other = owner_of(uri);
         if (rawstd_uuid_cmp(&owner, &other) != 0) {
-            rawstd_error("target names different tenants\n");
+            rawstd_error("target names different accounts\n");
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
     }
@@ -498,7 +498,7 @@ resize_one(rawio::Queue& queue, const rawstd::URI& target, uint64_t new_size) {
 }
 
 rawstd::Task<void> transfer_one(
-    rawio::Queue& queue, const rawstd::URI& target, const RawstdUUID& tenant
+    rawio::Queue& queue, const rawstd::URI& target, const RawstdUUID& account
 ) {
     RawstdUUID id = uuid_from_target(target);
     uint64_t offset = extract_offset(target);
@@ -510,7 +510,7 @@ rawstd::Task<void> transfer_one(
         co_await rawstor::Slot::create(queue, strip_path(target));
     std::exception_ptr error;
     try {
-        co_await slot->set_owner(id, offset, tenant);
+        co_await slot->set_owner(id, offset, account);
     } catch (...) {
         error = std::current_exception();
     }
@@ -914,12 +914,12 @@ rawstd::DetachedTask launch_create_version_op_coro(
 }
 
 rawstd::DetachedTask launch_transfer_op_coro(
-    rawstor::Target t, rawio::Queue* queue, RawstdUUID tenant,
+    rawstor::Target t, rawio::Queue* queue, RawstdUUID account,
     int (*cb)(ssize_t result, void* data), void* data
 ) {
     ssize_t result = 0;
     try {
-        co_await t.transfer(*queue, tenant);
+        co_await t.transfer(*queue, account);
     } catch (const std::system_error& e) {
         result = -e.code().value();
     } catch (const std::bad_alloc&) {
@@ -2026,8 +2026,8 @@ Target::resize(rawio::Queue& queue, uint64_t new_size) const {
 }
 
 rawstd::Task<void>
-Target::transfer(rawio::Queue& queue, const RawstdUUID& tenant) const {
-    if (is_logical_chunk(_uris) || rawstd_uuid_is_nil(&tenant)) {
+Target::transfer(rawio::Queue& queue, const RawstdUUID& account) const {
+    if (is_logical_chunk(_uris) || rawstd_uuid_is_nil(&account)) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
 
@@ -2035,7 +2035,7 @@ Target::transfer(rawio::Queue& queue, const RawstdUUID& tenant) const {
     // remove() reaches them. An mds:// URI is one call: its backend
     // transfers the object in the MDS and then in every member.
     co_await rawstd::gather(_uris.size(), [&](size_t i) {
-        return transfer_one(queue, _uris[i], tenant);
+        return transfer_one(queue, _uris[i], account);
     });
 }
 
@@ -2254,12 +2254,12 @@ int rawstor_target_resize(
 }
 
 int rawstor_target_transfer(
-    RawIOQueue* queue, const char* target, const char* tenant,
+    RawIOQueue* queue, const char* target, const char* account,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
         RawstdUUID id;
-        if (rawstd_uuid_from_string(&id, tenant) < 0 ||
+        if (rawstd_uuid_from_string(&id, account) < 0 ||
             rawstd_uuid_is_nil(&id)) {
             return -EINVAL;
         }
@@ -2380,7 +2380,9 @@ int rawstor_target_id(const char* target, char* buf, size_t size) noexcept {
     }
 }
 
-int rawstor_target_tenant(const char* target, char* buf, size_t size) noexcept {
+int rawstor_target_account(
+    const char* target, char* buf, size_t size
+) noexcept {
     try {
         RawstdUUID owner = rawstor::Target(rawstd::URI::uriv(target)).owner();
         RawstdUUIDString text;
