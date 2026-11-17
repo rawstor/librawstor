@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-import re
 from collections.abc import Iterator
 
 from . import librawstor
@@ -27,55 +25,8 @@ def object_spec(
         stripe_width=stripe_width, failure_domain=failure_domain)
 
 
-_UUID = "-".join(f"[0-9a-fA-F]{{{n}}}" for n in (8, 4, 4, 4, 12))
-_OBJECT_ID = re.compile(rf"{_UUID}(/({_UUID}|[0-9a-fA-F]+))?")
-
-
-def _split_uris(location: str) -> list[str]:
-    """Splits a comma-separated list of URIs; a comma escaped with a
-    backslash does not separate (a backslash escapes the next character,
-    including another backslash)."""
-    uris = []
-    start = 0
-    escaped = False
-    for i, c in enumerate(location):
-        if c == "," and not escaped:
-            uris.append(location[start:i])
-            start = i + 1
-        escaped = c == "\\" and not escaped
-    uris.append(location[start:])
-    return uris
-
-
-def _join_location(location: str, object_id: str) -> str:
-    """Appends the object id to every URI of the location. Trailing slashes
-    of a URI are dropped, but not the root path of "file:///"."""
-    joined = []
-    for uri in _split_uris(location):
-        root = uri.find("://") + 3 if "://" in uri else 0
-        joined.append(f"{uri[:root]}{uri[root:].rstrip('/')}/{object_id}")
-    return ",".join(joined)
-
-
 class Target:
-    def __init__(self, uri: str, object_id: str | None = None):
-        """A target is a full target string (`ost://host:port/UUID`, a
-        comma-separated list of them, ...); or `Target(location, UUID)`,
-        which appends the object id (UUID, optionally followed by
-        `/VERSION_UUID` or `/HEX_OFFSET`) to every URI of the location; or
-        a bare UUID, whose location is taken from the RAWSTOR_LOCATION
-        environment variable."""
-        if object_id is not None:
-            if not _OBJECT_ID.fullmatch(object_id):
-                raise ValueError(f"invalid object id: {object_id!r}")
-            uri = _join_location(uri, object_id)
-        elif _OBJECT_ID.fullmatch(uri):
-            location = os.environ.get("RAWSTOR_LOCATION")
-            if not location:
-                raise ValueError(
-                    f"{uri!r} is an object id: location required "
-                    "(set RAWSTOR_LOCATION or pass Target(location, uuid))")
-            uri = _join_location(location, uri)
+    def __init__(self, uri: str):
         self._uri = uri
 
     @property

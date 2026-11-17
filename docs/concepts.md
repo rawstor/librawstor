@@ -239,8 +239,8 @@ location.
 - `UUID` alone -- `LOCATION` is taken from the `RAWSTOR_LOCATION` environment
   variable; it is an error if the variable is unset or empty.
 
-A full target is used as is. Python's `Target(location, uuid)` and `Target(uuid)`
-do the same.
+A full target is used as is. This is a convenience of the command-line tools
+only: the `rawstor_target_*()` API and Python `Target` always take a full target.
 
 ### Single backend target examples
 
