@@ -23,6 +23,7 @@ test_all_SOURCES = test_caspaxos.cpp \
                    test_pipe.cpp \
                    test_ringbuf.cpp \
                    test_socket.cpp \
+                   test_target.cpp \
                    test_threading.cpp \
                    test_units.cpp \
                    test_uri.cpp \

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import re
 from collections.abc import Iterator
 
 from . import librawstor
@@ -25,8 +27,39 @@ def object_spec(
         stripe_width=stripe_width, failure_domain=failure_domain)
 
 
+_UUID = "-".join(f"[0-9a-fA-F]{{{n}}}" for n in (8, 4, 4, 4, 12))
+_OBJECT_ID = re.compile(rf"{_UUID}(/({_UUID}|[0-9a-fA-F]+))?")
+
+
+def _split_uris(location: str) -> list[str]:
+    """Splits a comma-separated list of URIs; "\\," does not separate."""
+    return re.split(r"(?<!\\),", location)
+
+
+def _join_location(location: str, object_id: str) -> str:
+    return ",".join(
+        f"{uri.rstrip('/')}/{object_id}" for uri in _split_uris(location))
+
+
 class Target:
-    def __init__(self, uri: str):
+    def __init__(self, uri: str, object_id: str | None = None):
+        """A target is a full target string (`ost://host:port/UUID`, a
+        comma-separated list of them, ...); or `Target(location, UUID)`,
+        which appends the object id (UUID, optionally followed by
+        `/VERSION_UUID` or `/HEX_OFFSET`) to every URI of the location; or
+        a bare UUID, whose location is taken from the RAWSTOR_LOCATION
+        environment variable."""
+        if object_id is not None:
+            if not _OBJECT_ID.fullmatch(object_id):
+                raise ValueError(f"invalid object id: {object_id!r}")
+            uri = _join_location(uri, object_id)
+        elif _OBJECT_ID.fullmatch(uri):
+            location = os.environ.get("RAWSTOR_LOCATION")
+            if not location:
+                raise ValueError(
+                    f"{uri!r} is an object id: location required "
+                    "(set RAWSTOR_LOCATION or pass Target(location, uuid))")
+            uri = _join_location(location, uri)
         self._uri = uri
 
     @property

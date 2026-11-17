@@ -34,6 +34,7 @@ librawstd_la_SOURCES = $(top_srcdir)/librawstd/include/rawstd/caspaxos.hpp \
                        $(top_srcdir)/librawstd/include/rawstd/ringbuf.hpp \
                        $(top_srcdir)/librawstd/include/rawstd/socket.h \
                        $(top_srcdir)/librawstd/include/rawstd/stats.hpp \
+                       $(top_srcdir)/librawstd/include/rawstd/target.h \
                        $(top_srcdir)/librawstd/include/rawstd/threading.h \
                        $(top_srcdir)/librawstd/include/rawstd/units.h \
                        $(top_srcdir)/librawstd/include/rawstd/uri.hpp \
@@ -48,6 +49,7 @@ librawstd_la_SOURCES = $(top_srcdir)/librawstd/include/rawstd/caspaxos.hpp \
                        pipe.cpp \
                        socket.c \
                        stats.cpp \
+                       target.c \
                        threading.c \
                        units.c \
                        uri.cpp \

@@ -225,6 +225,23 @@ Where:
 - `<uuid>` is the unique identifier of the object (rawstor uses UUID v7).
 - `<version_uuid>` is the identifier of a version of that object (also UUID v7), optional.
 
+### Object UUID instead of a target
+
+Wherever a command-line tool takes a `TARGET` (`rawstor object show`, `remove`,
+`resize`, `transfer`, `chunks`, `slots`, `resolve`, `rawstor version ...`,
+`rawstor-vhost`, `rawstor-vduse`), the target can be spelled as a location and
+an object UUID, which are joined into the full target: the UUID (with an
+optional `/<version_uuid>` or `/<hex offset>`) is appended to every URI of the
+location.
+
+- `LOCATION UUID` -- e.g. `rawstor object show ost://127.0.0.1:9090 019cbfad-a389-7d42-a0f6-c29993ac8c00`
+  is `ost://127.0.0.1:9090/019cbfad-a389-7d42-a0f6-c29993ac8c00`.
+- `UUID` alone -- `LOCATION` is taken from the `RAWSTOR_LOCATION` environment
+  variable; it is an error if the variable is unset or empty.
+
+A full target is used as is. Python's `Target(location, uuid)` and `Target(uuid)`
+do the same.
+
 ### Single backend target examples
 
 - `ost://<host>:<port>/<uuid>` – an object stored on a single OST server.

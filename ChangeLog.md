@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- An object UUID can stand in for a target: `rawstor object show|remove|resize|transfer|chunks|slots|resolve`, `rawstor version ...`, `rawstor-vhost`, `rawstor-vduse` and Python `Target` accept `LOCATION UUID`, or a bare `UUID` with the location taken from `RAWSTOR_LOCATION`.
+
 - Python `rawstor.initialize(insecure=True)` supports running without TLS certificates.
 
 - All systemd services accept additional command-line arguments through `EXTRA_ARGS` in their configuration files, including `--insecure`.

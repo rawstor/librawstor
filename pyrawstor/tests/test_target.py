@@ -1,6 +1,7 @@
 import rawstor
 
 import errno
+import os
 import unittest
 import tempfile
 import uuid
@@ -289,3 +290,41 @@ class TestTargetAccount(unittest.TestCase):
         with self.assertRaises(OSError) as error:
             target.account
         self.assertEqual(error.exception.errno, errno.EINVAL)
+
+
+class TestTargetObjectId(unittest.TestCase):
+    OBJECT = "019cbfad-a389-7d42-a0f6-c29993ac8c00"
+    VERSION = "018f4e2a-3000-7000-8000-000000000001"
+
+    def test_location_and_uuid(self):
+        target = rawstor.Target("ost://a:1,ost://b:2/", self.OBJECT)
+        self.assertEqual(
+            target.uri,
+            f"ost://a:1/{self.OBJECT},ost://b:2/{self.OBJECT}")
+
+    def test_location_and_versioned_uuid(self):
+        target = rawstor.Target("mds://h:1", f"{self.OBJECT}/{self.VERSION}")
+        self.assertEqual(target.uri, f"mds://h:1/{self.OBJECT}/{self.VERSION}")
+
+    def test_invalid_uuid(self):
+        with self.assertRaises(ValueError):
+            rawstor.Target("ost://a:1", "not-a-uuid")
+
+    def test_bare_uuid_uses_env_location(self):
+        old = os.environ.get("RAWSTOR_LOCATION")
+        os.environ["RAWSTOR_LOCATION"] = "ost://a:1"
+        try:
+            self.assertEqual(
+                rawstor.Target(self.OBJECT).uri, f"ost://a:1/{self.OBJECT}")
+            del os.environ["RAWSTOR_LOCATION"]
+            with self.assertRaises(ValueError):
+                rawstor.Target(self.OBJECT)
+        finally:
+            if old is None:
+                os.environ.pop("RAWSTOR_LOCATION", None)
+            else:
+                os.environ["RAWSTOR_LOCATION"] = old
+
+    def test_full_target_is_unchanged(self):
+        uri = f"ost://a:1/{self.OBJECT}"
+        self.assertEqual(rawstor.Target(uri).uri, uri)
