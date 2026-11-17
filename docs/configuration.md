@@ -144,6 +144,22 @@ Any other CA that writes the URI SAN fits as well, see
 
 ### Without TLS
 
+Python programs call `rawstor.initialize(insecure=True)` before importing
+`Location` or `Target`:
+
+```python
+import rawstor
+
+rawstor.initialize(insecure=True)
+location = rawstor.Location("ost://localhost:10000")
+```
+
+This disables TLS and peer authentication for the whole process. Leave all
+`RAWSTOR_TLS_*` settings unset; combining them with `insecure=True` fails.
+Without an explicit call, Python bindings require TLS. Initialization can be
+repeated with the same mode, but changing the mode afterwards raises
+`RuntimeError`.
+
 `--insecure` on the command line of `rawstor`, `rawstor-ost`, `rawstor-mds`,
 `rawstor-vhost`, `rawstor-vduse` and `rawstor-vhost-qemu` runs a process without
 TLS: its connections are plaintext and **no peer is authenticated**, so every
