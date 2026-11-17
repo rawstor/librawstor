@@ -140,7 +140,7 @@ public:
     // own real chunk offsets, off its own WireMap.
     rawstd::Task<void> list_chunks(
         RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-        RawstdUUID& token, RawstdUUID tenant = {}, RawstdUUID version_id = {}
+        RawstdUUID& token, RawstdUUID account = {}, RawstdUUID version_id = {}
     ) override;
 
     // Makes `owner` the owner of the whole object: the MDS first, then every
@@ -152,16 +152,16 @@ public:
         uint64_t offset, const RawstdUUID& owner
     ) override;
 
-    // One page of the tenants registered in the MDS.
-    rawstd::Task<void> list_tenants(
-        unsigned int limit, std::vector<RawstdUUID>& tenants, RawstdUUID& token
+    // One page of the accounts registered in the MDS.
+    rawstd::Task<void> list_accounts(
+        unsigned int limit, std::vector<RawstdUUID>& accounts, RawstdUUID& token
     ) override;
 
-    rawstd::Task<void> create_tenant(
-        const RawstdUUID& idempotency_key, const RawstdUUID& tenant
+    rawstd::Task<void> create_account(
+        const RawstdUUID& idempotency_key, const RawstdUUID& account
     ) override;
-    rawstd::Task<void> remove_tenant(
-        const RawstdUUID& idempotency_key, const RawstdUUID& tenant
+    rawstd::Task<void> remove_account(
+        const RawstdUUID& idempotency_key, const RawstdUUID& account
     ) override;
 
     // DATA creates a whole placed object; WITNESS creates one metadata member.

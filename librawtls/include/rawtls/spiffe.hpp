@@ -30,19 +30,19 @@ enum class Role {
  *   spiffe://<trust_domain>/ost/<ost_id>
  *   spiffe://<trust_domain>/mds/<mds_id>
  *   spiffe://<trust_domain>/admin/<name>
- *   spiffe://<trust_domain>/tenant/<tenant_id>/client/<name>
+ *   spiffe://<trust_domain>/account/<account_id>/client/<name>
  *
  * The trust domain is lowercase letters, digits, '.', '-' and '_' (at most 255
  * bytes), a path segment is letters, digits, '.', '-' and '_' (never "." or
  * ".."), the whole ID is at most 2048 bytes, and `ost_id`, `mds_id` and
- * `tenant_id` are non-nil UUIDs in their canonical lowercase text form. There
+ * `account_id` are non-nil UUIDs in their canonical lowercase text form. There
  * is no user information, port, query or fragment.
  */
 class SpiffeId final {
 private:
     rawstd::URI _uri;
     Role _role;
-    std::string _tenant;
+    std::string _account;
     std::string _name;
     Permissions _permissions;
 
@@ -58,8 +58,8 @@ public:
 
     Role role() const noexcept { return _role; }
 
-    // The tenant of a client, empty for every other role.
-    const std::string& tenant() const noexcept { return _tenant; }
+    // The account of a client, empty for every other role.
+    const std::string& account() const noexcept { return _account; }
 
     // The OST id of an ost, the MDS id of an mds, the name of every other role.
     const std::string& name() const noexcept { return _name; }

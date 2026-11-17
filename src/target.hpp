@@ -192,9 +192,9 @@ public:
     // stored shape as object_id() above.
     const RawstdUUID& version_id() const;
 
-    // The tenant that owns the object (docs/tenants.md): the one the URIs
-    // name as user information, the default tenant when they name none.
-    // EINVAL if one names something that is not a tenant, or they name
+    // The account that owns the object (docs/accounts.md): the one the URIs
+    // name as user information, the default account when they name none.
+    // EINVAL if one names something that is not an account, or they name
     // different ones.
     RawstdUUID owner() const;
 
@@ -228,8 +228,8 @@ public:
     rawstd::Task<void>
     create(rawio::Queue& queue, const RawstorObjectSpec& sp) const;
 
-    // The same, for `owner`, the tenant the object belongs to, rather than
-    // the one the URIs of this target stand for (docs/tenants.md).
+    // The same, for `owner`, the account the object belongs to, rather than
+    // the one the URIs of this target stand for (docs/accounts.md).
     rawstd::Task<void> create(
         rawio::Queue& queue, const RawstorObjectSpec& sp,
         const RawstdUUID& owner
@@ -347,12 +347,12 @@ public:
     // own doc comment.
     rawstd::Task<void> resize(rawio::Queue& queue, uint64_t new_size) const;
 
-    // Makes `tenant` the owner of the object (docs/tenants.md): of every
+    // Makes `account` the owner of the object (docs/accounts.md): of every
     // member's own record, and, for an mds:// target, of the MDS's too (which
-    // answers ENOENT for a tenant it does not know). EINVAL for the nil
-    // tenant. Repeating it after a failure finishes the job.
+    // answers ENOENT for an account it does not know). EINVAL for the nil
+    // account. Repeating it after a failure finishes the job.
     rawstd::Task<void>
-    transfer(rawio::Queue& queue, const RawstdUUID& tenant) const;
+    transfer(rawio::Queue& queue, const RawstdUUID& account) const;
 };
 
 } // namespace rawstor

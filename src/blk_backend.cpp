@@ -262,7 +262,7 @@ rawstd::Task<void> Backend::_bind_object(
 }
 
 rawstd::Task<void> Backend::_page_owned(
-    const RawstdUUID& id, const RawstdUUID& tenant,
+    const RawstdUUID& id, const RawstdUUID& account,
     std::vector<ChunkGroup> found, unsigned int limit,
     std::vector<ChunkGroup>& chunks, RawstdUUID& token
 ) {
@@ -300,11 +300,11 @@ rawstd::Task<void> Backend::_page_owned(
             continue;
         }
         memcpy(
-            group.tenant.bytes, metas.front().tenant_id,
-            sizeof(group.tenant.bytes)
+            group.account.bytes, metas.front().account_id,
+            sizeof(group.account.bytes)
         );
-        if (rawstd_uuid_is_nil(&tenant) ||
-            rawstd_uuid_cmp(&group.tenant, &tenant) == 0) {
+        if (rawstd_uuid_is_nil(&account) ||
+            rawstd_uuid_cmp(&group.account, &account) == 0) {
             chunks.push_back(std::move(group));
         }
     }
@@ -324,8 +324,8 @@ std::string Backend::meta_encode(
         roles += static_cast<char>('0' + (c.roles[i] & 0x7));
     }
 
-    RawstdUUIDString tenant_text;
-    rawstd_uuid_to_string(&identity.tenant, &tenant_text);
+    RawstdUUIDString account_text;
+    rawstd_uuid_to_string(&identity.account, &account_text);
 
     char buf[META_MAX_SIZE];
     int n = snprintf(
@@ -334,13 +334,13 @@ std::string Backend::meta_encode(
         ":h1=%" PRIx64 ":h2=%" PRIx64 ":h3=%" PRIx64 ":resync_owner=%" PRIx64
         ":promised=%" PRIx64 ".%" PRIx64 ":accepted=%" PRIx64 ".%" PRIx64
         ":roles=%s:member_role=%u:width=%u:chunk_size=%" PRIx64 ":size=%" PRIx64
-        ":tenant=%s",
+        ":account=%s",
         META_FORMAT_VERSION, (unsigned int)state, c.epoch, c.sync_id,
         c.sync_id_history[0], c.sync_id_history[1], c.sync_id_history[2],
         c.sync_id_history[3], c.resync_owner, promised.counter,
         promised.proposer, accepted.counter, accepted.proposer, roles.c_str(),
         (unsigned int)identity.member_role, (unsigned int)identity.width,
-        identity.chunk_size, identity.size, tenant_text
+        identity.chunk_size, identity.size, account_text
     );
     if (n < 0 || static_cast<size_t>(n) >= sizeof(buf)) {
         RAWSTD_THROW_SYSTEM_ERROR(EOVERFLOW);
@@ -364,7 +364,7 @@ void Backend::meta_decode(
     unsigned int member_role = 0;
     unsigned int width = 0;
     char roles[RAWSTOR_OBJECT_MAX_WIDTH + 2] = {};
-    char tenant_text[sizeof(RawstdUUIDString)] = {};
+    char account_text[sizeof(RawstdUUIDString)] = {};
     int consumed = 0;
 
     std::string v = trim(value);
@@ -374,15 +374,15 @@ void Backend::meta_decode(
         ":h1=%" SCNx64 ":h2=%" SCNx64 ":h3=%" SCNx64 ":resync_owner=%" SCNx64
         ":promised=%" SCNx64 ".%" SCNx64 ":accepted=%" SCNx64 ".%" SCNx64
         ":roles=%256[0-9-]:member_role=%u:width=%u:chunk_size=%" SCNx64
-        ":size=%" SCNx64 ":tenant=%36[0-9a-fA-F-]%n",
+        ":size=%" SCNx64 ":account=%36[0-9a-fA-F-]%n",
         &version, &parsed_state, &c.epoch, &c.sync_id, &c.sync_id_history[0],
         &c.sync_id_history[1], &c.sync_id_history[2], &c.sync_id_history[3],
         &c.resync_owner, &(*promised).counter, &(*promised).proposer,
         &(*accepted).counter, &(*accepted).proposer, roles, &member_role,
-        &width, &identity->chunk_size, &identity->size, tenant_text, &consumed
+        &width, &identity->chunk_size, &identity->size, account_text, &consumed
     );
     if (n != 19 ||
-        rawstd_uuid_from_string(&identity->tenant, tenant_text) < 0 ||
+        rawstd_uuid_from_string(&identity->account, account_text) < 0 ||
         static_cast<size_t>(consumed) != v.size() ||
         version != META_FORMAT_VERSION ||
         parsed_state > RAWSTOR_OBJECT_SYNC_STATE_LOST || width == 0 ||

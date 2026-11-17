@@ -243,15 +243,15 @@ void certificate_permissions(X509* cert, const Permissions& policy) {
 }
 
 int Authorization::owner(
-    const Transport& connection, const uint8_t* tenant
+    const Transport& connection, const uint8_t* account
 ) const {
     auto peer = connection.peer();
     if (!peer || peer->role() != Role::client) {
         return 0;
     }
     RawstdUUID expected{};
-    if (rawstd_uuid_from_string(&expected, peer->tenant().c_str()) < 0 ||
-        memcmp(expected.bytes, tenant, 16)) {
+    if (rawstd_uuid_from_string(&expected, peer->account().c_str()) < 0 ||
+        memcmp(expected.bytes, account, 16)) {
         return ENOENT;
     }
     return 0;

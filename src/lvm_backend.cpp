@@ -214,7 +214,7 @@ rawstd::Task<int> Backend::_open_version(
 
 rawstd::Task<void> Backend::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token, RawstdUUID tenant, RawstdUUID version_id
+    RawstdUUID& token, RawstdUUID account, RawstdUUID version_id
 ) {
     co_await _cleanup_staging_lvs();
 
@@ -334,7 +334,7 @@ rawstd::Task<void> Backend::list_chunks(
                        )
     );
 
-    co_await _page_owned(id, tenant, std::move(found), limit, chunks, token);
+    co_await _page_owned(id, account, std::move(found), limit, chunks, token);
 
     co_return;
 }
@@ -493,7 +493,7 @@ rawstd::Task<void> Backend::create(
     identity.width = static_cast<uint8_t>(sp.width);
     identity.chunk_size = sp.chunk_size;
     identity.size = sp.size;
-    identity.tenant = owner;
+    identity.account = owner;
     std::string tag = std::string(rawstor_tag_prefix) +
                       meta_encode(state, config, promised, accepted, identity);
 
@@ -744,7 +744,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
     ret.member_role = identity.member_role;
-    memcpy(ret.tenant_id, identity.tenant.bytes, sizeof(ret.tenant_id));
+    memcpy(ret.account_id, identity.account.bytes, sizeof(ret.account_id));
     ret.state = state;
     ret.config = config;
     ret.promised = promised;
@@ -776,7 +776,7 @@ rawstd::Task<void> Backend::_write_meta(
     );
 
     if (owner != nullptr) {
-        identity.tenant = *owner;
+        identity.account = *owner;
     }
     std::string new_tag =
         std::string(rawstor_tag_prefix) +

@@ -224,7 +224,7 @@ rawstd::Task<int> Client::_authorize(
                         RAWSTD_THROW_SYSTEM_ERROR(ENOTCONN);
                     }
                     if (int denied = _authorization.owner(
-                            *_transport, record.tenant_id
+                            *_transport, record.account_id
                         )) {
                         RAWSTD_THROW_SYSTEM_ERROR(denied);
                     }
@@ -446,7 +446,7 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                     client->_transport->peer()->role() ==
                         rawtls::Role::client &&
                     client->_authorization.owner(
-                        *client->_transport, spec.tenant_id
+                        *client->_transport, spec.account_id
                     )) {
                     co_await client->_send_response(
                         head.cmd, head.cid, -ENOENT, 0
@@ -564,12 +564,12 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 if (client->_transport->peer() &&
                     client->_transport->peer()->role() ==
                         rawtls::Role::client) {
-                    RawstdUUID tenant{}, requested{};
+                    RawstdUUID account{}, requested{};
                     rawstd_uuid_from_string(
-                        &tenant, client->_transport->peer()->tenant().c_str()
+                        &account, client->_transport->peer()->account().c_str()
                     );
                     memcpy(
-                        requested.bytes, list_payload.tenant_id,
+                        requested.bytes, list_payload.account_id,
                         sizeof(requested.bytes)
                     );
                     if (!rawstd_uuid_is_nil(&requested) &&
@@ -582,8 +582,8 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                         break;
                     }
                     memcpy(
-                        list_payload.tenant_id, tenant.bytes,
-                        sizeof(tenant.bytes)
+                        list_payload.account_id, account.bytes,
+                        sizeof(account.bytes)
                     );
                 }
                 _list(weak, head, list_payload);
@@ -976,8 +976,8 @@ rawstd::DetachedTask Client::_list(
 
     RawstdUUID token{};
     memcpy(token.bytes, payload.token_id, sizeof(token.bytes));
-    RawstdUUID tenant;
-    memcpy(tenant.bytes, payload.tenant_id, sizeof(tenant.bytes));
+    RawstdUUID account;
+    memcpy(account.bytes, payload.account_id, sizeof(account.bytes));
     std::vector<rawstor::ChunkGroup> groups;
     std::vector<unsigned char> data;
     int result = 0;
@@ -986,7 +986,7 @@ rawstd::DetachedTask Client::_list(
             client->_queue, client->_server.locations(),
             [&](rawstor::Slot& slot) -> rawstd::Task<void> {
                 co_await slot.list_chunks(
-                    {}, payload.limit, groups, token, tenant
+                    {}, payload.limit, groups, token, account
                 );
             }
         );
@@ -1003,7 +1003,7 @@ rawstd::DetachedTask Client::_list(
             RawstorFrameListEntry entry{};
             memcpy(entry.id, group.id.bytes, sizeof(entry.id));
             memcpy(
-                entry.tenant_id, group.tenant.bytes, sizeof(entry.tenant_id)
+                entry.account_id, group.account.bytes, sizeof(entry.account_id)
             );
             if (group.offsets.empty()) {
                 entry.type = RAWSTOR_LIST_ENTRY_OBJECT;
@@ -1051,8 +1051,8 @@ rawstd::DetachedTask Client::_allocate(
 
     RawstdUUID uuid;
     memcpy(uuid.bytes, payload.object_id, sizeof(payload.object_id));
-    RawstdUUID tenant;
-    memcpy(tenant.bytes, payload.tenant_id, sizeof(tenant.bytes));
+    RawstdUUID account;
+    memcpy(account.bytes, payload.account_id, sizeof(account.bytes));
 
     struct OwnershipChange {
         OwnershipChange() { ++ownership_generation; }
@@ -1069,7 +1069,7 @@ rawstd::DetachedTask Client::_allocate(
             client->_queue, client->_server.locations(),
             [&](rawstor::Slot& slot) -> rawstd::Task<void> {
                 co_await slot.create(
-                    uuid, payload.chunk_offset, spec, role, tenant
+                    uuid, payload.chunk_offset, spec, role, account
                 );
             }
         );

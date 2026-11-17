@@ -45,7 +45,7 @@ nav:
   - Design:
       - Protocol: protocol.md
       - MDS design: mds.md
-      - Tenants: tenants.md
+      - Accounts: accounts.md
       - Mirroring: mirroring.md
       - Security: security.md
       - Multi-attach: multiattach.md

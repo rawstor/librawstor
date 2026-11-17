@@ -259,33 +259,33 @@ class TestTarget(unittest.TestCase):
             self.assertEqual(cm.exception.errno, errno.EINVAL)
 
 
-class TestTargetTenant(unittest.TestCase):
-    TENANT = "0197e0a2-7c3b-7d4e-8f10-3a5b6c7d8e9f"
+class TestTargetAccount(unittest.TestCase):
+    ACCOUNT = "0197e0a2-7c3b-7d4e-8f10-3a5b6c7d8e9f"
     OBJECT = "0197e0a2-7c3b-7d4e-8f10-000000000001"
 
-    def test_tenant(self):
+    def test_account(self):
         named = rawstor.Target(
-            f"ost://{self.TENANT}@10.0.0.1:7777/{self.OBJECT}")
-        self.assertEqual(named.tenant, self.TENANT)
+            f"ost://{self.ACCOUNT}@10.0.0.1:7777/{self.OBJECT}")
+        self.assertEqual(named.account, self.ACCOUNT)
 
         plain = rawstor.Target(f"ost://10.0.0.1:7777/{self.OBJECT}")
-        self.assertEqual(plain.tenant, rawstor.DEFAULT_TENANT)
+        self.assertEqual(plain.account, rawstor.DEFAULT_ACCOUNT)
 
-    def test_tenant_of_mirrors(self):
+    def test_account_of_mirrors(self):
         mirrors = rawstor.Target(
-            f"ost://{self.TENANT}@10.0.0.1:7777/{self.OBJECT},"
-            f"ost://{self.TENANT}@10.0.0.2:7777/{self.OBJECT}")
-        self.assertEqual(mirrors.tenant, self.TENANT)
+            f"ost://{self.ACCOUNT}@10.0.0.1:7777/{self.OBJECT},"
+            f"ost://{self.ACCOUNT}@10.0.0.2:7777/{self.OBJECT}")
+        self.assertEqual(mirrors.account, self.ACCOUNT)
 
         split = rawstor.Target(
-            f"ost://{self.TENANT}@10.0.0.1:7777/{self.OBJECT},"
+            f"ost://{self.ACCOUNT}@10.0.0.1:7777/{self.OBJECT},"
             f"ost://10.0.0.2:7777/{self.OBJECT}")
         with self.assertRaises(OSError) as error:
-            split.tenant
+            split.account
         self.assertEqual(error.exception.errno, errno.EINVAL)
 
-    def test_tenant_that_is_not_a_uuid(self):
+    def test_account_that_is_not_a_uuid(self):
         target = rawstor.Target(f"ost://acme@10.0.0.1:7777/{self.OBJECT}")
         with self.assertRaises(OSError) as error:
-            target.tenant
+            target.account
         self.assertEqual(error.exception.errno, errno.EINVAL)

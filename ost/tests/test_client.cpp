@@ -1490,13 +1490,13 @@ TEST(OstClientTest, freeze_without_a_token_is_invalid) {
 
 namespace {
 
-RawstdUUID make_tenant() {
+RawstdUUID make_account() {
     RawstdUUID id;
     EXPECT_EQ(rawstd_uuid7_init(&id), 0);
     return id;
 }
 
-// One LIST page of `client`'s tenant: its rows, without the cursor.
+// One LIST page of `client`'s account: its rows, without the cursor.
 std::vector<RawstorFrameListEntry>
 list_rows(RawIOQueue* queue, rawstor::ostserver::tests::Client& client) {
     client.send_list(RawstdUUID{}, 0);
@@ -1523,7 +1523,7 @@ list_rows(RawIOQueue* queue, rawstor::ostserver::tests::Client& client) {
     return rows;
 }
 
-// One LIST page of `client`'s tenant: the ids it names, without the cursor.
+// One LIST page of `client`'s account: the ids it names, without the cursor.
 std::vector<RawstdUUID>
 list_ids(RawIOQueue* queue, rawstor::ostserver::tests::Client& client) {
     std::vector<RawstdUUID> ids;
@@ -1537,7 +1537,7 @@ list_ids(RawIOQueue* queue, rawstor::ostserver::tests::Client& client) {
 
 } // namespace
 
-// An object records the tenant that owns it when it is created, and META
+// An object records the account that owns it when it is created, and META
 // reports it.
 TEST(OstClientTest, an_object_records_its_owner) {
     rawstor::ostserver::tests::TmpDir dir;
@@ -1553,13 +1553,13 @@ TEST(OstClientTest, an_object_records_its_owner) {
     ASSERT_EQ(rawstd_uuid7_init(&owned), 0);
     RawstdUUID unowned;
     ASSERT_EQ(rawstd_uuid7_init(&unowned), 0);
-    RawstdUUID acme = make_tenant();
+    RawstdUUID acme = make_account();
 
-    client.set_tenant(acme);
+    client.set_account(acme);
     client.send_allocate(owned, 4096, 1);
     expect_response(queue, client, RAWSTOR_CMD_ALLOCATE, 0);
-    // Without a tenant named, the default tenant owns it.
-    client.set_tenant(RawstdUUID{});
+    // Without an account named, the default account owns it.
+    client.set_account(RawstdUUID{});
     client.send_allocate(unowned, 4096, 1);
     expect_response(queue, client, RAWSTOR_CMD_ALLOCATE, 0);
 
@@ -1576,12 +1576,13 @@ TEST(OstClientTest, an_object_records_its_owner) {
             client.recv_response(&meta, sizeof(meta));
         ASSERT_EQ(response.body.res, static_cast<int32_t>(sizeof(meta)));
         EXPECT_EQ(
-            std::memcmp(meta.tenant_id, owner.bytes, sizeof(meta.tenant_id)), 0
+            std::memcmp(meta.account_id, owner.bytes, sizeof(meta.account_id)),
+            0
         );
     }
 }
 
-// An object has an owner: ALLOCATE for the nil tenant is refused.
+// An object has an owner: ALLOCATE for the nil account is refused.
 TEST(OstClientTest, an_object_needs_an_owner) {
     rawstor::ostserver::tests::TmpDir dir;
     int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
@@ -1598,8 +1599,8 @@ TEST(OstClientTest, an_object_needs_an_owner) {
     expect_response(queue, client, RAWSTOR_CMD_ALLOCATE, -EINVAL);
 }
 
-// LIST names the objects a tenant owns; without a tenant it names them all.
-TEST(OstClientTest, list_shows_the_objects_a_tenant_owns) {
+// LIST names the objects an account owns; without an account it names them all.
+TEST(OstClientTest, list_shows_the_objects_a_account_owns) {
     rawstor::ostserver::tests::TmpDir dir;
     int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
     rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
@@ -1609,8 +1610,8 @@ TEST(OstClientTest, list_shows_the_objects_a_tenant_owns) {
     ClientCleanup server_client(std::move(raw_client), queue);
     rawstor::ostserver::tests::Client client(client_fd);
 
-    RawstdUUID acme = make_tenant();
-    RawstdUUID other = make_tenant();
+    RawstdUUID acme = make_account();
+    RawstdUUID other = make_account();
     RawstdUUID in_acme;
     RawstdUUID in_other;
     RawstdUUID in_none;
@@ -1618,18 +1619,18 @@ TEST(OstClientTest, list_shows_the_objects_a_tenant_owns) {
     ASSERT_EQ(rawstd_uuid7_init(&in_other), 0);
     ASSERT_EQ(rawstd_uuid7_init(&in_none), 0);
 
-    client.set_tenant(acme);
+    client.set_account(acme);
     client.send_allocate(in_acme, 4096, 1);
     expect_response(queue, client, RAWSTOR_CMD_ALLOCATE, 0);
-    client.set_tenant(other);
+    client.set_account(other);
     client.send_allocate(in_other, 4096, 1);
     expect_response(queue, client, RAWSTOR_CMD_ALLOCATE, 0);
-    client.set_tenant(RawstdUUID{});
+    client.set_account(RawstdUUID{});
     client.send_allocate(in_none, 4096, 1);
     expect_response(queue, client, RAWSTOR_CMD_ALLOCATE, 0);
 
-    auto only = [&](const RawstdUUID& tenant, const RawstdUUID& expected) {
-        client.set_tenant(tenant);
+    auto only = [&](const RawstdUUID& account, const RawstdUUID& expected) {
+        client.set_account(account);
         std::vector<RawstdUUID> ids = list_ids(queue, client);
         ASSERT_EQ(ids.size(), 1u);
         EXPECT_EQ(rawstd_uuid_cmp(&ids[0], &expected), 0);
@@ -1637,8 +1638,8 @@ TEST(OstClientTest, list_shows_the_objects_a_tenant_owns) {
     only(acme, in_acme);
     only(other, in_other);
 
-    // An administrator names no tenant and sees every object.
-    client.set_tenant(RawstdUUID{});
+    // An administrator names no account and sees every object.
+    client.set_account(RawstdUUID{});
     EXPECT_EQ(list_ids(queue, client).size(), 3u);
 
     // Every row names the owner of its object, whoever asked.
@@ -1650,17 +1651,17 @@ TEST(OstClientTest, list_shows_the_objects_a_tenant_owns) {
                                       ? other
                                       : client.default_owner();
         EXPECT_EQ(
-            std::memcmp(row.tenant_id, owner.bytes, sizeof(row.tenant_id)), 0
+            std::memcmp(row.account_id, owner.bytes, sizeof(row.account_id)), 0
         );
     }
 
-    // A tenant that owns nothing sees nothing.
-    client.set_tenant(make_tenant());
+    // An account that owns nothing sees nothing.
+    client.set_account(make_account());
     EXPECT_TRUE(list_ids(queue, client).empty());
 }
 
-// An object id is unique on its own: a second tenant cannot create it again.
-TEST(OstClientTest, an_object_id_is_unique_across_tenants) {
+// An object id is unique on its own: a second account cannot create it again.
+TEST(OstClientTest, an_object_id_is_unique_across_accounts) {
     rawstor::ostserver::tests::TmpDir dir;
     int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
     rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
@@ -1673,16 +1674,16 @@ TEST(OstClientTest, an_object_id_is_unique_across_tenants) {
     RawstdUUID id;
     ASSERT_EQ(rawstd_uuid7_init(&id), 0);
 
-    client.set_tenant(make_tenant());
+    client.set_account(make_account());
     client.send_allocate(id, 4096, 1);
     expect_response(queue, client, RAWSTOR_CMD_ALLOCATE, 0);
-    client.set_tenant(make_tenant());
+    client.set_account(make_account());
     client.send_allocate(id, 4096, 1);
     expect_response(queue, client, RAWSTOR_CMD_ALLOCATE, -EEXIST);
 }
 
-// The tenant registry is the MDS's: an OST has none.
-TEST(OstClientTest, an_ost_has_no_tenant_registry) {
+// The account registry is the MDS's: an OST has none.
+TEST(OstClientTest, an_ost_has_no_account_registry) {
     rawstor::ostserver::tests::TmpDir dir;
     int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
     rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
@@ -1692,7 +1693,7 @@ TEST(OstClientTest, an_ost_has_no_tenant_registry) {
     ClientCleanup server_client(std::move(raw_client), queue);
     rawstor::ostserver::tests::Client client(client_fd);
 
-    client.send_list_tenants();
+    client.send_list_accounts();
     ASSERT_TRUE(pump_until(queue, [&] {
         return client.bytes_available() >= sizeof(RawstorFrameResponse);
     }));

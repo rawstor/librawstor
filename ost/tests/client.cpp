@@ -56,11 +56,11 @@ namespace rawstor {
 namespace ostserver {
 namespace tests {
 
-Client::Client(int fd) : _fd(fd), _next_cid(0), _tenant{} {
+Client::Client(int fd) : _fd(fd), _next_cid(0), _account{} {
 }
 
-void Client::set_tenant(const RawstdUUID& tenant) {
-    _tenant = tenant;
+void Client::set_account(const RawstdUUID& account) {
+    _account = account;
 }
 
 Client::~Client() {
@@ -82,7 +82,7 @@ uint16_t Client::send_allocate_for(
                 .cid = cid,
             },
         .payload = {
-            .tenant_id = {},
+            .account_id = {},
             .object_id = {},
             .chunk_offset = 0,
             .size = size,
@@ -94,7 +94,7 @@ uint16_t Client::send_allocate_for(
         },
     };
     std::memcpy(
-        frame.payload.tenant_id, owner.bytes, sizeof(frame.payload.tenant_id)
+        frame.payload.account_id, owner.bytes, sizeof(frame.payload.account_id)
     );
     std::memcpy(frame.payload.object_id, id.bytes, sizeof(id.bytes));
     send_all(_fd, &frame, sizeof(frame));
@@ -103,14 +103,14 @@ uint16_t Client::send_allocate_for(
 
 RawstdUUID Client::default_owner() {
     RawstdUUID id;
-    rawstd_uuid_from_string(&id, RAWSTOR_DEFAULT_TENANT);
+    rawstd_uuid_from_string(&id, RAWSTOR_DEFAULT_ACCOUNT);
     return id;
 }
 
 uint16_t
 Client::send_allocate(const RawstdUUID& id, uint64_t size, unsigned int width) {
     return send_allocate_for(
-        rawstd_uuid_is_nil(&_tenant) ? default_owner() : _tenant, id, size,
+        rawstd_uuid_is_nil(&_account) ? default_owner() : _account, id, size,
         width
     );
 }
@@ -300,10 +300,11 @@ uint16_t Client::send_list(const RawstdUUID& token, uint32_t limit) {
                 .cmd = RAWSTOR_CMD_LIST,
                 .cid = cid,
             },
-        .payload = {.tenant_id = {}, .token_id = {}, .limit = limit},
+        .payload = {.account_id = {}, .token_id = {}, .limit = limit},
     };
     std::memcpy(
-        frame.payload.tenant_id, _tenant.bytes, sizeof(frame.payload.tenant_id)
+        frame.payload.account_id, _account.bytes,
+        sizeof(frame.payload.account_id)
     );
     std::memcpy(frame.payload.token_id, token.bytes, sizeof(token.bytes));
     send_all(_fd, &frame, sizeof(frame));
@@ -325,11 +326,11 @@ uint16_t Client::send_handshake(uint64_t features) {
     return cid;
 }
 
-uint16_t Client::send_list_tenants() {
+uint16_t Client::send_list_accounts() {
     uint16_t cid = _next_cid++;
     RawstorFrameBasic frame{};
     frame.head = {
-        .magic = RAWSTOR_MAGIC, .cmd = RAWSTOR_CMD_LIST_TENANTS, .cid = cid
+        .magic = RAWSTOR_MAGIC, .cmd = RAWSTOR_CMD_LIST_ACCOUNTS, .cid = cid
     };
     send_all(_fd, &frame, sizeof(frame));
     return cid;

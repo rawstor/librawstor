@@ -33,8 +33,8 @@ rawstor_SOURCES = chunks.c \
                   rawio_sync.h \
                   remove.c \
                   remove.h \
-                  tenant.c \
-                  tenant.h \
+                  account.c \
+                  account.h \
                   resize.c \
                   resize.h \
                   resolve.c \

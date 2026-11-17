@@ -40,14 +40,14 @@ using rawtls::testing::Pki;
 
 const std::string domain = "cluster.example";
 const std::string ost_id = "0198f1a2-3b4c-7d5e-8f90-a1b2c3d4e5f6";
-const std::string tenant = "0198f1a2-3b4c-7d5e-8f90-0123456789ab";
+const std::string account = "0198f1a2-3b4c-7d5e-8f90-0123456789ab";
 
 std::string server_uri() {
     return "spiffe://" + domain + "/ost/" + ost_id;
 }
 
 std::string client_uri() {
-    return "spiffe://" + domain + "/tenant/" + tenant + "/client/vm42";
+    return "spiffe://" + domain + "/account/" + account + "/client/vm42";
 }
 
 IssueOptions with_uri(const std::string& uri) {
@@ -191,7 +191,7 @@ TEST_F(TransportTest, HandshakeNamesThePeers) {
     EXPECT_EQ(client->peer()->role(), rawtls::Role::ost);
     EXPECT_EQ(client->peer()->name(), ost_id);
     EXPECT_EQ(server->peer()->role(), rawtls::Role::client);
-    EXPECT_EQ(server->peer()->tenant(), tenant);
+    EXPECT_EQ(server->peer()->account(), account);
 }
 
 TEST_F(TransportTest, BytesGoBothWaysThroughTls) {
@@ -562,7 +562,7 @@ TEST_F(HandshakeTest, ServerInAnotherTrustDomainIsRefused) {
 TEST_F(HandshakeTest, ClientInAnotherTrustDomainIsRefused) {
     Identity other = pki.issue(
         "other-client",
-        with_uri("spiffe://other.example/tenant/" + tenant + "/client/vm42")
+        with_uri("spiffe://other.example/account/" + account + "/client/vm42")
     );
     Opened r = run(server_uri(), other, server_identity);
     EXPECT_EQ(r.server_error, EACCES);
@@ -667,7 +667,7 @@ TEST_F(HandshakeTest, CaCertificateAsALeafIsRefused) {
 TEST_F(HandshakeTest, RefusedClientLearnsOnTheNextRead) {
     Identity other = pki.issue(
         "other-client",
-        with_uri("spiffe://other.example/tenant/" + tenant + "/client/vm42")
+        with_uri("spiffe://other.example/account/" + account + "/client/vm42")
     );
     Opened r = run(server_uri(), other, server_identity);
     EXPECT_EQ(r.server_error, EACCES);

@@ -285,8 +285,8 @@ rawstd::Task<uint64_t> Backend::_obj_create(
         .payload = {},
     };
     memcpy(
-        request.payload.tenant_id, owner.bytes,
-        sizeof(request.payload.tenant_id)
+        request.payload.account_id, owner.bytes,
+        sizeof(request.payload.account_id)
     );
     uuid_to_bytes(id, request.payload.id);
     uuid_to_bytes(idempotency_key, request.payload.idempotency_key);
@@ -358,7 +358,7 @@ rawstd::Task<WireResized> Backend::_obj_resize(
     WireResized ret{
         .map_epoch = out.map_epoch, .old_nchunks = out.old_nchunks, .owner = {}
     };
-    memcpy(ret.owner.bytes, out.tenant_id, sizeof(ret.owner.bytes));
+    memcpy(ret.owner.bytes, out.account_id, sizeof(ret.owner.bytes));
     co_return ret;
 }
 
@@ -507,12 +507,12 @@ rawstd::Task<void> Backend::_connect() {
 // object's WireMap.
 rawstd::Task<void> Backend::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token, RawstdUUID tenant, RawstdUUID version_id
+    RawstdUUID& token, RawstdUUID account, RawstdUUID version_id
 ) {
     chunks.clear();
     if (rawstd_uuid_is_nil(&id)) {
         co_await _wire_list_chunks(
-            {}, limit, chunks, token, tenant, version_id
+            {}, limit, chunks, token, account, version_id
         );
         std::vector<RawstdUUID> objects;
         for (const auto& group : chunks) {
@@ -552,44 +552,44 @@ rawstd::Task<void> Backend::list_chunks(
     }
 }
 
-rawstd::Task<void> Backend::list_tenants(
-    unsigned int limit, std::vector<RawstdUUID>& tenants, RawstdUUID& token
+rawstd::Task<void> Backend::list_accounts(
+    unsigned int limit, std::vector<RawstdUUID>& accounts, RawstdUUID& token
 ) {
-    return _wire_list_tenants(limit, tenants, token);
+    return _wire_list_accounts(limit, accounts, token);
 }
 
-rawstd::Task<void> Backend::create_tenant(
-    const RawstdUUID& idempotency_key, const RawstdUUID& tenant
+rawstd::Task<void> Backend::create_account(
+    const RawstdUUID& idempotency_key, const RawstdUUID& account
 ) {
-    RawstorFrameTenantOp request{
+    RawstorFrameAccountOp request{
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
-                .cmd = RAWSTOR_CMD_TENANT_CREATE,
+                .cmd = RAWSTOR_CMD_ACCOUNT_CREATE,
                 .cid = 0,
             },
-        .payload = {.tenant_id = {}, .idempotency_key = {}},
+        .payload = {.account_id = {}, .idempotency_key = {}},
     };
-    uuid_to_bytes(tenant, request.payload.tenant_id);
+    uuid_to_bytes(account, request.payload.account_id);
     uuid_to_bytes(idempotency_key, request.payload.idempotency_key);
-    co_await exchange(&request, sizeof(request), RAWSTOR_CMD_TENANT_CREATE, 0);
+    co_await exchange(&request, sizeof(request), RAWSTOR_CMD_ACCOUNT_CREATE, 0);
 }
 
-rawstd::Task<void> Backend::remove_tenant(
-    const RawstdUUID& idempotency_key, const RawstdUUID& tenant
+rawstd::Task<void> Backend::remove_account(
+    const RawstdUUID& idempotency_key, const RawstdUUID& account
 ) {
-    RawstorFrameTenantOp request{
+    RawstorFrameAccountOp request{
         .head =
             {
                 .magic = RAWSTOR_MAGIC,
-                .cmd = RAWSTOR_CMD_TENANT_REMOVE,
+                .cmd = RAWSTOR_CMD_ACCOUNT_REMOVE,
                 .cid = 0,
             },
-        .payload = {.tenant_id = {}, .idempotency_key = {}},
+        .payload = {.account_id = {}, .idempotency_key = {}},
     };
-    uuid_to_bytes(tenant, request.payload.tenant_id);
+    uuid_to_bytes(account, request.payload.account_id);
     uuid_to_bytes(idempotency_key, request.payload.idempotency_key);
-    co_await exchange(&request, sizeof(request), RAWSTOR_CMD_TENANT_REMOVE, 0);
+    co_await exchange(&request, sizeof(request), RAWSTOR_CMD_ACCOUNT_REMOVE, 0);
 }
 
 rawstd::Task<void> Backend::create(
@@ -833,7 +833,7 @@ rawstd::Task<RawstdUUID> Backend::_obj_transfer(
     RawstorFrameObjTransferredPayload out;
     memcpy(&out, data.data(), sizeof(out));
     RawstdUUID ret;
-    memcpy(ret.bytes, out.tenant_id, sizeof(ret.bytes));
+    memcpy(ret.bytes, out.account_id, sizeof(ret.bytes));
     co_return ret;
 }
 

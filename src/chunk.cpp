@@ -1219,7 +1219,7 @@ rawstd::Task<void> recreate_missing(
                 !has_witness(sp, locations.size()) || i + 1 < locations.size();
             RawstdUUID survivor_owner;
             memcpy(
-                survivor_owner.bytes, survivor->tenant_id,
+                survivor_owner.bytes, survivor->account_id,
                 sizeof(survivor_owner.bytes)
             );
             co_await slot->create(
@@ -1495,7 +1495,7 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
     RawstorObjectSpec spec = agreed ? agreed->spec : RawstorObjectSpec{};
     RawstdUUID owner{};
     if (agreed) {
-        memcpy(owner.bytes, agreed->tenant_id, sizeof(owner.bytes));
+        memcpy(owner.bytes, agreed->account_id, sizeof(owner.bytes));
     }
     for (size_t i = 0; i < locations.size(); ++i) {
         members.push_back(

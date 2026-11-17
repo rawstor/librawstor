@@ -65,12 +65,12 @@ class Target:
         return self._uri == other._uri
 
     @property
-    def tenant(self) -> str:
-        """The tenant that owns the object this target addresses, as a UUID
+    def account(self) -> str:
+        """The account that owns the object this target addresses, as a UUID
         string: the one its URIs name as user information, the default
-        tenant (DEFAULT_TENANT) when they name none. Nothing is contacted.
-        Raises OSError (EINVAL) if the URIs name different tenants."""
-        return librawstor.target_tenant(self._uri)
+        account (DEFAULT_ACCOUNT) when they name none. Nothing is contacted.
+        Raises OSError (EINVAL) if the URIs name different accounts."""
+        return librawstor.target_account(self._uri)
 
     def create(
         self, *, size: int, width: int, chunk_size: int = 0,
@@ -139,13 +139,13 @@ class Target:
             raise ValueError("size cannot be negative")
         librawstor.object_resize(self._uri, size)
 
-    def transfer(self, tenant: str) -> None:
-        """Make `tenant`, a UUID string, the owner of this object, with every
+    def transfer(self, account: str) -> None:
+        """Make `account`, a UUID string, the owner of this object, with every
         copy of every chunk (and in the MDS, for an mds:// object). Raises
-        OSError: ENOENT if an MDS does not know the tenant, EINVAL if it is
+        OSError: ENOENT if an MDS does not know the account, EINVAL if it is
         not a UUID or is the nil one. Repeating it after a failure finishes
-        the job (docs/tenants.md)."""
-        librawstor.object_transfer(self._uri, tenant)
+        the job (docs/accounts.md)."""
+        librawstor.object_transfer(self._uri, account)
 
     def chunks(self) -> list["Target"]:
         """Addressable physical chunk targets, in ascending offset order."""

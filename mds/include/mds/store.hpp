@@ -29,7 +29,7 @@ struct ChunkEntry {
     RawstdUUID id;
     uint64_t offset;
     RawstorListEntryType type;
-    RawstdUUID tenant;
+    RawstdUUID account;
 };
 
 struct ObjectDescriptor {
@@ -69,7 +69,7 @@ struct ScanRecord {
 struct ResizeResult {
     uint64_t map_epoch;
     uint64_t old_nchunks;
-    RawstdUUID tenant;
+    RawstdUUID account;
 };
 
 /* One chunk copy holding a version. */
@@ -108,9 +108,9 @@ private:
     std::function<void(const std::vector<RawstdUUID>&)> _on_space_change;
 
     void _check_layout();
-    // ENOENT unless `tenant` is registered; the nil tenant (none) always is.
-    void _require_tenant(const RawstdUUID& tenant);
-    void _register_default_tenant();
+    // ENOENT unless `account` is registered; the nil account (none) always is.
+    void _require_account(const RawstdUUID& account);
+    void _register_default_account();
     void _sync_backends(const Topology& topology);
     // The caller holds _mutex and has committed.
     void _notify_space_change(std::vector<RawstdUUID> osts);
@@ -129,18 +129,19 @@ public:
     struct Access {
         std::unique_lock<std::recursive_mutex> lock;
         uint32_t permissions;
-        RawstdUUID tenant;
+        RawstdUUID account;
     };
     // Holds ownership state stable through the synchronous operation.
     Access authorize(
         const rawtls::SpiffeId* peer, RawstorCommandType command,
-        const RawstdUUID& object = {}, const RawstdUUID& tenant = {},
+        const RawstdUUID& object = {}, const RawstdUUID& account = {},
         const RawstdUUID& mutation = {}
     );
 
     Access authorize_witness(
         const rawtls::SpiffeId* peer, RawstorCommandType command,
-        const RawstdUUID& object, uint64_t offset, const RawstdUUID& tenant = {}
+        const RawstdUUID& object, uint64_t offset,
+        const RawstdUUID& account = {}
     );
 
     ObjectStore(const std::string& path, Topology topology);
@@ -151,17 +152,17 @@ public:
     ObjectStore& operator=(const ObjectStore&) = delete;
     ObjectStore& operator=(ObjectStore&&) = delete;
 
-    // `tenant` owns the object (docs/tenants.md); nil for none.
+    // `account` owns the object (docs/accounts.md); nil for none.
     void create_witness(
-        const RawstdUUID& tenant, const RawstdUUID& id, uint64_t offset,
+        const RawstdUUID& account, const RawstdUUID& id, uint64_t offset,
         const RawstorObjectSpec& spec
     );
     RawstorObjectMeta witness_meta(const RawstdUUID& id, uint64_t offset);
     void remove_witness(const RawstdUUID& id, uint64_t offset);
 
     /*
-     * Makes `tenant` the owner of the object (docs/tenants.md): ENOENT for an
-     * unknown object or an unregistered tenant, EINVAL for the nil tenant.
+     * Makes `account` the owner of the object (docs/accounts.md): ENOENT for an
+     * unknown object or an unregistered account, EINVAL for the nil account.
      * Idempotent by `idempotency_key` like every mutation: a repeat of it
      * is answered without applying it again. Either way it returns the owner
      * the object has now, which a repeat reports as it is at that time (nil if
@@ -171,10 +172,10 @@ public:
      */
     RawstdUUID transfer(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
-        const RawstdUUID& tenant
+        const RawstdUUID& account
     );
     void set_witness_owner(
-        const RawstdUUID& id, uint64_t offset, const RawstdUUID& tenant
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& account
     );
 
     /*
@@ -195,29 +196,32 @@ public:
 
     /*
      * One page of ids and all their offsets; token is nil on the last page.
-     * Only the objects `tenant` owns, or every object for a nil tenant.
+     * Only the objects `account` owns, or every object for a nil account.
      */
     std::vector<ChunkEntry> list_chunks(
-        const RawstdUUID& tenant, RawstdUUID& token, unsigned int limit
+        const RawstdUUID& account, RawstdUUID& token, unsigned int limit
     );
 
     /*
-     * The tenant registry (docs/tenants.md): the tenants an object can be
-     * created for. create_tenant: EEXIST for a registered id, EINVAL for the
-     * nil UUID. remove_tenant: ENOENT for an unknown tenant, EBUSY while it
+     * The account registry (docs/accounts.md): the accounts an object can be
+     * created for. create_account: EEXIST for a registered id, EINVAL for the
+     * nil UUID. remove_account: ENOENT for an unknown account, EBUSY while it
      * owns objects. Both are idempotent like every mutation.
      */
-    void
-    create_tenant(const RawstdUUID& idempotency_key, const RawstdUUID& tenant);
-    void
-    remove_tenant(const RawstdUUID& idempotency_key, const RawstdUUID& tenant);
+    void create_account(
+        const RawstdUUID& idempotency_key, const RawstdUUID& account
+    );
+    void remove_account(
+        const RawstdUUID& idempotency_key, const RawstdUUID& account
+    );
 
     /*
      * One page of the registry in ascending order, strictly after `token`
-     * (nil = from the start); `token` is the last tenant of the page while
+     * (nil = from the start); `token` is the last account of the page while
      * more follow and nil on the last page. A `limit` of 0 is no limit.
      */
-    std::vector<RawstdUUID> list_tenants(RawstdUUID& token, unsigned int limit);
+    std::vector<RawstdUUID>
+    list_accounts(RawstdUUID& token, unsigned int limit);
 
     std::shared_ptr<const Topology> topology();
 
@@ -267,7 +271,7 @@ public:
      * caller's own rollback) creates it afresh.
      */
     ObjectDescriptor create(
-        const RawstdUUID& tenant, const RawstdUUID& idempotency_key,
+        const RawstdUUID& account, const RawstdUUID& idempotency_key,
         const RawstdUUID& id, uint64_t logical_size, uint64_t chunk_size,
         const PlacementPolicy& policy
     );

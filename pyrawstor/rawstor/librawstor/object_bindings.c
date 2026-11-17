@@ -18,7 +18,7 @@ static void set_os_error(int error) {
 }
 
 /* `bytes` as a canonical UUID string; empty for the nil UUID, which is no
- * tenant. */
+ * account. */
 static void uuid_to_string(const uint8_t bytes[16], char out[37]) {
     static const uint8_t zero[16] = {0};
     if (memcmp(bytes, zero, sizeof(zero)) == 0) {
@@ -614,7 +614,7 @@ typedef struct {
     unsigned long long sync_id;
     unsigned long long sync_id_history[RAWSTOR_OBJECT_SYNC_ID_HISTORY];
     /* The owner as a UUID string, empty for none. */
-    char tenant[37];
+    char account[37];
 } PyObjectMeta;
 
 static void PyObjectMeta_dealloc(PyObjectMeta* self) {
@@ -636,11 +636,11 @@ static PyObject* PyObjectMeta_repr(PyObjectMeta* self) {
 }
 
 static PyObject*
-PyObjectMeta_get_tenant(PyObjectMeta* self, void* Py_UNUSED(closure)) {
-    if (self->tenant[0] == '\0') {
+PyObjectMeta_get_account(PyObjectMeta* self, void* Py_UNUSED(closure)) {
+    if (self->account[0] == '\0') {
         Py_RETURN_NONE;
     }
-    return PyUnicode_FromString(self->tenant);
+    return PyUnicode_FromString(self->account);
 }
 
 static PyObject*
@@ -718,7 +718,7 @@ PyObjectMeta_get_sync_id_history(PyObjectMeta* self, void* Py_UNUSED(closure)) {
 }
 
 static PyGetSetDef PyObjectMeta_getset[] = {
-    {"tenant", (getter)PyObjectMeta_get_tenant, NULL, NULL, NULL},
+    {"account", (getter)PyObjectMeta_get_account, NULL, NULL, NULL},
     {"size", (getter)PyObjectMeta_get_size, NULL, NULL, NULL},
     {"width", (getter)PyObjectMeta_get_width, NULL, NULL, NULL},
     {"chunk_size", (getter)PyObjectMeta_get_chunk_size, NULL, NULL, NULL},
@@ -1116,7 +1116,7 @@ build_mirror_meta(const struct RawstorObjectMeta* meta, ssize_t index) {
     if (py_meta == NULL) {
         return NULL;
     }
-    uuid_to_string(meta->tenant_id, py_meta->tenant);
+    uuid_to_string(meta->account_id, py_meta->account);
     py_meta->size = meta->spec.size;
     py_meta->width = meta->spec.width;
     py_meta->chunk_size = meta->spec.chunk_size;
@@ -1322,8 +1322,8 @@ PyObject* py_rawstor_object_resize(PyObject* Py_UNUSED(self), PyObject* args) {
 PyObject*
 py_rawstor_object_transfer(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* target;
-    const char* tenant;
-    if (!PyArg_ParseTuple(args, "ss", &target, &tenant)) {
+    const char* account;
+    if (!PyArg_ParseTuple(args, "ss", &target, &account)) {
         return NULL;
     }
 
@@ -1334,7 +1334,7 @@ py_rawstor_object_transfer(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
     int sres = rawstor_target_transfer(
-        op.queue, target, tenant, rawstor_sync_op_cb, &op
+        op.queue, target, account, rawstor_sync_op_cb, &op
     );
     ssize_t res = rawstor_sync_op_wait(&op, sres);
     rawstor_sync_op_destroy(&op);
@@ -1392,19 +1392,19 @@ static PyObject* target_list(PyObject* args, TargetListFunction enumerate) {
     return py_list;
 }
 
-PyObject* py_rawstor_tenant_list(PyObject* Py_UNUSED(self), PyObject* args) {
-    return location_page(args, rawstor_location_tenants);
+PyObject* py_rawstor_account_list(PyObject* Py_UNUSED(self), PyObject* args) {
+    return location_page(args, rawstor_location_accounts);
 }
 
-static PyObject* tenant_mutation(
+static PyObject* account_mutation(
     PyObject* args,
     int (*mutate)(
         RawIOQueue*, const char*, const char*, int (*)(ssize_t, void*), void*
     )
 ) {
     const char* location;
-    const char* tenant;
-    if (!PyArg_ParseTuple(args, "ss", &location, &tenant)) {
+    const char* account;
+    if (!PyArg_ParseTuple(args, "ss", &location, &account)) {
         return NULL;
     }
 
@@ -1414,7 +1414,7 @@ static PyObject* tenant_mutation(
         set_os_error(-ires);
         return NULL;
     }
-    int sres = mutate(op.queue, location, tenant, rawstor_sync_op_cb, &op);
+    int sres = mutate(op.queue, location, account, rawstor_sync_op_cb, &op);
     ssize_t res = rawstor_sync_op_wait(&op, sres);
     rawstor_sync_op_destroy(&op);
     if (res < 0) {
@@ -1425,27 +1425,27 @@ static PyObject* tenant_mutation(
     Py_RETURN_NONE;
 }
 
-PyObject* py_rawstor_tenant_create(PyObject* Py_UNUSED(self), PyObject* args) {
-    return tenant_mutation(args, rawstor_location_create_tenant);
+PyObject* py_rawstor_account_create(PyObject* Py_UNUSED(self), PyObject* args) {
+    return account_mutation(args, rawstor_location_create_account);
 }
 
-PyObject* py_rawstor_tenant_remove(PyObject* Py_UNUSED(self), PyObject* args) {
-    return tenant_mutation(args, rawstor_location_remove_tenant);
+PyObject* py_rawstor_account_remove(PyObject* Py_UNUSED(self), PyObject* args) {
+    return account_mutation(args, rawstor_location_remove_account);
 }
 
-PyObject* py_rawstor_target_tenant(PyObject* Py_UNUSED(self), PyObject* args) {
+PyObject* py_rawstor_target_account(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* target;
     if (!PyArg_ParseTuple(args, "s", &target)) {
         return NULL;
     }
 
-    char tenant[64];
-    int res = rawstor_target_tenant(target, tenant, sizeof(tenant));
+    char account[64];
+    int res = rawstor_target_account(target, account, sizeof(account));
     if (res < 0) {
         set_os_error(-res);
         return NULL;
     }
-    return PyUnicode_FromString(tenant);
+    return PyUnicode_FromString(account);
 }
 
 PyObject* py_rawstor_object_chunks(PyObject* Py_UNUSED(self), PyObject* args) {

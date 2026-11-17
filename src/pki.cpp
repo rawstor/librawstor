@@ -70,7 +70,7 @@ int rawstor_pki_init(
 }
 
 int rawstor_pki_issue(
-    const char* dir, enum RawstorPkiRole role, const char* tenant,
+    const char* dir, enum RawstorPkiRole role, const char* account,
     const char* name, unsigned long validity, const char* cert_file,
     const char* key_file, char* identity, size_t size,
     const RawstorPkiPermissions* permissions
@@ -119,7 +119,7 @@ int rawstor_pki_issue(
         }
         give(
             rawtls::CA(dir).issue(
-                r, text(tenant), text(name), seconds(validity), cert_file,
+                r, text(account), text(name), seconds(validity), cert_file,
                 key_file, policy
             ),
             identity

@@ -80,7 +80,7 @@ public:
     // alongside the copy metadata by meta_encode()/meta_decode() below.
     // _write_meta() must read the existing record and carry this part through
     // unchanged rather than reset it, since it never receives this identity
-    // itself; only a non-null `owner` replaces the recorded tenant. chunk_size
+    // itself; only a non-null `owner` replaces the recorded account. chunk_size
     // here is always the full byte value -- RawstorFrameAllocatePayload's own
     // chunk_shift is only a wire-transfer encoding (its own doc comment on
     // why), already converted back to bytes before reaching this local record.
@@ -89,8 +89,8 @@ public:
         uint8_t width;
         uint64_t chunk_size;
         uint64_t size;
-        // The tenant that owns the object (docs/tenants.md); nil for none.
-        RawstdUUID tenant;
+        // The account that owns the object (docs/accounts.md); nil for none.
+        RawstdUUID account;
     };
 
 protected:
@@ -146,12 +146,12 @@ protected:
 
     // The page of list_chunks() out of `found`, the groups after the resume
     // point in id order: up to `limit` of them, each with its owner read from
-    // its own metadata, those of other tenants skipped before they count
-    // against the limit (docs/tenants.md). A backend without a tenant keeps
+    // its own metadata, those of other accounts skipped before they count
+    // against the limit (docs/accounts.md). A backend without an account keeps
     // every group, and a listing of one `id` is left as it is. `token` is the
     // last id of a page that more groups follow, nil otherwise.
     rawstd::Task<void> _page_owned(
-        const RawstdUUID& id, const RawstdUUID& tenant,
+        const RawstdUUID& id, const RawstdUUID& account,
         std::vector<ChunkGroup> found, unsigned int limit,
         std::vector<ChunkGroup>& chunks, RawstdUUID& token
     );

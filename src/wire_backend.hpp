@@ -133,11 +133,11 @@ protected:
 
     rawstd::Task<void> _wire_list_chunks(
         RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-        RawstdUUID& token, RawstdUUID tenant = {}, RawstdUUID version_id = {}
+        RawstdUUID& token, RawstdUUID account = {}, RawstdUUID version_id = {}
     );
 
-    rawstd::Task<void> _wire_list_tenants(
-        unsigned int limit, std::vector<RawstdUUID>& tenants, RawstdUUID& token
+    rawstd::Task<void> _wire_list_accounts(
+        unsigned int limit, std::vector<RawstdUUID>& accounts, RawstdUUID& token
     );
 
     rawstd::Task<void> _wire_set_owner(

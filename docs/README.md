@@ -14,8 +14,8 @@ Design:
 
 - [Protocol](protocol.md) -- the wire protocol `rawstor-ost` and `rawstor-mds` speak: commands and frame layouts.
 - [MDS design](mds.md) -- the metadata storage target: placement, chunk allocation, versions.
-- [Tenants](tenants.md) -- namespaces of objects: addressing, wire protocol, storage layout, the MDS registry.
-- [Security](security.md) -- planned authentication, authorization, TLS, tenants and at-rest encryption, in stages.
+- [Accounts](accounts.md) -- namespaces of objects: addressing, wire protocol, storage layout, the MDS registry.
+- [Security](security.md) -- planned authentication, authorization, TLS, accounts and at-rest encryption, in stages.
 - [Mirroring](mirroring.md) -- N-way mirror failure model and recovery.
 - [CASPaxos](caspaxos.md) -- a replicated register without a leader: acceptors and coroutine-based proposers.
 - [Multi-attach](multiattach.md) -- several writer processes of one mirrored object, in stages.

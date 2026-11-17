@@ -150,8 +150,8 @@ public:
             RAWSTD_THROW_SYSTEM_ERROR(error);
         }
         memcpy(
-            _request.payload.tenant_id, owner.bytes,
-            sizeof(_request.payload.tenant_id)
+            _request.payload.account_id, owner.bytes,
+            sizeof(_request.payload.account_id)
         );
         memcpy(
             _request.payload.object_id, id.bytes,
@@ -356,7 +356,7 @@ private:
 public:
     BackendOpList(
         const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
-        const RawstdUUID& token, unsigned int limit, const RawstdUUID& tenant,
+        const RawstdUUID& token, unsigned int limit, const RawstdUUID& account,
         const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, "list", 0, 0),
@@ -368,14 +368,14 @@ public:
                     .cid = cid,
                 },
             .payload = {
-                .tenant_id = {},
+                .account_id = {},
                 .token_id = {},
                 .limit = limit,
             },
         }) {
         memcpy(
-            _request.payload.tenant_id, tenant.bytes,
-            sizeof(_request.payload.tenant_id)
+            _request.payload.account_id, account.bytes,
+            sizeof(_request.payload.account_id)
         );
         memcpy(
             _request.payload.token_id, token.bytes,
@@ -423,25 +423,25 @@ public:
     }
 };
 
-// LIST_TENANTS' own request shape (RawstorFrameListTenants): a resume token
-// and a limit, answered by tenant rows plus a trailing resume cursor.
-class BackendOpListTenants final : public BackendOp {
+// LIST_ACCOUNTS' own request shape (RawstorFrameListAccounts): a resume token
+// and a limit, answered by account rows plus a trailing resume cursor.
+class BackendOpListAccounts final : public BackendOp {
 private:
-    RawstorFrameListTenants _request;
-    std::vector<RawstorFrameTenantEntry> _response_data;
+    RawstorFrameListAccounts _request;
+    std::vector<RawstorFrameAccountEntry> _response_data;
 
 public:
-    BackendOpListTenants(
+    BackendOpListAccounts(
         const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
         const RawstdUUID& token, unsigned int limit,
         const rawstd::TraceEvent& trace_event
     ) :
-        BackendOp(backend, cid, trace_event, "list_tenants", 0, 0),
+        BackendOp(backend, cid, trace_event, "list_accounts", 0, 0),
         _request({
             .head =
                 {
                     .magic = RAWSTOR_MAGIC,
-                    .cmd = RAWSTOR_CMD_LIST_TENANTS,
+                    .cmd = RAWSTOR_CMD_LIST_ACCOUNTS,
                     .cid = cid,
                 },
             .payload = {
@@ -472,7 +472,7 @@ public:
         }
 
         if (!error && response->body.res > 0) {
-            if (response->body.res % sizeof(RawstorFrameTenantEntry) != 0) {
+            if (response->body.res % sizeof(RawstorFrameAccountEntry) != 0) {
                 RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
             }
             return static_cast<size_t>(response->body.res);
@@ -485,12 +485,12 @@ public:
     void response_body_cb(
         const iovec* iov, unsigned int niov, size_t result
     ) override {
-        _response_data.resize(result / sizeof(RawstorFrameTenantEntry));
+        _response_data.resize(result / sizeof(RawstorFrameAccountEntry));
         rawstd_iovec_to_buf(iov, niov, 0, _response_data.data(), result);
         _dispatch(result, 0);
     }
 
-    std::vector<RawstorFrameTenantEntry> take_response_data() {
+    std::vector<RawstorFrameAccountEntry> take_response_data() {
         return std::move(_response_data);
     }
 };
@@ -941,7 +941,7 @@ rawstd::Task<std::vector<unsigned char>> Backend::exchange(
 
 rawstd::Task<void> Backend::_wire_list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token, RawstdUUID tenant, RawstdUUID version_id
+    RawstdUUID& token, RawstdUUID account, RawstdUUID version_id
 ) {
     co_await _ensure_large_receive_ring();
 
@@ -978,7 +978,7 @@ rawstd::Task<void> Backend::_wire_list_chunks(
 
     std::shared_ptr<BackendOpList> op = std::make_shared<BackendOpList>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        input_token, limit, tenant, trace_event
+        input_token, limit, account, trace_event
     );
     _add_op(op);
 
@@ -1024,14 +1024,16 @@ rawstd::Task<void> Backend::_wire_list_chunks(
         const RawstorFrameListEntry& entry = entries[i];
         RawstdUUID entry_id;
         memcpy(entry_id.bytes, entry.id, sizeof(entry_id.bytes));
-        RawstdUUID entry_tenant;
-        memcpy(entry_tenant.bytes, entry.tenant_id, sizeof(entry_tenant.bytes));
+        RawstdUUID entry_account;
+        memcpy(
+            entry_account.bytes, entry.account_id, sizeof(entry_account.bytes)
+        );
         if (entry.type == RAWSTOR_LIST_ENTRY_OBJECT) {
             // Native access exposes physical members, never logical maps.
             if (location().scheme() == "ost") {
                 continue;
             }
-            chunks.push_back(ChunkGroup{entry_id, {}, entry_tenant});
+            chunks.push_back(ChunkGroup{entry_id, {}, entry_account});
             continue;
         }
         if (entry.type != RAWSTOR_LIST_ENTRY_CHUNK) {
@@ -1042,7 +1044,7 @@ rawstd::Task<void> Backend::_wire_list_chunks(
             chunks.back().offsets.push_back(entry.chunk_offset);
         } else {
             chunks.push_back(
-                ChunkGroup{entry_id, {entry.chunk_offset}, entry_tenant}
+                ChunkGroup{entry_id, {entry.chunk_offset}, entry_account}
             );
         }
     }
@@ -1061,19 +1063,19 @@ rawstd::Task<void> Backend::_wire_list_chunks(
 // sp is forwarded on the wire unchanged (see BackendOpAllocate); the
 // The server preserves the requested member role and placement identity;
 // one connection addresses one data or metadata-only member.
-rawstd::Task<void> Backend::_wire_list_tenants(
-    unsigned int limit, std::vector<RawstdUUID>& tenants, RawstdUUID& token
+rawstd::Task<void> Backend::_wire_list_accounts(
+    unsigned int limit, std::vector<RawstdUUID>& accounts, RawstdUUID& token
 ) {
     co_await _ensure_large_receive_ring();
 
     const RawstdUUID input_token = token;
-    tenants.clear();
+    accounts.clear();
     token = {};
 
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('l', "fd = %d\n", fd());
 
-    std::shared_ptr<BackendOpListTenants> op =
-        std::make_shared<BackendOpListTenants>(
+    std::shared_ptr<BackendOpListAccounts> op =
+        std::make_shared<BackendOpListAccounts>(
             std::static_pointer_cast<Backend>(shared_from_this()),
             _cid_counter++, input_token, limit, trace_event
         );
@@ -1091,7 +1093,7 @@ rawstd::Task<void> Backend::_wire_list_tenants(
         op->request_cb(e.code().value());
     }
 
-    std::vector<RawstorFrameTenantEntry> entries;
+    std::vector<RawstorFrameAccountEntry> entries;
     try {
         co_await *op;
         entries = op->take_response_data();
@@ -1105,13 +1107,13 @@ rawstd::Task<void> Backend::_wire_list_tenants(
     if (entries.empty()) {
         co_return;
     }
-    tenants.reserve(entries.size() - 1);
+    accounts.reserve(entries.size() - 1);
     for (size_t i = 0; i + 1 < entries.size(); ++i) {
         RawstdUUID id;
-        memcpy(id.bytes, entries[i].tenant_id, sizeof(id.bytes));
-        tenants.push_back(id);
+        memcpy(id.bytes, entries[i].account_id, sizeof(id.bytes));
+        accounts.push_back(id);
     }
-    memcpy(token.bytes, entries.back().tenant_id, sizeof(token.bytes));
+    memcpy(token.bytes, entries.back().account_id, sizeof(token.bytes));
 }
 
 rawstd::Task<void> Backend::_wire_create(

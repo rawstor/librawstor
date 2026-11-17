@@ -204,7 +204,7 @@ rawstd::Task<int> Backend::_open_version(
 
 rawstd::Task<void> Backend::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token, RawstdUUID tenant, RawstdUUID version_id
+    RawstdUUID& token, RawstdUUID account, RawstdUUID version_id
 ) {
     if (!rawstd_uuid_is_nil(&version_id)) {
         // A version is described by meta() only; its chunks are not listed.
@@ -297,7 +297,7 @@ rawstd::Task<void> Backend::list_chunks(
         );
 
         co_await _page_owned(
-            id, tenant, std::move(found), limit, chunks, token
+            id, account, std::move(found), limit, chunks, token
         );
     } catch (const std::system_error&) {
         throw;
@@ -450,7 +450,7 @@ rawstd::Task<void> Backend::create(
             identity.width = static_cast<uint8_t>(sp.width);
             identity.chunk_size = sp.chunk_size;
             identity.size = sp.size;
-            identity.tenant = owner;
+            identity.account = owner;
 
             // meta_encode()'s own (shorter, variable-length) return value
             // is NUL-padded out to a fixed META_MAX_SIZE bytes here,
@@ -616,7 +616,7 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     ret.spec.width = identity.width;
     ret.spec.chunk_size = identity.chunk_size;
     ret.member_role = identity.member_role;
-    memcpy(ret.tenant_id, identity.tenant.bytes, sizeof(ret.tenant_id));
+    memcpy(ret.account_id, identity.account.bytes, sizeof(ret.account_id));
     ret.state = state;
     ret.config = config;
     ret.promised = promised;
@@ -671,7 +671,7 @@ rawstd::Task<void> Backend::_write_meta(
         // across every rewrite -- required here specifically, since this
         // is an in-place overwrite without O_TRUNC (see above).
         if (owner != nullptr) {
-            identity.tenant = *owner;
+            identity.account = *owner;
         }
         std::string encoded =
             meta_encode(state, config, promised, accepted, identity);

@@ -195,11 +195,11 @@ jobs:
         RAWSTOR=${GITHUB_WORKSPACE}/${LIBRAWSTOR}/cli/rawstor
         TD=cluster.example
         OST_ID=$(cat /proc/sys/kernel/random/uuid)
-        TENANT_ID=00000000-0000-0000-0000-000000000001
+        ACCOUNT_ID=00000000-0000-0000-0000-000000000001
         # The CA needs no TLS itself, so these run without any settings.
         ${RAWSTOR} pki init --trust-domain ${TD} ca
         ${RAWSTOR} pki issue --ca ca --cert ost.pem --key ost.key ost ${OST_ID}
-        ${RAWSTOR} pki issue --ca ca --cert cli.pem --key cli.key --role manager client ${TENANT_ID} ci
+        ${RAWSTOR} pki issue --ca ca --cert cli.pem --key cli.key --role manager client ${ACCOUNT_ID} ci
         ${RAWSTOR} pki renew --ca ca --cert ost.pem --key ost.key
         # A certificate of another CA is not renewed.
         ${RAWSTOR} pki init --trust-domain ${TD} other
@@ -451,7 +451,7 @@ jobs:
         read -r UUID TARGET <<< "${CREATED}"
         sudo cp /etc/rawstor/tls/cli.settings /etc/rawstor-vhost.conf
         # Provider admin credentials may inspect/read objects, but cannot write.
-        # Tenant write access with certificate permissions is covered by sources-testio.
+        # Account write access with certificate permissions is covered by sources-testio.
         sudo mkdir -p /etc/systemd/system/rawstor-vhost@${UUID}.service.d
         printf '[Service]\nExecStart=\nExecStart=/usr/bin/rawstor-vhost --readonly --socket-path=/run/rawstor/%%i.sock ost://127.0.0.1:7777/%%i\n' | sudo tee /etc/systemd/system/rawstor-vhost@${UUID}.service.d/readonly.conf
         sudo systemctl daemon-reload

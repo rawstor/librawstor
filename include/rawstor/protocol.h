@@ -31,12 +31,12 @@ extern "C" {
 #define RAWSTOR_FEATURES_SUPPORTED UINT64_C(0)
 
 /*
- * Tenants (docs/tenants.md). An object has one tenant, its owner, recorded
+ * Accounts (docs/accounts.md). An object has one account, its owner, recorded
  * when it is created (OBJ_CREATE, ALLOCATE) and reported by META; it is not
  * part of the object's address: an object id is unique on its own. LIST takes
- * a tenant as a filter. The nil UUID is "no filter" there: a LIST without a
- * tenant lists every object. A client that names no tenant when it creates an
- * object creates it for the default tenant (RAWSTOR_DEFAULT_TENANT,
+ * an account as a filter. The nil UUID is "no filter" there: a LIST without a
+ * account lists every object. A client that names no account when it creates an
+ * object creates it for the default account (RAWSTOR_DEFAULT_ACCOUNT,
  * <rawstor/location.h>), which every MDS registers.
  */
 
@@ -149,20 +149,21 @@ extern "C" {
 #define RAWSTOR_CMD_THAW 0x13
 
 /*
- * SET_OWNER (docs/tenants.md): records the tenant in `version_id` as the owner
- * of the member `object_id`/`offset` names, in the member's own metadata.
+ * SET_OWNER (docs/accounts.md): records the account in `version_id` as the
+ * owner of the member `object_id`/`offset` names, in the member's own metadata.
  * Rides RawstorFrameBasic, has no response payload and is idempotent: setting
  * the owner a member already has changes nothing.
  */
 #define RAWSTOR_CMD_SET_OWNER 0x14
 
 /*
- * The tenants registered in an MDS (docs/tenants.md): rides RawstorFrameBasic
+ * The accounts registered in an MDS (docs/accounts.md): rides RawstorFrameBasic
  * (every field unused), its response payload is a packed array of
- * RawstorFrameTenantEntry (body.res = count * sizeof(RawstorFrameTenantEntry)),
- * in no particular order. An OST answers -ENOSYS.
+ * RawstorFrameAccountEntry (body.res = count *
+ * sizeof(RawstorFrameAccountEntry)), in no particular order. An OST answers
+ * -ENOSYS.
  */
-#define RAWSTOR_CMD_LIST_TENANTS 0x20
+#define RAWSTOR_CMD_LIST_ACCOUNTS 0x20
 
 /*
  * Object (MDS) commands -- docs/mds.md, "Wire protocol": create/resolve/
@@ -189,18 +190,18 @@ extern "C" {
 #define RAWSTOR_CMD_OBJ_COMMIT_VERSION 0x45
 #define RAWSTOR_CMD_OBJ_REMOVE_VERSION 0x46
 /*
- * Tenant registry of the MDS (docs/tenants.md): TENANT_CREATE registers a
- * client-generated tenant id, TENANT_REMOVE removes an empty one (-EBUSY
- * while it has objects, -EPERM for the default tenant). Both ride
- * RawstorFrameTenantOpPayload and carry an idempotency_key like every
+ * Account registry of the MDS (docs/accounts.md): ACCOUNT_CREATE registers a
+ * client-generated account id, ACCOUNT_REMOVE removes an empty one (-EBUSY
+ * while it has objects, -EPERM for the default account). Both ride
+ * RawstorFrameAccountOpPayload and carry an idempotency_key like every
  * mutating OBJ_* request.
  */
-#define RAWSTOR_CMD_TENANT_CREATE 0x47
-#define RAWSTOR_CMD_TENANT_REMOVE 0x48
+#define RAWSTOR_CMD_ACCOUNT_CREATE 0x47
+#define RAWSTOR_CMD_ACCOUNT_REMOVE 0x48
 /*
- * OBJ_TRANSFER: makes the tenant in `version_id` the owner of the object `id`
- * (-ENOENT for an unknown object or an unregistered tenant, -EINVAL for the
- * nil tenant). Rides RawstorFrameObjOpPayload, so it carries an
+ * OBJ_TRANSFER: makes the account in `version_id` the owner of the object `id`
+ * (-ENOENT for an unknown object or an unregistered account, -EINVAL for the
+ * nil account). Rides RawstorFrameObjOpPayload, so it carries an
  * idempotency_key like every mutating OBJ_* request. Its response is a
  * RawstorFrameObjTransferredPayload: the owner the object has when the MDS
  * answers, which a repeat of the request (same idempotency_key) reads without
@@ -293,7 +294,7 @@ struct RawstorFrameSetObject {
 } RAWSTOR_PACKED;
 
 /*
- * LIST's request: `tenant_id` limits the listing to the objects that tenant
+ * LIST's request: `account_id` limits the listing to the objects that account
  * owns (nil = every object); `token_id` resumes strictly after the id it names
  * -- every offset a listed id has is always reported together in the same page
  * (rawstor::Backend::list_chunks()'s own contract, src/backend.hpp: one page
@@ -307,7 +308,7 @@ struct RawstorFrameSetObject {
  * the start", matching a nil RawstdUUID.
  */
 struct RawstorFrameListPayload {
-    uint8_t tenant_id[16];
+    uint8_t account_id[16];
     uint8_t token_id[16];
     uint32_t limit;
 } RAWSTOR_PACKED;
@@ -338,7 +339,7 @@ struct RawstorFrameList {
  * stored at `chunk_offset`; RAWSTOR_LIST_ENTRY_OBJECT is a whole object
  * addressed by id alone (an mds:// object, whose chunks are placed by its
  * map), with `chunk_offset` 0. `reserved` is all 0. The resume cursor row
- * has type 0 and is not interpreted as a result. `tenant_id` is the owner of
+ * has type 0 and is not interpreted as a result. `account_id` is the owner of
  * the object the row addresses, all 0 when it has none, whoever asked.
  */
 enum RawstorListEntryType {
@@ -348,46 +349,46 @@ enum RawstorListEntryType {
 
 struct RawstorFrameListEntry {
     uint8_t id[16];
-    uint8_t tenant_id[16]; /* owner of the object; all 0 for none */
+    uint8_t account_id[16]; /* owner of the object; all 0 for none */
     uint64_t chunk_offset;
     uint8_t type; /* enum RawstorListEntryType */
     uint8_t reserved[7];
 } RAWSTOR_PACKED;
 
 /*
- * LIST_TENANTS' request: `token_id` resumes strictly after the tenant it
+ * LIST_ACCOUNTS' request: `token_id` resumes strictly after the account it
  * names (nil = from the start), `limit` caps the page (0 = the server's own
  * cap).
  */
-struct RawstorFrameListTenantsPayload {
+struct RawstorFrameListAccountsPayload {
     uint8_t token_id[16];
     uint32_t limit;
 } RAWSTOR_PACKED;
 
-struct RawstorFrameListTenants {
+struct RawstorFrameListAccounts {
     struct RawstorFrameHead head;
-    struct RawstorFrameListTenantsPayload payload;
+    struct RawstorFrameListAccountsPayload payload;
 } RAWSTOR_PACKED;
 
 /*
- * One LIST_TENANTS response row. The rows are the page's tenants in
- * ascending order followed by one more: the resume cursor, a nil tenant once
+ * One LIST_ACCOUNTS response row. The rows are the page's accounts in
+ * ascending order followed by one more: the resume cursor, a nil account once
  * nothing is left, never a result. An empty body means the far end is
  * exhausted.
  */
-struct RawstorFrameTenantEntry {
-    uint8_t tenant_id[16];
+struct RawstorFrameAccountEntry {
+    uint8_t account_id[16];
 } RAWSTOR_PACKED;
 
-/* TENANT_CREATE / TENANT_REMOVE request payload. */
-struct RawstorFrameTenantOpPayload {
-    uint8_t tenant_id[16];
+/* ACCOUNT_CREATE / ACCOUNT_REMOVE request payload. */
+struct RawstorFrameAccountOpPayload {
+    uint8_t account_id[16];
     uint8_t idempotency_key[16];
 } RAWSTOR_PACKED;
 
-struct RawstorFrameTenantOp {
+struct RawstorFrameAccountOp {
     struct RawstorFrameHead head;
-    struct RawstorFrameTenantOpPayload payload;
+    struct RawstorFrameAccountOpPayload payload;
 } RAWSTOR_PACKED;
 
 /* One LIST_VERSIONS response row. */
@@ -472,7 +473,7 @@ struct RawstorFrameConfig {
  * RawstorObjectSpec's own doc comment in target.h.
  */
 struct RawstorFrameAllocatePayload {
-    uint8_t tenant_id[16];
+    uint8_t account_id[16];
     uint8_t object_id[16];
     uint64_t chunk_offset;
     uint64_t size;
@@ -519,7 +520,7 @@ struct RawstorFrameResponse {
  * payload read, or a two-part iovec write).
  */
 struct RawstorFrameMetaPayload {
-    uint8_t tenant_id[16];
+    uint8_t account_id[16];
     uint64_t size;
     RawstorSyncStateType state;
     uint8_t chunk_shift;
@@ -615,7 +616,7 @@ struct RawstorFrameObjPolicy {
  * an mds:// object's chunk_size is always a nonzero power of two.
  */
 struct RawstorFrameObjCreatePayload {
-    uint8_t tenant_id[16];
+    uint8_t account_id[16];
     uint8_t id[16];              /* client-generated, like every object id */
     uint8_t idempotency_key[16]; /* idempotency key, see OBJ_* above */
     uint64_t logical_size;
@@ -654,18 +655,18 @@ struct RawstorFrameObjOp {
 /*
  * OBJ_RESIZE response payload: `old_nchunks` is the chunk count the
  * object grew from, so a retried resize still knows which chunks it has
- * to materialize. `tenant_id` is the owner of the object now, which the
+ * to materialize. `account_id` is the owner of the object now, which the
  * chunks it adds are created for.
  */
 struct RawstorFrameObjResizedPayload {
     uint64_t map_epoch;
     uint32_t old_nchunks;
-    uint8_t tenant_id[16];
+    uint8_t account_id[16];
 } RAWSTOR_PACKED;
 
 /* OBJ_TRANSFER response payload: the owner of the object now. */
 struct RawstorFrameObjTransferredPayload {
-    uint8_t tenant_id[16];
+    uint8_t account_id[16];
 } RAWSTOR_PACKED;
 
 /*
@@ -791,7 +792,7 @@ static inline int rawstor_frame_meta_encode(
         return EINVAL;
     }
     memset(out, 0, sizeof(*out));
-    memcpy(out->tenant_id, in->tenant_id, sizeof(out->tenant_id));
+    memcpy(out->account_id, in->account_id, sizeof(out->account_id));
     out->size = in->spec.size;
     out->width = (uint8_t)in->spec.width;
     out->chunk_shift =
@@ -818,7 +819,7 @@ static inline int rawstor_frame_meta_decode(
         in->chunk_shift >= 64 || in->width == 0) {
         return EPROTO;
     }
-    memcpy(out->tenant_id, in->tenant_id, sizeof(out->tenant_id));
+    memcpy(out->account_id, in->account_id, sizeof(out->account_id));
     out->writers = in->writers;
     out->spec.size = in->size;
     out->spec.width = in->width;
@@ -887,8 +888,8 @@ RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameHandshakePayload, 8);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListPayload, 36);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListEntry, 48);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameVersionEntry, 16);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameTenantEntry, 16);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameTenantOpPayload, 32);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameAccountEntry, 16);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameAccountOpPayload, 32);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameIOPayload, 29);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorObjectBallot, 16);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameConfig, 312);

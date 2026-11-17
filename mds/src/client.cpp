@@ -29,8 +29,8 @@ using rawstor::mdsserver::PlacementSlot;
 using rawstor::mdsserver::Topology;
 using rawstor::mdsserver::VersionMember;
 
-// The most objects (or tenants) one LIST (LIST_TENANTS) page carries; a request
-// asking for more (or for no particular number, 0) gets this many.
+// The most objects (or accounts) one LIST (LIST_ACCOUNTS) page carries; a
+// request asking for more (or for no particular number, 0) gets this many.
 const unsigned int list_limit = 1024;
 
 // Reads exactly `size` bytes of the next part of a request into `buf`. The
@@ -292,29 +292,30 @@ rawstd::Task<void> Client::_dispatch(
         );
         break;
     }
-    case RAWSTOR_CMD_LIST_TENANTS: {
-        RawstorFrameListTenantsPayload payload{};
+    case RAWSTOR_CMD_LIST_ACCOUNTS: {
+        RawstorFrameListAccountsPayload payload{};
         co_await recv_all(stream, &payload, sizeof(payload));
         RawstdUUID token = uuid_of(payload.token_id);
         unsigned int limit = payload.limit == 0 || payload.limit > list_limit
                                  ? list_limit
                                  : payload.limit;
-        std::vector<RawstorFrameTenantEntry> entries;
+        std::vector<RawstorFrameAccountEntry> entries;
         int32_t res = 0;
         try {
             auto access =
                 store.authorize(client->_transport->peer(), head.cmd, {}, {});
-            std::vector<RawstdUUID> tenants = store.list_tenants(token, limit);
-            entries.resize(tenants.size() + 1);
-            for (size_t i = 0; i < tenants.size(); ++i) {
+            std::vector<RawstdUUID> accounts =
+                store.list_accounts(token, limit);
+            entries.resize(accounts.size() + 1);
+            for (size_t i = 0; i < accounts.size(); ++i) {
                 memcpy(
-                    entries[i].tenant_id, tenants[i].bytes,
-                    sizeof(entries[i].tenant_id)
+                    entries[i].account_id, accounts[i].bytes,
+                    sizeof(entries[i].account_id)
                 );
             }
             memcpy(
-                entries.back().tenant_id, token.bytes,
-                sizeof(entries.back().tenant_id)
+                entries.back().account_id, token.bytes,
+                sizeof(entries.back().account_id)
             );
         } catch (const std::system_error& e) {
             res = -e.code().value();
@@ -330,21 +331,23 @@ rawstd::Task<void> Client::_dispatch(
         }
         break;
     }
-    case RAWSTOR_CMD_TENANT_CREATE:
-    case RAWSTOR_CMD_TENANT_REMOVE: {
-        RawstorFrameTenantOpPayload payload;
+    case RAWSTOR_CMD_ACCOUNT_CREATE:
+    case RAWSTOR_CMD_ACCOUNT_REMOVE: {
+        RawstorFrameAccountOpPayload payload;
         co_await recv_all(stream, &payload, sizeof(payload));
         int32_t res = 0;
         try {
             auto access =
                 store.authorize(client->_transport->peer(), head.cmd, {}, {});
-            if (head.cmd == RAWSTOR_CMD_TENANT_CREATE) {
-                store.create_tenant(
-                    uuid_of(payload.idempotency_key), uuid_of(payload.tenant_id)
+            if (head.cmd == RAWSTOR_CMD_ACCOUNT_CREATE) {
+                store.create_account(
+                    uuid_of(payload.idempotency_key),
+                    uuid_of(payload.account_id)
                 );
             } else {
-                store.remove_tenant(
-                    uuid_of(payload.idempotency_key), uuid_of(payload.tenant_id)
+                store.remove_account(
+                    uuid_of(payload.idempotency_key),
+                    uuid_of(payload.account_id)
                 );
             }
         } catch (const std::system_error& e) {
@@ -382,7 +385,7 @@ rawstd::Task<void> Client::_dispatch(
             auto access = store.authorize_witness(
                 client->_transport->peer(), head.cmd,
                 uuid_of(payload.object_id), payload.chunk_offset,
-                uuid_of(payload.tenant_id)
+                uuid_of(payload.account_id)
             );
             RawstorObjectSpec spec{};
             RawstorMemberRole role{};
@@ -390,7 +393,7 @@ rawstd::Task<void> Client::_dispatch(
                     rawstor_frame_allocate_decode(&payload, &spec, &role)) {
                 RAWSTD_THROW_SYSTEM_ERROR(error);
             }
-            const RawstdUUID owner = uuid_of(payload.tenant_id);
+            const RawstdUUID owner = uuid_of(payload.account_id);
             if (role != RAWSTOR_MEMBER_WITNESS || rawstd_uuid_is_nil(&owner)) {
                 RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
             }
@@ -469,7 +472,7 @@ rawstd::Task<void> Client::_dispatch(
                 uuid_of(payload.idempotency_key), uuid_of(payload.id),
                 uuid_of(payload.version_id)
             );
-            memcpy(out.tenant_id, owner.bytes, sizeof(out.tenant_id));
+            memcpy(out.account_id, owner.bytes, sizeof(out.account_id));
             res = sizeof(out);
         } catch (const std::system_error& e) {
             res = -e.code().value();
@@ -531,7 +534,7 @@ rawstd::Task<void> Client::_dispatch(
         try {
             auto access = store.authorize(
                 client->_transport->peer(), head.cmd, uuid_of(payload.id),
-                uuid_of(payload.tenant_id)
+                uuid_of(payload.account_id)
             );
             // 1ull << chunk_shift is undefined from 64 on; 0 would be a
             // chunk_size of 0, which an mds:// object never has.
@@ -542,8 +545,8 @@ rawstd::Task<void> Client::_dispatch(
             if (rawstd_uuid_is_nil(&object)) {
                 RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
             }
-            // Every object has an owner (docs/tenants.md).
-            const RawstdUUID owner = uuid_of(payload.tenant_id);
+            // Every object has an owner (docs/accounts.md).
+            const RawstdUUID owner = uuid_of(payload.account_id);
             if (rawstd_uuid_is_nil(&owner)) {
                 RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
             }
@@ -609,11 +612,12 @@ rawstd::Task<void> Client::_dispatch(
         try {
             auto access = store.authorize(
                 client->_transport->peer(), head.cmd, {},
-                uuid_of(payload.tenant_id)
+                uuid_of(payload.account_id)
             );
             auto records = store.list_chunks(
-                rawstd_uuid_is_nil(&access.tenant) ? uuid_of(payload.tenant_id)
-                                                   : access.tenant,
+                rawstd_uuid_is_nil(&access.account)
+                    ? uuid_of(payload.account_id)
+                    : access.account,
                 token, limit
             );
             for (const auto& record : records) {
@@ -629,8 +633,8 @@ rawstd::Task<void> Client::_dispatch(
                 RawstorFrameListEntry entry{};
                 memcpy(entry.id, record.id.bytes, sizeof(entry.id));
                 memcpy(
-                    entry.tenant_id, record.tenant.bytes,
-                    sizeof(entry.tenant_id)
+                    entry.account_id, record.account.bytes,
+                    sizeof(entry.account_id)
                 );
                 entry.chunk_offset = record.offset;
                 entry.type = record.type;
@@ -697,7 +701,9 @@ rawstd::Task<void> Client::_dispatch(
             );
             out.map_epoch = result.map_epoch;
             out.old_nchunks = static_cast<uint32_t>(result.old_nchunks);
-            memcpy(out.tenant_id, result.tenant.bytes, sizeof(out.tenant_id));
+            memcpy(
+                out.account_id, result.account.bytes, sizeof(out.account_id)
+            );
         } catch (const std::system_error& e) {
             res = -e.code().value();
         }

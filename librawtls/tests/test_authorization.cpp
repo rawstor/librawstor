@@ -11,13 +11,13 @@
 #include <system_error>
 
 namespace {
-const std::string tenant = "018f4e2a-0000-7000-8000-000000000001";
+const std::string account = "018f4e2a-0000-7000-8000-000000000001";
 const std::string object = "018f4e2a-0000-7000-8000-000000000002";
 
 class Connection : public rawtls::Transport {
 public:
     rawtls::SpiffeId identity{
-        "spiffe://cluster.example/tenant/" + tenant + "/client/test"
+        "spiffe://cluster.example/account/" + account + "/client/test"
     };
     uint64_t expiry = UINT64_MAX;
 
@@ -155,7 +155,7 @@ TEST(AuthorizationTest, expired_certificates_and_foreign_owners_are_denied) {
     connection.identity.permissions({RAWSTOR_ROLE_MANAGER, {}});
     rawtls::Authorization authorization;
     RawstdUUID owner{}, other{};
-    ASSERT_EQ(rawstd_uuid_from_string(&owner, tenant.c_str()), 0);
+    ASSERT_EQ(rawstd_uuid_from_string(&owner, account.c_str()), 0);
     ASSERT_EQ(rawstd_uuid7_init(&other), 0);
     EXPECT_EQ(authorization.owner(connection, owner.bytes), 0);
     EXPECT_EQ(authorization.owner(connection, other.bytes), ENOENT);

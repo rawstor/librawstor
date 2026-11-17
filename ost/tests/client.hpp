@@ -22,7 +22,7 @@ class Client final {
 private:
     int _fd;
     uint16_t _next_cid;
-    RawstdUUID _tenant;
+    RawstdUUID _account;
 
 public:
     // Takes ownership of fd (closed by the destructor).
@@ -34,12 +34,12 @@ public:
     Client& operator=(const Client&) = delete;
     Client& operator=(Client&&) = delete;
 
-    // The tenant of the following ALLOCATE (its owner) and LIST (its filter);
+    // The account of the following ALLOCATE (its owner) and LIST (its filter);
     // none until set. An ALLOCATE while none is set creates for the default
-    // tenant, which every object needs an owner of.
-    void set_tenant(const RawstdUUID& tenant);
+    // account, which every object needs an owner of.
+    void set_account(const RawstdUUID& account);
 
-    // The tenant an object belongs to when none is named.
+    // The account an object belongs to when none is named.
     static RawstdUUID default_owner();
 
     // ALLOCATE for exactly `owner`, nil included.
@@ -56,7 +56,7 @@ public:
         const RawstdUUID& id, uint64_t chunk_offset = 0,
         const RawstdUUID& session_id = {}
     );
-    uint16_t send_list_tenants();
+    uint16_t send_list_accounts();
     // HANDSHAKE offering `features`; its answer is a payload of 8 bytes.
     uint16_t send_handshake(uint64_t features);
     uint16_t send_meta(const RawstdUUID& id, uint64_t chunk_offset);

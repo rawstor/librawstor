@@ -11,7 +11,7 @@ from pathlib import Path
 from rawstor import pki
 
 OST = "0198f1a2-3b4c-7d5e-8f90-a1b2c3d4e5f6"
-TENANT = "0198f1a2-3b4c-7d5e-8f90-0123456789ab"
+ACCOUNT = "0198f1a2-3b4c-7d5e-8f90-0123456789ab"
 MDS = "0198f1a2-3b4c-7d5e-8f90-fedcba987654"
 
 
@@ -109,15 +109,15 @@ class TestPki(unittest.TestCase):
             "spiffe://cluster.example/admin/ops",
         )
         self.assertEqual(
-            pki.issue_client(self.ca, TENANT, "vm-1", crt, key, role="reader"),
-            f"spiffe://cluster.example/tenant/{TENANT}/client/vm-1",
+            pki.issue_client(self.ca, ACCOUNT, "vm-1", crt, key, role="reader"),
+            f"spiffe://cluster.example/account/{ACCOUNT}/client/vm-1",
         )
 
     def test_client_permissions_survive_renewal(self):
         pki.init(self.ca, "cluster.example")
         crt, key = self.dir / "client.crt", self.dir / "client.key"
         permissions = {OST: 1, MDS: 0}
-        pki.issue_client(self.ca, TENANT, "vm", crt, key,
+        pki.issue_client(self.ca, ACCOUNT, "vm", crt, key,
                          role="manager", object_permissions=permissions)
         before = pki.show(crt)
         self.assertEqual(before.access_role, "manager")
@@ -128,21 +128,21 @@ class TestPki(unittest.TestCase):
         self.assertEqual(after.access_role, before.access_role)
         self.assertEqual(after.object_permissions, permissions)
         with self.assertRaises((OSError, ValueError)):
-            pki.issue_client(self.ca, TENANT, "vm", crt, key,
+            pki.issue_client(self.ca, ACCOUNT, "vm", crt, key,
                              role="manager", object_permissions={OST: 8})
         self.assertEqual(pki.show(crt).object_permissions, permissions)
 
     def test_none_with_object_permissions_survives_renewal(self):
         pki.init(self.ca, "cluster.example")
         crt, key = self.dir / "vhost.crt", self.dir / "vhost.key"
-        pki.issue_client(self.ca, TENANT, "vhost", crt, key,
+        pki.issue_client(self.ca, ACCOUNT, "vhost", crt, key,
                          role="none", object_permissions={OST: 3})
         self.assertEqual(pki.show(crt).access_role, "none")
         self.assertEqual(pki.show(crt).object_permissions, {OST: 3})
         pki.renew(self.ca, crt, key)
         self.assertEqual(pki.show(crt).access_role, "none")
         self.assertEqual(pki.show(crt).object_permissions, {OST: 3})
-        pki.issue_client(self.ca, TENANT, "empty", crt, key, role="none")
+        pki.issue_client(self.ca, ACCOUNT, "empty", crt, key, role="none")
         self.assertEqual(pki.show(crt).access_role, "none")
         self.assertEqual(pki.show(crt).object_permissions, {})
         admin = self.dir / "admin.crt"

@@ -90,7 +90,7 @@ private:
     // locations than that -- rawstor-ost opens only its own copy, an
     // mds:// location stands for the whole object.
     RawstorObjectSpec _spec;
-    // The tenant the object belongs to, as its copies record it: a copy
+    // The account the object belongs to, as its copies record it: a copy
     // recreated later belongs to it too.
     RawstdUUID _owner;
     std::vector<Member> _members;

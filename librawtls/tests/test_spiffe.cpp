@@ -28,7 +28,7 @@ TEST(SpiffeTest, Ost) {
     EXPECT_EQ(id.role(), rawtls::Role::ost);
     EXPECT_EQ(id.trust_domain(), "cluster.example");
     EXPECT_EQ(id.name(), uuid_a);
-    EXPECT_TRUE(id.tenant().empty());
+    EXPECT_TRUE(id.account().empty());
     EXPECT_TRUE(id.is_server());
 }
 
@@ -50,10 +50,10 @@ TEST(SpiffeTest, Admin) {
 
 TEST(SpiffeTest, Client) {
     std::string uri =
-        "spiffe://cluster.example/tenant/" + uuid_b + "/client/vm42.disk0";
+        "spiffe://cluster.example/account/" + uuid_b + "/client/vm42.disk0";
     rawtls::SpiffeId id(uri);
     EXPECT_EQ(id.role(), rawtls::Role::client);
-    EXPECT_EQ(id.tenant(), uuid_b);
+    EXPECT_EQ(id.account(), uuid_b);
     EXPECT_EQ(id.name(), "vm42.disk0");
     EXPECT_EQ(id.uri().str(), uri);
     EXPECT_FALSE(id.is_server());
@@ -110,12 +110,12 @@ TEST(SpiffeTest, Shape) {
     expect_rejected("spiffe://cluster.example/ost/" + uuid_a + "/extra");
     expect_rejected("spiffe://cluster.example/mds/" + uuid_a + "/extra");
     expect_rejected("spiffe://cluster.example/admin/a/b");
-    expect_rejected("spiffe://cluster.example/tenant/" + uuid_b);
-    expect_rejected("spiffe://cluster.example/tenant/" + uuid_b + "/client");
+    expect_rejected("spiffe://cluster.example/account/" + uuid_b);
+    expect_rejected("spiffe://cluster.example/account/" + uuid_b + "/client");
     expect_rejected(
-        "spiffe://cluster.example/tenant/" + uuid_b + "/client/a/b"
+        "spiffe://cluster.example/account/" + uuid_b + "/client/a/b"
     );
-    expect_rejected("spiffe://cluster.example/tenant/" + uuid_b + "/admin/a");
+    expect_rejected("spiffe://cluster.example/account/" + uuid_b + "/admin/a");
     expect_rejected("spiffe://cluster.example/client/a");
 }
 
@@ -137,10 +137,10 @@ TEST(SpiffeTest, Uuids) {
         "spiffe://cluster.example/ost/0198F1A2-3B4C-7D5E-8F90-A1B2C3D4E5F6"
     );
     expect_rejected(
-        "spiffe://cluster.example/tenant/"
+        "spiffe://cluster.example/account/"
         "00000000-0000-0000-0000-000000000000/client/a"
     );
-    expect_rejected("spiffe://cluster.example/tenant/team/client/a");
+    expect_rejected("spiffe://cluster.example/account/team/client/a");
 }
 
 TEST(SpiffeTest, Length) {

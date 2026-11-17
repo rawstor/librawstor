@@ -33,8 +33,8 @@ int rawstor_cli_show(const char* target, const RawstorCliOutput* output) {
         return rawstd_exitcode_for_errno((int)-result);
     }
 
-    char tenant[64];
-    int ores = rawstor_cli_op_owner(&op, target, tenant, sizeof(tenant));
+    char account[64];
+    int ores = rawstor_cli_op_owner(&op, target, account, sizeof(account));
     rawstor_cli_op_destroy(&op);
     if (ores < 0) {
         fprintf(stderr, "rawstor_target_meta() failed: %s\n", strerror(-ores));
@@ -49,7 +49,7 @@ int rawstor_cli_show(const char* target, const RawstorCliOutput* output) {
     );
     int has_version = version_id[0] != '\0';
     static const char* const version_columns[] = {"object_id", "version_id",
-                                                  "tenant",    "target",
+                                                  "account",   "target",
                                                   "location",  "size",
                                                   "mirrors"};
     static const enum RawstorCliColumnType version_types[] = {
@@ -58,7 +58,7 @@ int rawstor_cli_show(const char* target, const RawstorCliOutput* output) {
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_SIZE,
         RAWSTOR_CLI_COLUMN_NUMBER
     };
-    static const char* const live_columns[] = {"object_id", "tenant",
+    static const char* const live_columns[] = {"object_id", "account",
                                                "target",    "location",
                                                "size",      "mirrors"};
     static const enum RawstorCliColumnType live_types[] = {
@@ -86,7 +86,7 @@ int rawstor_cli_show(const char* target, const RawstorCliOutput* output) {
     if (has_version) {
         cells[ncells++] = rawstor_cli_cell_string(version_id);
     }
-    cells[ncells++] = rawstor_cli_cell_optional(tenant);
+    cells[ncells++] = rawstor_cli_cell_optional(account);
     cells[ncells++] = rawstor_cli_cell_string(target);
     char location[1024];
     rawstor_cli_target_location(target, location, sizeof(location));

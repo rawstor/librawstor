@@ -106,10 +106,10 @@ SpiffeId::SpiffeId(const std::string& uri) : _uri(uri), _role(Role::ost) {
     } else if (segments.size() == 2 && segments[0] == "admin") {
         _role = Role::admin;
         _name = segments[1];
-    } else if (segments.size() == 4 && segments[0] == "tenant" &&
+    } else if (segments.size() == 4 && segments[0] == "account" &&
                is_uuid(segments[1]) && segments[2] == "client") {
         _role = Role::client;
-        _tenant = segments[1];
+        _account = segments[1];
         _name = segments[3];
     } else {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
