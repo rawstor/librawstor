@@ -43,7 +43,7 @@ document's own numbering (see [Implementation stages](#implementation-stages)).
 | mTLS (OpenSSL) on every port: OST, MDS, witness, client side | 2 | ✅ | `librawtls`; the client library and every service speak it, and refuse to start without [TLS settings](configuration.md#tls) unless run with `--insecure` |
 | Limit on concurrent TLS handshakes per listener | 2 | ❌ | planned, see stage 2 |
 | kTLS offload of the data path | 2 | ❌ | optional, off by default (stage 0) |
-| `--insecure`: plaintext, no authentication, per process | 2 | ✅ | `--insecure` on every executable, `RawstorOpts::insecure` in a program, never in a systemd unit; [Without TLS](configuration.md#without-tls) |
+| `--insecure`: plaintext, no authentication, per process | 2 | ✅ | `--insecure` on every executable, `RawstorOpts::insecure` in a program, `EXTRA_ARGS="--insecure"` in a systemd service configuration; [Without TLS](configuration.md#without-tls) |
 | Certificate and CA reload without downtime | 2 | ✅ | `SIGHUP` and `SIGUSR1` in `rawstor-ost` and `rawstor-mds`, `SIGUSR1` in `rawstor-vhost` and `rawstor-vduse`; `rawstor_tls_request_reload()` |
 | Certificate tenant roles and object restrictions | 3 | ✅ | CA-signed policy, PKI CLI/C/Python APIs |
 | Independent MDS and OST authorization | 3 | ✅ | Certificate policy, metadata ownership and closed per-command permissions table |
@@ -580,8 +580,9 @@ integrity of the wire, which XTS does not give, still come from TLS.
 
 `--insecure` (on every server and every client process, or
 `RawstorOpts::insecure` in a program that links librawstor) turns TLS off for
-that process. There is no environment variable and a systemd unit has no way to
-set it. It is the only way: a process that has no TLS
+that process. The shipped systemd units can pass it through `EXTRA_ARGS` in
+their configuration files (see [Without TLS](configuration.md#without-tls)).
+It is the only way: a process that has no TLS
 settings and is not told to go without refuses to start. Traffic is then **plaintext, and no peer is authenticated**: there is
 no certificate to read an identity, a tenant or a role from, so the permissions
 table and tenant isolation do not apply and every peer that can reach
@@ -763,8 +764,8 @@ require re-doing earlier ones.
    setting of rawstor: `KEY=value` lines of the service's configuration file
    (the `/etc/rawstor/*/<name>.conf` files that the systemd units and
    orchestrators already use). `--insecure` is a command-line flag and
-   `RawstorOpts::insecure`, never an environment entry, so a systemd service
-   cannot run without TLS. A changed certificate is applied by `systemctl
+   `RawstorOpts::insecure`; a systemd service can pass the flag through
+   `EXTRA_ARGS` in its configuration file. A changed certificate is applied by `systemctl
    reload`. The TLS code is tested in process (`librawtls`,
    `tests/test_tls*.cpp`, with a PKI the tests make) and end to end in CI,
    where the OST and the CLI are separate processes with certificates of their
