@@ -306,6 +306,19 @@ class TestTargetObjectId(unittest.TestCase):
         target = rawstor.Target("mds://h:1", f"{self.OBJECT}/{self.VERSION}")
         self.assertEqual(target.uri, f"mds://h:1/{self.OBJECT}/{self.VERSION}")
 
+    def test_file_root_location(self):
+        self.assertEqual(
+            rawstor.Target("file:///", self.OBJECT).uri,
+            f"file:///{self.OBJECT}")
+
+    def test_escaped_comma(self):
+        self.assertEqual(
+            rawstor.Target("file:///a\\,b", self.OBJECT).uri,
+            f"file:///a\\,b/{self.OBJECT}")
+        self.assertEqual(
+            rawstor.Target("file:///a\\\\,file:///b", self.OBJECT).uri,
+            f"file:///a\\\\/{self.OBJECT},file:///b/{self.OBJECT}")
+
     def test_invalid_uuid(self):
         with self.assertRaises(ValueError):
             rawstor.Target("ost://a:1", "not-a-uuid")

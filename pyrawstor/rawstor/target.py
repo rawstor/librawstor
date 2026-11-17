@@ -32,13 +32,29 @@ _OBJECT_ID = re.compile(rf"{_UUID}(/({_UUID}|[0-9a-fA-F]+))?")
 
 
 def _split_uris(location: str) -> list[str]:
-    """Splits a comma-separated list of URIs; "\\," does not separate."""
-    return re.split(r"(?<!\\),", location)
+    """Splits a comma-separated list of URIs; a comma escaped with a
+    backslash does not separate (a backslash escapes the next character,
+    including another backslash)."""
+    uris = []
+    start = 0
+    escaped = False
+    for i, c in enumerate(location):
+        if c == "," and not escaped:
+            uris.append(location[start:i])
+            start = i + 1
+        escaped = c == "\\" and not escaped
+    uris.append(location[start:])
+    return uris
 
 
 def _join_location(location: str, object_id: str) -> str:
-    return ",".join(
-        f"{uri.rstrip('/')}/{object_id}" for uri in _split_uris(location))
+    """Appends the object id to every URI of the location. Trailing slashes
+    of a URI are dropped, but not the root path of "file:///"."""
+    joined = []
+    for uri in _split_uris(location):
+        root = uri.find("://") + 3 if "://" in uri else 0
+        joined.append(f"{uri[:root]}{uri[root:].rstrip('/')}/{object_id}")
+    return ",".join(joined)
 
 
 class Target:

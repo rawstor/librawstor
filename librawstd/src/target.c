@@ -100,8 +100,14 @@ static char* compose(const char* location, const char* id) {
         if (*p != ',' && *p != '\0') {
             continue;
         }
+        // Trailing slashes go, but not the root path of "file:///".
+        const char* floor = uri;
+        const char* scheme = strstr(uri, "://");
+        if (scheme != NULL && scheme < p) {
+            floor = scheme + strlen("://");
+        }
         const char* end = p;
-        while (end > uri && end[-1] == '/') {
+        while (end > floor && end[-1] == '/') {
             --end;
         }
         memcpy(out, uri, (size_t)(end - uri));

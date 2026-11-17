@@ -59,6 +59,25 @@ TEST_F(TargetTest, LocationAndUuid) {
     );
 }
 
+TEST_F(TargetTest, FileRootLocation) {
+    EXPECT_EQ(resolve("file:///", U, 2), std::string("file:///") + U);
+    EXPECT_EQ(
+        resolve("file:///,ost://h:1/", U, 2),
+        std::string("file:///") + U + ",ost://h:1/" + U
+    );
+}
+
+TEST_F(TargetTest, EscapedCommaIsNotASeparator) {
+    EXPECT_EQ(
+        resolve("file:///a\\,b", U, 2), std::string("file:///a\\,b/") + U
+    );
+    // An escaped backslash does not escape the comma after it.
+    EXPECT_EQ(
+        resolve("file:///a\\\\,file:///b", U, 2),
+        std::string("file:///a\\\\/") + U + ",file:///b/" + U
+    );
+}
+
 TEST_F(TargetTest, BareUuidUsesEnvLocation) {
     setenv("RAWSTOR_LOCATION", "ost://a:1,ost://b:2", 1);
     EXPECT_EQ(
