@@ -1097,7 +1097,7 @@ With N data members and one witness, a quorum is strictly more than
 (N + 1) / 2 members. Every current voter must match the recorded configuration:
 `epoch`, `sync_id`, history, resync owner and role array, with its own role
 IN_SYNC. CLEAN, DIRTY and LOST follow the same reconciliation rules for both
-member types. A missing, empty, excluded or mismatching member cannot vote;
+member roles. A missing, empty, excluded or mismatching member cannot vote;
 a blank member recreated during this open must first complete its rejoin.
 
 | Data copies | Minimum data copies with a valid witness | Minimum without witness |

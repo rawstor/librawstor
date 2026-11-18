@@ -12,7 +12,7 @@ document's own numbering (see [Implementation stages](#implementation-stages));
 | Topology refuses to drop an OST that still holds chunks or version members | — | ✅ | `mds/src/store.cpp` |
 | List the slots and version members held by one OST | 0 | ❌ | — |
 | A one-member chunk keeps a register; epoch 0 refused once recorded | 1 | ❌ | [One copy](#a-one-copy-chunk) |
-| Members named in the register value: OST id, type, voter | 1 | ❌ | [Members in the value](#members-in-the-register-value) |
+| Members named in the register value: OST id, `member_role`, voter | 1 | ❌ | [Members in the value](#members-in-the-register-value) |
 | Quorum over voters; joint decision for a change of voters | 1 | ❌ | [The change](#the-change-as-register-decisions) |
 | A running writer follows a member change (`-ESTALE`, locate) | 1 | ❌ | [Following a change](#how-a-writer-follows-a-change) |
 | Placement of added slots next to kept ones | 2 | ❌ | [MDS side](#mds-side) |
@@ -99,9 +99,9 @@ The register value (`RawstorObjectConfig`) names its members:
 | Field, per member | Meaning |
 |---|---|
 | `ost_id` | the topology id of the OST holding the member (16 bytes) |
-| `type` | `DATA` or `WITNESS`: the member type, as `member_role` in `META` |
+| `member_role` | `DATA` or `WITNESS` (`enum RawstorMemberRole`, as in `META`) |
 | `voter` | whether the member counts in `N` and in every majority |
-| `role` | in-sync, syncing, excluded, as now |
+| `role` | in-sync, syncing, excluded (`enum RawstorObjectMemberRole`, the value's `roles`), as now |
 
 and, for the value as a whole, `prev_voters`: the voters of the value a commit
 replaced, while the change is not settled (empty otherwise; see
@@ -134,7 +134,7 @@ replaced, while the change is not settled (empty otherwise; see
 
 **Size.** Every backend keeps the record in `META_MAX_SIZE` (1024 bytes): the
 `file://` meta file, the LVM tag, the ZFS user property. The present record takes
-about 330 bytes; an `ost_id` in hex takes 32 plus a few for type and voter. A
+about 330 bytes; an `ost_id` in hex takes 32 plus a few for `member_role` and voter. A
 chunk that names its members is therefore limited to 16 of them
 (`RAWSTOR_OBJECT_MAX_MEMBERS`, a new constant; `width` stays at most 255 for
 plain targets). The wire `RawstorFrameConfig` grows by `16 × 17` bytes. A
@@ -518,7 +518,7 @@ Each stage is tested at the layer it adds, through existing interfaces:
 
 0. **Preparation.** Test and document `weight 0`; the MDS query of slots and
    version members by OST.
-1. **Membership in the register.** Member ids, type and voter in the value, the
+1. **Membership in the register.** Member ids, `member_role` and voter in the value, the
    record and the wire; `N` over voters; derived `width`; the joint commit; a
    register for one-member chunks and epoch 0 refused; writers following a
    change (`OST_LOCATE` from a test resolver at this stage); completing a
