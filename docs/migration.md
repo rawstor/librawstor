@@ -96,9 +96,9 @@ No separate *decommissioned* mark is needed. A location that is dead is drained
 like a live one, except that it is not asked and not released
 ([Dead location](#dead-location)); weight 0 already keeps placement away from it, and
 once no chunk refers to it, removing it from the topology is accepted. The
-migration sequence with a `fence` watermark and a *decommissioned* mark in
-[MDS design](mds.md#migration-updateplacement-sequence) is replaced by this
-document when stage 1 lands.
+migration sequence with a `fence` watermark and a *decommissioned* mark is not
+used: a member change is fenced by the register epoch of the chunk, and
+`map_version` is not a fence ([MDS design](mds.md#map_version)).
 
 ## Members in the register value
 
@@ -696,7 +696,7 @@ know what they break, and test stands know what to rebuild.
 | API semantics: `width` | Taken from the value for a chunk that names its members, no longer compared across the copies' spec at open (F11) | Nothing visible: an agreed chunk reports the same width | — |
 | API semantics: `-EBUSY` | Resize, version and removal of an object refused while one of its chunk plans is in flight | Scripts and scheduled snapshots that do not retry | Documented; the CLI retries for a bounded time |
 | Contract: the MDS after open | A writer keeps the MDS location and asks it (`LOCATE`) when a member change names a location it does not know | Deployments that treat the MDS as needed only at open | Writes freeze only while such a change completes without the MDS ([How a writer follows](#how-a-writer-follows-a-change)) |
-| Documentation | The `fence` watermark and the *decommissioned* mark of [MDS design](mds.md#migration-updateplacement-sequence) are replaced by this design | — | `mds.md` is updated when stage 1 lands |
+| Documentation | `mds.md` describes `map_version` as the version of an object's map, not as a fence | — | — |
 
 The wire, record and ABI changes all land in stage 1, together, behind one
 capability bit and one format version: a stand is upgraded servers first, then

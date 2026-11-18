@@ -35,7 +35,6 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | `HANDSHAKE`: the first request of every connection, feature bits (no protocol version) | ✅ | `include/rawstor/protocol.h`, OST `ost/src/client.cpp`, MDS `mds/src/client.cpp`, `src/wire_backend.cpp` |
 | Account: owner of an object (`ALLOCATE`, `OBJ_CREATE`, `META`), filter of `LIST`; registry `LIST_ACCOUNTS`, `ACCOUNT_CREATE` / `ACCOUNT_REMOVE` on the MDS | ✅ | OST `ost/src/client.cpp`, MDS `mds/src/client.cpp`; [Accounts](accounts.md) |
 | Explicit `len` field in the response (`{res, len, hash}`) | ❌ | `res` still carries the payload size |
-| `map_version` in the IO frame (epoch-fence) | ❌ | planned in [MDS design](mds.md) |
 | Authentication: mutual TLS on every connection, identity from the certificate | ✅ | [Security design](security.md) (stage 2) |
 | Authorization: certificate account roles and object restrictions, checked by MDS and OST | ✅ | [Security design](security.md), `librawtls/authorization.hpp`, MDS and OST dispatch |
 

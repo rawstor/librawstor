@@ -697,12 +697,12 @@ In this order:
    certificate: delete the SPIRE entry, or do not renew; where the CA
    publishes a CRL, add its serial. Without revocation the old certificate
    stays valid until it expires (hours).
-3. **Fence the clients.** The MDS increments the objects' `map_version` and
-   writes the new watermark (`slot.fence`) on the remaining members of every
-   chunk it held ([epoch-fence](mds.md#epoch-fence)). A client that still has
-   the old map is refused by a healthy member with `STALE`, re-reads the map
-   and no longer includes the quarantined OST. This does not depend on the
-   compromised OST cooperating.
+3. **Fence the clients.** The members of every chunk the OST held decide a new
+   configuration without it, by a majority of the healthy members
+   ([Migration](migration.md#why-the-joint-commit-is-safe)). A client that
+   still writes under the old configuration is refused by a healthy member with
+   `STALE`, adopts the new one and no longer includes the quarantined OST. This
+   does not depend on the compromised OST cooperating.
 4. **Restore redundancy.** The copy is replaced: a new OST is placed
    (`updatePlacement`) and resynced from a remaining in-sync copy, the way an
    excluded copy is resynced today ([Mirroring](mirroring.md)). The
@@ -728,7 +728,7 @@ is closed. Cutting off such readers remains part of the exclusion design.
 ### Dependencies
 
 Steps 1, 3 and 4 are MDS and mirroring work that does not exist yet
-(`quarantined`, epoch-fence, member replacement) and are listed in the
+(`quarantined`, member replacement) and are listed in the
 [status table](#status). Without them the operator can only do step 2 and wait
 for the certificate to expire, and cannot rebuild redundancy.
 
@@ -797,7 +797,7 @@ require re-doing earlier ones.
 6. **At-rest, client side.** AES-XTS in the client library, KMS plugin
    interface, wrapped keys on the MDS, `rawstor create --encrypt`, the
    write-zeroes emulation and no `DISCARD`.
-7. **Excluding a compromised OST.** `quarantined` state, epoch-fence,
+7. **Excluding a compromised OST.** `quarantined` state,
    member replacement with resync, and the operator procedure above. It depends
    on MDS and mirroring work and can be scheduled independently of stages 2-6.
 
