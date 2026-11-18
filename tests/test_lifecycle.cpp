@@ -758,8 +758,11 @@ TEST(FileLifecycleTest, meta_accepted_config) {
     EXPECT_EQ(res, 0);
     EXPECT_EQ(meta.spec.size, 1ull << 20);
     EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
-    EXPECT_EQ(meta.config.epoch, 0u);
-    EXPECT_EQ(meta.config.sync_id, 0u);
+    // A one-member target has a register like any other.
+    EXPECT_EQ(meta.config.epoch, 1u);
+    EXPECT_NE(meta.config.sync_id, 0u);
+    EXPECT_EQ(meta.config.nroles, 1u);
+    EXPECT_EQ(meta.config.roles[0], RAWSTOR_OBJECT_MEMBER_IN_SYNC);
     for (size_t i = 0; i < RAWSTOR_OBJECT_SYNC_ID_HISTORY; ++i) {
         EXPECT_EQ(meta.config.sync_id_history[i], 0u);
     }
@@ -816,6 +819,12 @@ TEST(OstLifecycleTest, create_spec_remove) {
     {
         rawstor::tests::Session s(server);
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    // A one-member target records its register like any other.
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 0, 0, meta_body);
     }
 
     {
@@ -1065,6 +1074,12 @@ TEST(OstLifecycleTest, create_at_default_spec_remove) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
+    // A one-member target records its register like any other.
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 0, 0, meta_body);
+    }
+
     {
         rawstor::tests::Session s(server);
         s.cmd_meta(RAWSTOR_MAGIC, 0, 0, meta_body);
@@ -1139,6 +1154,12 @@ TEST(OstLifecycleTest, create_at_spec_remove) {
     {
         rawstor::tests::Session s(server);
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    // A one-member target records its register like any other.
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 0, 0, meta_body);
     }
 
     {

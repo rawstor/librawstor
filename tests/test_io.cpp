@@ -389,6 +389,12 @@ TEST(OstIOTest, basics) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
+    // A one-member target records its register like any other.
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 0, 0, clean_meta_1mb);
+    }
+
     {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
@@ -430,6 +436,12 @@ TEST(OstIOTest, discard_and_write_zeroes) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
+    // A one-member target records its register like any other.
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 0, 0, clean_meta_1mb);
+    }
+
     {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
@@ -464,6 +476,12 @@ TEST(OstIOTest, flush) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
+    // A one-member target records its register like any other.
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 0, 0, clean_meta_1mb);
+    }
+
     {
         rawstor::tests::Session s(server);
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
@@ -493,6 +511,12 @@ TEST(OstIOTest, set_object_fail) {
     {
         rawstor::tests::Session s(server);
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    // A one-member target records its register like any other.
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 0, 0, clean_meta_1mb);
     }
 
     // set_object() itself is just SET_OBJECT (see Backend::set_object()'s
@@ -525,6 +549,12 @@ TEST(OstIOTest, set_object_error) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
+    // A one-member target records its register like any other.
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 0, 0, clean_meta_1mb);
+    }
+
     // Unlike set_object_fail above, a SET_OBJECT the server answers with
     // ENOENT means its copy is missing (docs/mirroring.md, case F10), not
     // a connectivity problem: Slot::open() doesn't reconnect and retry it,
@@ -554,6 +584,12 @@ TEST(OstIOTest, set_object_disconnect) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
+    // A one-member target records its register like any other.
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 0, 0, clean_meta_1mb);
+    }
+
     // Unlike set_object_fail/set_object_error above, nothing here ever
     // responds at all -- not even to SET_OBJECT, which Slot::open()
     // sends first (see its own comment): every session is just accepted
@@ -580,6 +616,12 @@ TEST(OstIOTest, write_fail) {
     {
         rawstor::tests::Session s(server);
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    // A one-member target records its register like any other.
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 0, 0, clean_meta_1mb);
     }
 
     // The first session is the one Target::open() itself drives:
@@ -623,6 +665,12 @@ TEST(OstIOTest, write_error) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
+    // A one-member target records its register like any other.
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 0, 0, clean_meta_1mb);
+    }
+
     // ENOENT is a permanent backend rejection (see Slot::_with_retry()'s
     // is_permanent_backend_error()): the connection is fine, so this
     // never reconnects, and retrying can never turn ENOENT into success,
@@ -658,6 +706,12 @@ static void expect_write_refused_without_retry(int error) {
     {
         rawstor::tests::Session s(server);
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    // A one-member target records its register like any other.
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 0, 0, clean_meta_1mb);
     }
 
     {
@@ -696,6 +750,12 @@ TEST(OstIOTest, write_busy_retries_without_reconnect) {
     {
         rawstor::tests::Session s(server);
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    // A one-member target records its register like any other.
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 0, 0, clean_meta_1mb);
     }
 
     // A single session handles SET_OBJECT, META, an EBUSY response to
@@ -746,6 +806,12 @@ TEST(OstIOTest, write_backend_error_retries_with_reconnect) {
     {
         rawstor::tests::Session s(server);
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    // A one-member target records its register like any other.
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 0, 0, clean_meta_1mb);
     }
 
     // The first session is the one Target::open() itself drives:
@@ -800,6 +866,12 @@ TEST(OstIOTest, write_hash_mismatch_reconnects) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
+    // A one-member target records its register like any other.
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 0, 0, clean_meta_1mb);
+    }
+
     // The first session is the one Target::open() itself drives:
     // Slot::open() sends SET_OBJECT (Backend::set_object()) and then META
     // (Backend::meta()). The reconnect session below goes through
@@ -844,6 +916,12 @@ TEST(OstIOTest, write_disconnect) {
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
     }
 
+    // A one-member target records its register like any other.
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 0, 0, clean_meta_1mb);
+    }
+
     // The first session is the one Target::open() itself drives:
     // Slot::open() sends SET_OBJECT (Backend::set_object()) and then META
     // (Backend::meta()). Every lower-level reconnect from the write retry
@@ -883,6 +961,12 @@ TEST(OstIOTest, write_disconnect_concurrent) {
     {
         rawstor::tests::Session s(server);
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    // A one-member target records its register like any other.
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 0, 0, clean_meta_1mb);
     }
 
     // The object-open backend answers SET_OBJECT and then META (both sent
@@ -1112,6 +1196,12 @@ TEST(OstIOTest, write_orphaned_by_sibling_error_response) {
     {
         rawstor::tests::Session s(server);
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    // A one-member target records its register like any other.
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 0, 0, clean_meta_1mb);
     }
 
     // Scripted with the raw Server API instead of Session: Session's
@@ -1358,6 +1448,12 @@ TEST(OstIOTest, write_many_concurrent_wire_errors_with_backoff) {
     {
         rawstor::tests::Session s(server);
         s.cmd_allocate(RAWSTOR_MAGIC, 0, 0);
+    }
+
+    // A one-member target records its register like any other.
+    {
+        rawstor::tests::Session s(server);
+        s.cmd_sync_accept(RAWSTOR_MAGIC, 0, 0, clean_meta_1mb);
     }
 
     // Raw Server API, same reasoning as write_orphaned_by_sibling_error_

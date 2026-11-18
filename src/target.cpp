@@ -1542,7 +1542,9 @@ rawstd::Task<void> Target::create(
 
         if (!eptr) {
             try {
-                if (uris.size() > 1) {
+                // An mds:// target names a logical object: the chunks the
+                // MDS creates on its locations record their own register.
+                if (!is_opaque(uris)) {
                     co_await initialize_members(queue, uris);
                 }
             } catch (...) {

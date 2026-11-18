@@ -277,6 +277,8 @@ struct Slot::CopyState {
     // Admits a write stamped `epoch`: false if it is below the copy's
     // epoch. On success the write counts in `generation` until release().
     bool admit(uint64_t epoch, uint64_t& generation) noexcept;
+    // Whether the copy's record names a configuration: its epoch is above 0.
+    bool recorded() const noexcept { return _epoch.load() != 0; }
     void release(uint64_t generation) noexcept;
 
     // Called with `record` held, before a record with `epoch` is
@@ -564,11 +566,18 @@ public:
     }
 
     // 0, or the errno to refuse the request with: ESTALE if the copy's
-    // configuration is newer than `epoch`, EOPNOTSUPP if a request stamped
-    // with an epoch reaches a server with no copy of its own to fence on.
-    int admit(const std::shared_ptr<CopyState>& member, uint64_t epoch) {
+    // configuration is newer than `epoch`, or if the copy has a record and
+    // the request carries none (epoch 0 is for plain targets only; a flush
+    // may carry none: it changes nothing a configuration could outdate),
+    // EOPNOTSUPP if a request stamped with an epoch reaches a server with no
+    // copy of its own to fence on.
+    int admit(
+        const std::shared_ptr<CopyState>& member, uint64_t epoch,
+        bool unstamped_allowed = false
+    ) {
         if (epoch == 0) {
-            return 0;
+            return !unstamped_allowed && member && member->recorded() ? ESTALE
+                                                                      : 0;
         }
         if (!member) {
             return EOPNOTSUPP;
@@ -2196,7 +2205,7 @@ rawstd::Task<void> Slot::flush(uint64_t epoch) {
     const bool sole_writer = member && member->writers.load() == 1;
     try {
         Admission admission;
-        int error = admission.admit(_member, epoch);
+        int error = admission.admit(_member, epoch, true);
         if (error) {
             RAWSTD_THROW_SYSTEM_ERROR(error);
         }

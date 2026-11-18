@@ -623,7 +623,8 @@ TEST(ObjectMetaTest, meta_on_object_target_is_real) {
     ASSERT_EQ(target_meta(*queue, target, 0, &meta, 1), 1);
     EXPECT_EQ(meta.spec.size, spec.size);
     EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
-    EXPECT_EQ(meta.config.sync_id, 0u);
+    EXPECT_EQ(meta.config.epoch, 1u);
+    EXPECT_NE(meta.config.sync_id, 0u);
 
     EXPECT_EQ(target_remove(*queue, target), 0);
 }
@@ -684,8 +685,8 @@ TEST(ObjectMetaTest, set_member_sync_state_updates_only_requested_chunk) {
 
     RawstorObjectMeta first{};
     ASSERT_EQ(target_meta(*queue, target, 0, &first, 1), 1);
-    EXPECT_EQ(first.config.epoch, 0u);
-    EXPECT_EQ(first.config.sync_id, 0u);
+    EXPECT_EQ(first.config.epoch, 1u);
+    EXPECT_NE(first.config.sync_id, sync_state.sync_id);
     EXPECT_EQ(first.state, RAWSTOR_OBJECT_SYNC_STATE_CLEAN);
     EXPECT_EQ(
         target_set_member_sync_state(*queue, target, spec.size, 0, sync_state),

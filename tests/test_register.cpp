@@ -161,36 +161,39 @@ TEST(RegisterTest, file_member_refuses_a_ballot_beyond_its_reach) {
     RawstorObjectMeta reply{};
     RawstorObjectConfig config{};
 
-    // Just beyond the reach of a member holding nothing.
+    // Just beyond the reach of a member holding the decision that created it,
+    // under ballot 1.
     EXPECT_EQ(
-        error_of(target.sync_prepare(*queue, 0, {jump + 1, 1}, reply)), EINVAL
+        error_of(target.sync_prepare(*queue, 0, {jump + 2, 1}, reply)), EINVAL
     );
     EXPECT_EQ(
         error_of(
-            target.sync_accept(*queue, 0, {jump + 1, 1}, {}, config, reply)
+            target.sync_accept(*queue, 0, {jump + 2, 1}, {}, config, reply)
         ),
         EINVAL
     );
     // The next ballot to promise is bound the same way.
     EXPECT_EQ(
         error_of(
-            target.sync_accept(*queue, 0, {1, 1}, {jump + 1, 1}, config, reply)
+            target.sync_accept(*queue, 0, {1, 1}, {jump + 2, 1}, config, reply)
         ),
         EINVAL
     );
     RawstorObjectMeta meta = run(*queue, target.meta(*queue)).front();
-    EXPECT_EQ(meta.promised.counter, 0u);
-    EXPECT_EQ(meta.accepted.counter, 0u);
+    EXPECT_EQ(meta.promised.counter, 1u);
+    EXPECT_EQ(meta.accepted.counter, 1u);
 
     // Exactly the reach is granted, and the reach moves with the member.
-    EXPECT_TRUE(run(*queue, target.sync_prepare(*queue, 0, {jump, 1}, reply)));
-    EXPECT_EQ(reply.promised.counter, jump);
+    EXPECT_TRUE(
+        run(*queue, target.sync_prepare(*queue, 0, {jump + 1, 1}, reply))
+    );
+    EXPECT_EQ(reply.promised.counter, jump + 1);
     EXPECT_EQ(
-        error_of(target.sync_prepare(*queue, 0, {2 * jump + 1, 1}, reply)),
+        error_of(target.sync_prepare(*queue, 0, {2 * jump + 2, 1}, reply)),
         EINVAL
     );
     EXPECT_TRUE(
-        run(*queue, target.sync_prepare(*queue, 0, {2 * jump, 1}, reply))
+        run(*queue, target.sync_prepare(*queue, 0, {2 * jump + 1, 1}, reply))
     );
 }
 

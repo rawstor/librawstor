@@ -304,17 +304,16 @@ TEST(
     RawstorObjectConfig config{};
     config.epoch = 4;
     config.sync_id = 0x44;
-    config.nroles = 2;
+    config.nroles = 1;
     config.roles[0] = RAWSTOR_OBJECT_MEMBER_IN_SYNC;
-    config.roles[1] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
     run(*queue, rawstor::tests::force_config(*queue, f.target, 0, config));
 
     RawstorObjectMeta meta = f.meta(*queue);
     EXPECT_EQ(meta.state, RAWSTOR_OBJECT_SYNC_STATE_DIRTY);
     EXPECT_EQ(meta.config.epoch, 4u);
     EXPECT_EQ(meta.config.sync_id, 0x44u);
-    ASSERT_EQ(meta.config.nroles, 2);
-    EXPECT_EQ(meta.config.roles[1], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
+    ASSERT_EQ(meta.config.nroles, 1);
+    EXPECT_EQ(meta.config.roles[0], RAWSTOR_OBJECT_MEMBER_IN_SYNC);
 
     run(*queue, a->close());
 }
@@ -647,9 +646,13 @@ void expect_copy_write_requests(const rawstd::URI& location) {
     expect_stale(
         peer->resync_pwrite(repair.data(), repair.size(), 0, false, 9)
     );
+    // The copy has a record: a request with no epoch is refused too.
+    expect_stale(
+        writer->pwrite(client_data.data(), client_data.size(), 0, false, 0)
+    );
     EXPECT_EQ(
         run(*queue, writer->pwrite(
-                        client_data.data(), client_data.size(), 0, false, 0
+                        client_data.data(), client_data.size(), 0, false, 9
                     )),
         client_data.size()
     );

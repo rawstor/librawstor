@@ -560,6 +560,8 @@ public:
         _size = meta.spec.size;
         _config = meta.config;
         _valid = true;
+        _proposer.observe({meta.promised.counter, meta.promised.proposer});
+        _proposer.observe({meta.accepted.counter, meta.accepted.proposer});
     }
     void initialize_locked(
         const std::vector<MemberState>& states,
