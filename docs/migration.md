@@ -11,6 +11,7 @@ document's own numbering (see [Implementation stages](#implementation-stages));
 | Weight 0 keeps a location out of every new placement (data and witness) | 0 | ✅ | `mds/src/placement.cpp`; no end-to-end test, not documented for operators |
 | Topology refuses to drop a location that still holds chunks or version members | — | ✅ | `mds/src/store.cpp` |
 | List the slots and version members held by one location | 0 | ❌ | — |
+| `plan_seq`/`plan_gen` in the value; `RELEASE` bounded by epoch; a leftover never adopted | 1 | ❌ | [Idempotency](#idempotency) |
 | A one-member chunk keeps a register; epoch 0 refused once recorded | 1 | ❌ | [One copy](#a-one-copy-chunk) |
 | Members named in the register value: topology id, `member_role`, voter | 1 | ❌ | [Members in the value](#members-in-the-register-value) |
 | Quorum over voters; joint decision for a change of voters | 1 | ❌ | [The change](#the-change-as-register-decisions) |
@@ -111,9 +112,13 @@ The register value (`RawstorObjectConfig`) names its members:
 | `voter` | whether the member counts in `N` and in every majority |
 | `role` | in-sync, syncing, excluded (`enum RawstorObjectMemberRole`, the value's `roles`), as now |
 
-and, for the value as a whole, `prev_voters`: the voters of the value a commit
-replaced, while the change is not settled (empty otherwise; see
-[Completing a commit](#completing-a-commit)).
+and, for the value as a whole:
+
+- `prev_voters`: the voters of the value a commit replaced, while the change is
+  not settled (empty otherwise; see [Completing a commit](#completing-a-commit));
+- `plan_seq`, `plan_gen`: the last plan that changed the members and the
+  generation of its owner, so that a decision of an outdated plan or owner is
+  refused by the register itself ([Idempotency](#idempotency)).
 
 - **The value, not the MDS map and not the position in a target list, is the
   membership.** A member knows itself by its `ost_id`. A member not named in the
@@ -145,9 +150,11 @@ replaced, while the change is not settled (empty otherwise; see
 about 330 bytes; an `ost_id` in hex takes 32 plus a few for `member_role` and voter. A
 chunk that names its members is therefore limited to 16 of them
 (`RAWSTOR_OBJECT_MAX_MEMBERS`, a new constant; `width` stays at most 255 for
-plain targets). The wire `RawstorFrameConfig` grows by `16 × 17` bytes. A
-compact binary encoding of the record could raise the limit; nothing planned
-needs it.
+plain targets). With `prev_voters` (a bitmask), `plan_seq` and `plan_gen` the
+record of a 16-member chunk comes to about 930 bytes. The wire
+`RawstorFrameConfig` grows by `16 × 17` bytes for the members and 14 for the
+rest. A compact binary encoding of the record could raise the limit; nothing
+planned needs it.
 
 ### A one-copy chunk
 
@@ -213,8 +220,10 @@ sequenceDiagram
 1. **Begin.** The MDS places the added slots and records the plan
    ([MDS side](#mds-side)); its map is not changed yet.
 2. **Allocate** blank copies on the added locations (a witness is a minimum-size
-   volume, as today). Versions, if any, are copied now, before the copy takes
-   live writes ([Versions](#versions)).
+   volume, as today), each record naming the plan's `plan_seq`; a copy left
+   there by another plan is released first ([Idempotency](#idempotency)).
+   Versions, if any, are copied now, before the copy takes live writes
+   ([Versions](#versions)).
 3. **Add.** A decision of the voters `S` adds the new members to the value as
    non-voters in role syncing, with the executor as `resync_owner`. Nothing
    about the quorum changes: `N` is still `|S|`.
@@ -535,6 +544,62 @@ mechanism.
   resync does; throttling needs a coarser record (ranges merged into fixed
   blocks once the limit nears) and is not part of this design.
 
+## Idempotency
+
+Two different things repeat, and each has its own guard:
+
+- **A request whose reply was lost** is sent again by the same call: an MDS
+  mutation keeps its `idempotency_key` across the retries of one call and the
+  MDS replays the recorded result ([Idempotent mutations](mds.md#idempotent-mutations));
+  a register request is answered with the member's record either way
+  ([The register](multiattach.md#the-register-caspaxos)).
+- **A step repeated by a later run**, or by an old owner that wakes up after its
+  plan was taken over or finished, carries a new key or none. It is guarded by
+  the state: the plan's phase in the MDS, and `plan_seq`/`plan_gen` in the
+  register value and the members' records. An idempotency key expires after a
+  day; a drain may last longer, and its steps never rely on one across runs.
+
+`plan_seq` is a per-chunk counter the MDS takes at `OBJ_RECONFIGURE_BEGIN`, never
+reused; `plan_gen` is the plan's `generation`, raised by every claim. A
+reconfiguration decision names both and is a function of the value it finds:
+
+| The value has | A decision of plan `q`, generation `g` |
+|---|---|
+| its change already | nothing to do: the retry has succeeded |
+| `plan_seq < q`, no change in flight | applies (the first decision of a new plan) |
+| `plan_seq = q`, `plan_gen ≤ g` | applies, and records `plan_gen = g` (a takeover is written into the register by its first decision) |
+| `plan_seq = q`, `plan_gen > g` | refused: the plan has another owner |
+| `plan_seq > q` | refused: a later plan has changed the members; this one is over |
+
+Rebuilt by `--reconstruct`, the MDS counter starts above the highest `plan_seq`
+the records hold.
+
+| Step | Lost reply, same call | Repeated by a later run or an old owner |
+|---|---|---|
+| `OBJ_OPERATION_START` | replay | The operation id is generated once per command; a later run with a new id gets the running operation if it asks for the same, `-EBUSY` otherwise |
+| `OBJ_RECONFIGURE_BEGIN` | replay; the reply carries the plan, its placement, `plan_seq` and generation, which the caller needs to go on | The chunk has a plan: the caller gets it to claim, never a second placement |
+| `OBJ_RECONFIGURE_CLAIM` | replay | The current owner claiming again gets its own generation back; another owner while the lease holds gets `-EBUSY` |
+| `OBJ_RECONFIGURE_RENEW` | sets the lease again | `-ESTALE` for an older generation |
+| `ALLOCATE` of an added member | `EEXIST`, and the new record names this `plan_seq`: done (as for *resize*) | `EEXIST` with a record of another plan: a leftover of an aborted or finished plan on the same location (the physical name `<id>/<offset>` is the same). It is released (below) and allocated again; a leftover is never adopted as a blank copy |
+| Version copy | a version whose snapshot `s<version_id>` exists is done; the content written before it is redone | same; versions are immutable, so a snapshot of a version id has its content whoever took it |
+| Add, commit, settle, abort decisions | the register request is idempotent | the table above |
+| Fill | restarts from scratch (F8) | same, under the new resync owner |
+| `OBJ_RECONFIGURE_FINALIZE` | replay | A finalized plan answers success; an aborted one `-EINVAL` |
+| `OBJ_RECONFIGURE_ABORT` | replay | A finalized plan answers `-EINVAL`: the register decided the commit, and the caller has missed it |
+| Version records (finalize) | in the finalize's transaction | adding and removing a member of a version record are set operations |
+| `RELEASE` of a leaving member | `ENOENT`: done | see below |
+
+**A release must not destroy a member that came back.** A plan moves a chunk
+from `B` to `C`, `B` waits in `releasing`, and a later plan places the chunk on
+`B` again before the release ran. A late release from the first plan, by its
+`releasing` retry or by an old owner, would destroy the new member. `RELEASE`
+therefore carries a bound in its `val`: the epoch of the commit that removed the
+member. The location removes the copy only if its record's epoch is not above
+it, under the record lock, and answers `-ESTALE` otherwise; any decision that
+names the copy again raises its epoch past the bound. The MDS also does not
+place a chunk on a location where a release of it is pending, so the case is
+rare, but the bound is what makes it safe.
+
 ## Stuck and repeated runs
 
 An operation is the object-level request (`migrate`, `mirrors`, a drain reaching
@@ -612,7 +677,11 @@ Each stage is tested at the layer it adds, through existing interfaces:
   one location; plan rows, idempotent replay, one operation per object and one
   owner per plan, a claim after the lease and `-ESTALE` for the old owner,
   `-EBUSY` for resize and versions; reconstruct of a chunk mid-change;
-- stage 3 also: two runs of one command sharing an object, a run stopped
+- stage 3 also: every step repeated after a lost reply and by a second run; a
+  decision of an old owner and of a finished plan refused by the register; a
+  release from an old plan of a member placed there again by a newer one
+  (`-ESTALE`, the copy kept); an allocation that meets a leftover;
+  two runs of one command sharing an object, a run stopped
   (`SIGSTOP`) and continued after another took over, `--abort` with chunks on
   both sides of the commit, the attempt limit on a fill that keeps failing;
 - stage 3: end to end, `migrate` and `mirrors` under vhost-like writes;
@@ -624,7 +693,8 @@ Each stage is tested at the layer it adds, through existing interfaces:
 0. **Preparation.** Test and document `weight 0`; the MDS query of slots and
    version members by location.
 1. **Membership in the register.** Member ids, `member_role` and voter in the value, the
-   record and the wire; `N` over voters; derived `width`; the joint commit; a
+   record and the wire; `plan_seq`/`plan_gen` and the decisions guarded by
+   them; `ALLOCATE` naming the plan and `RELEASE` bounded by epoch; `N` over voters; derived `width`; the joint commit; a
    register for one-member chunks and epoch 0 refused; writers following a
    change (`LOCATE` from a test resolver at this stage); completing a
    partly accepted commit. Upgrade order: `rawstor-ost` and `rawstor-mds`
