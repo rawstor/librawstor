@@ -115,7 +115,10 @@ The register value (`RawstorObjectConfig`) names its members:
 and, for the value as a whole:
 
 - `prev_voters`: the voters of the value a commit replaced, while the change is
-  not settled (empty otherwise; see [Completing a commit](#completing-a-commit));
+  not settled (empty otherwise; see [Completing a commit](#completing-a-commit)).
+  It is a bitmask over the value's members, so every member it names stays in
+  the list until the settle: a member that leaves stays there as a non-voter
+  until then;
 - `plan_seq`, `plan_gen`: the last plan that changed the members and the
   generation of its owner, so that a decision of an outdated plan or owner is
   refused by the register itself ([Idempotency](#idempotency)).
@@ -148,7 +151,8 @@ and, for the value as a whole:
 **Size.** Every backend keeps the record in `META_MAX_SIZE` (1024 bytes): the
 `file://` meta file, the LVM tag, the ZFS user property. The present record takes
 about 330 bytes; an `ost_id` in hex takes 32 plus a few for `member_role` and voter. A
-chunk that names its members is therefore limited to 16 of them
+chunk that names its members is therefore limited to 16 of them, counting,
+while a change runs, the members that leave and those being added
 (`RAWSTOR_OBJECT_MAX_MEMBERS`, a new constant; `width` stays at most 255 for
 plain targets). With `prev_voters` (a bitmask), `plan_seq` and `plan_gen` the
 record of a 16-member chunk comes to about 930 bytes. The wire
@@ -209,11 +213,11 @@ sequenceDiagram
     X->>S: decide: members += L (non-voters, syncing)   [majority of S]
     Note over S,L: writers learn L on -ESTALE, duplicate their writes onto it
     X->>L: resync from an in-sync member (RESYNC writes)
-    X->>S: decide: voters = S', prev_voters = S, members = S ∪ L minus S \ S'   [majority of S and of S']
+    X->>S: decide: voters = S', prev_voters = S, members = S ∪ L   [majority of S and of S']
     X->>L: (same decision)
     Note over S: members of S \ S' that accept it are fenced
     X->>M: OBJ_RECONFIGURE_FINALIZE: map = S', leaving members out of version records
-    X->>L: decide: prev_voters = none   [majority of S']
+    X->>L: decide: prev_voters = none, members = S'   [majority of S']
     X->>S: RELEASE the members that left
 ```
 
@@ -230,11 +234,13 @@ sequenceDiagram
 4. **Fill.** The existing resync copies the data, the writers duplicate their
    writes; a witness has nothing to copy.
 5. **Commit.** One decision sets `voter` to `S'`, records `prev_voters = S`,
-   drops the members of `S \ S'` from the value, raises the epoch and moves the
-   `sync_id` on. It is decided only once accepted by **a majority of `S` and a
-   majority of `S'`**, and it is sent to every member of `S ∪ S'`, the leaving
-   ones included. A leaving member that accepts it no longer finds itself in the
-   value: it refuses every write below the new epoch and is not asked again.
+   leaves the members of `S \ S'` in the list as non-voters in role excluded,
+   raises the epoch and moves the `sync_id` on. It is decided only once accepted
+   by **a majority of `S` and a majority of `S'`**, and it is sent to every member
+   of `S ∪ S'`, the leaving ones included. A leaving member that accepts it
+   refuses every write below the new epoch and serves no I/O, but still answers
+   the register: it is part of the majority of `S` that completing the commit
+   needs.
    It goes to the added members first and to `S` only after all of them
    accepted it. Until it is decided the plan can still be aborted, by a
    conditional decision of `S` that drops the added members or, if the commit is
@@ -243,8 +249,9 @@ sequenceDiagram
 6. **Finalize.** In one MDS transaction the chunk's map becomes `S'` and the
    leaving members are removed from the records of the chunk's versions (which
    by then name the added members instead, [Versions](#versions)).
-7. **Settle.** A decision of `S'` alone clears `prev_voters`. From then on the
-   chunk is at rest under `S'`.
+7. **Settle.** A decision of `S'` alone clears `prev_voters` and drops the
+   leaving members from the list. From then on the chunk is at rest under `S'`,
+   and the leaving members are not asked again.
 8. **Release.** The volumes of the members that left, versions included, are
    destroyed, later and without hurry.
 
@@ -360,7 +367,7 @@ stage 1 lands.
 | A member of `S` fails | Ordinary decisions of `S`. The commit needs a majority of `S` without it; with `S = {A}`, losing `A` loses the data, a change or not |
 | The resync source fails | The owner aborts; another in-sync member is the source, or the plan waits |
 | Two runs on one chunk | One owns the chunk's plan at a time ([Stuck and repeated runs](#stuck-and-repeated-runs)) |
-| A leaving member that missed the commit comes back | It still names itself in an older value: a stale copy by `sync_id` ancestry. It is not in the map, so no open reaches it; its volume is garbage to release |
+| A leaving member that missed the commit comes back | Before the settle it is still named by the value (a non-voter of `prev_voters`) and answers the register, which completing the commit may need. After the settle it names itself in an older value: a stale copy by `sync_id` ancestry, in no map, its volume garbage to release |
 
 ## Operations
 
@@ -516,9 +523,19 @@ Stage 2 adds to the MDS database and protocol:
 Resuming a plan is decided by the register, not by the MDS: a commit found in
 the value means finalize. `--reconstruct` ([Reconstruct](mds.md#reconstruct-dr))
 gets the exact membership of every chunk from the records instead of rebuilding
-it from slot positions: it takes the value with the highest `accepted` among the
-records it finds and registers its voters; a copy whose record is not named by
-that value is garbage.
+it from slot positions. It takes the value with the highest `accepted` among the
+records it finds, which may be a commit that is not decided yet: the scan only
+reads, and does not complete it. So:
+
+- a value without `prev_voters` registers its voters as the map;
+- a value with `prev_voters` registers its voters as the map, recreates the plan
+  in phase `committed` with `S = prev_voters`, and the next run completes the
+  commit (both majorities, [Completing a commit](#completing-a-commit)) or finds
+  it superseded, and finalizes and settles accordingly. A fresh open in between
+  reaches the leaving members through the value, which still names them;
+- a copy is garbage only if it is named neither by that value nor by a plan
+  still in flight. The members of `prev_voters` are named by the value until
+  the settle, so the old majority a completion needs is never collected.
 
 ## Executor
 
@@ -593,8 +610,8 @@ the records hold.
 from `B` to `C`, `B` waits in `releasing`, and a later plan places the chunk on
 `B` again before the release ran. A late release from the first plan, by its
 `releasing` retry or by an old owner, would destroy the new member. `RELEASE`
-therefore carries a bound in its `val`: the epoch of the commit that removed the
-member. The location removes the copy only if its record's epoch is not above
+therefore carries a bound in its `val`: the epoch of the commit that made the
+copy a leaving member. The location removes the copy only if its record's epoch is not above
 it, under the record lock, and answers `-ESTALE` otherwise; any decision that
 names the copy again raises its epoch past the bound. The MDS also does not
 place a chunk on a location where a release of it is pending, so the case is
