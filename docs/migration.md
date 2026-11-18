@@ -451,10 +451,11 @@ a location served by newer software and writes its record in the newer format; t
 register value is carried over by the decisions. There is no in-place
 conversion tool. It needs from elsewhere:
 
-- servers (`rawstor-ost`, `rawstor-mds`) upgraded before clients, and members at different format versions in one
-  chunk while a change runs;
-- the protocol version and feature bits of `SET_OBJECT` that
-  [MDS design](mds.md#compatibility-stance) reserves, once a live install exists.
+- servers (`rawstor-ost`, `rawstor-mds`) upgraded before clients, and members
+  at different format versions in one chunk while a change runs;
+- a capability bit of `HANDSHAKE` for each wire change, so that a server and a
+  client that do not share it refuse each other instead of misreading a frame
+  ([Breaking changes](#breaking-changes)).
 
 ## Versions
 
@@ -611,8 +612,8 @@ from `B` to `C`, `B` waits in `releasing`, and a later plan places the chunk on
 `B` again before the release ran. A late release from the first plan, by its
 `releasing` retry or by an old owner, would destroy the new member. `RELEASE`
 therefore carries a bound in its `val`: the epoch of the commit that made the
-copy a leaving member. The location removes the copy only if its record's epoch is not above
-it, under the record lock, and answers `-ESTALE` otherwise; any decision that
+copy a leaving member (0, as every other `RELEASE` sends, means no bound). The
+location removes the copy only if its record's epoch is not above it, under the record lock, and answers `-ESTALE` otherwise; any decision that
 names the copy again raises its epoch past the bound. The MDS also does not
 place a chunk on a location where a release of it is pending, so the case is
 rare, but the bound is what makes it safe.
@@ -663,6 +664,33 @@ drops the chunk.
 | The MDS is unreachable | Begin, claim, renewal and finalize wait with backoff. A lease is counted by the MDS and survives its restart, so an executor that could not renew during an outage may find its plans claimed when the MDS is back | Nothing; the run goes on, or another one has taken over |
 | A leaving location cannot be released (dead, unreachable) | The plan stays in `releasing` and is retried by later runs; the map and the version records no longer name it, so drain status is 0 and the entry can leave the topology | Nothing, or remove the entry: its volume is garbage on a location that is gone |
 | Settle fails (`S'` briefly short of a majority) | Retried. Until it succeeds every decision needs both majorities ([Completing a commit](#completing-a-commit)) | Nothing |
+
+## Breaking changes
+
+There are no live installations ([Compatibility stance](mds.md#compatibility-stance)),
+so none of these needs a compatibility layer; each is listed so that the stages
+know what they break, and test stands know what to rebuild.
+
+| Area | Change | Who breaks | How it is handled |
+|---|---|---|---|
+| Wire: `RawstorFrameConfig` | Grows by the members (`16 × 17` bytes) and `prev_voters`, `plan_seq`, `plan_gen` (14 bytes): 312 bytes now. It is embedded in `RawstorFrameMetaPayload`, `RawstorFrameSyncProposePayload` and `RawstorFrameSyncReplyPayload`, whose sizes change with it | Every `META`, `SYNC_PREPARE` and `SYNC_ACCEPT` between an old and a new side, plain targets included | A `HANDSHAKE` capability bit (`RAWSTOR_FEATURES_SUPPORTED` is 0 today). A new server requires it and refuses a client without it; no dual layout is kept |
+| Wire: `ALLOCATE` | Carries `plan_seq` (`RawstorFrameAllocatePayload`, 60 bytes now) | Old clients creating copies on new servers | The same bit |
+| Wire: `RELEASE` | `val` is an epoch bound, 0 meaning none | Nothing: every caller sends 0 today | — |
+| Wire: epoch 0 | Refused by a member whose record names members | A writer that does not stamp its epoch: an old client, a one-member chunk before stage 1 | `reconfigure` refuses chunks without a register; a stage-1 writer records one at its first writable open |
+| Wire: new opcodes | `OBJ_OPERATION_*`, `OBJ_RECONFIGURE_*`, `LOCATE` | Nothing: an old server answers `-ENOSYS` | — |
+| Record on the members | New fields (members, `prev_voters`, `plan_seq`, `plan_gen`), `META_FORMAT_VERSION` 1 → 2, in the `file://` meta file, the LVM tag and the ZFS property alike | An old binary reading a version-2 record refuses it (`meta_decode()` requires the whole record to parse): no downgrade once a chunk is written by stage-1 code | The new code reads version 1 as a record that names no members (positional, as now) and writes version 2 at the first decision |
+| Record size | At most 16 members for a chunk that names its members (`META_MAX_SIZE` is 1024) | Mirrors wider than 16 on `mds://` objects; plain targets keep up to 255 | `mirrors` and create refuse a wider `mds://` width with `-EINVAL` |
+| MDS database | New tables and the per-chunk `plan_seq` counter: `user_version` 1 → 2 | An old MDS refuses the new database (`_check_layout()` accepts only 1): no downgrade | The first schema migration of the MDS: version 1 is upgraded in place at start |
+| C API and ABI (`<rawstor/target.h>`) | `struct RawstorObjectConfig` gains the members, `prev_voters`, `plan_seq`, `plan_gen`, and `RAWSTOR_OBJECT_MAX_MEMBERS`; it is embedded in `RawstorObjectMeta` and passed to `rawstor_target_sync_prepare()` / `_accept()` | Every program built against `librawstor`, and `pyrawstor` (`object_bindings.c` mirrors the config) | A soname bump of `librawstor`; `pyrawstor` updated in the same stage |
+| API semantics: member order | For a chunk that names its members, `rawstor_target_meta()` order and `member_index` follow the value's member list, not the order of the target's URIs; the witness is the member with `member_role` `WITNESS`, not the last URI | Callers of the register API by index; `rawstor object resolve --winner=N`; `rawstor object slots` | The CLI is updated in stage 1; the C API documents the order |
+| API semantics: `width` | Taken from the value for a chunk that names its members, no longer compared across the copies' spec at open (F11) | Nothing visible: an agreed chunk reports the same width | — |
+| API semantics: `-EBUSY` | Resize, version and removal of an object refused while one of its chunk plans is in flight | Scripts and scheduled snapshots that do not retry | Documented; the CLI retries for a bounded time |
+| Contract: the MDS after open | A writer keeps the MDS location and asks it (`LOCATE`) when a member change names a location it does not know | Deployments that treat the MDS as needed only at open | Writes freeze only while such a change completes without the MDS ([How a writer follows](#how-a-writer-follows-a-change)) |
+| Documentation | The `fence` watermark and the *decommissioned* mark of [MDS design](mds.md#migration-updateplacement-sequence) are replaced by this design | — | `mds.md` is updated when stage 1 lands |
+
+The wire, record and ABI changes all land in stage 1, together, behind one
+capability bit and one format version: a stand is upgraded servers first, then
+every client, and is not downgraded afterwards.
 
 ## Permissions and capacity
 
