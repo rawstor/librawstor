@@ -16,7 +16,7 @@ document's own numbering (see [Implementation stages](#implementation-stages));
 | Quorum over voters; joint decision for a change of voters | 1 | ❌ | [The change](#the-change-as-register-decisions) |
 | A running writer follows a member change (`-ESTALE`, locate) | 1 | ❌ | [Following a change](#how-a-writer-follows-a-change) |
 | Placement of added slots next to kept ones | 2 | ❌ | [MDS side](#mds-side) |
-| MDS plan record, `OBJ_RECONFIGURE_*`, `LOCATE` | 2 | ❌ | [MDS side](#mds-side) |
+| MDS operation and plan records, ownership leases, `OBJ_OPERATION_*`, `OBJ_RECONFIGURE_*`, `LOCATE` | 2 | ❌ | [MDS side](#mds-side) |
 | Executor and CLI: `rawstor object migrate`, `rawstor object mirrors` | 3 | ❌ | [Executor](#executor) |
 | `rawstor location drain`, drain status in `rawstor location info`; replacing a dead location's slots | 4 | ❌ | [Draining a location](#draining-a-location) |
 | Versions copied to a new member | 5 | ❌ | [Versions](#versions) |
@@ -226,9 +226,11 @@ sequenceDiagram
    majority of `S'`**, and it is sent to every member of `S ∪ S'`, the leaving
    ones included. A leaving member that accepts it no longer finds itself in the
    value: it refuses every write below the new epoch and is not asked again.
-   Once any member has accepted it, the plan can only be finished
-   ([Completing a commit](#completing-a-commit)); before that it can be aborted
-   (a decision of `S` drops the added members).
+   It goes to the added members first and to `S` only after all of them
+   accepted it. Until it is decided the plan can still be aborted, by a
+   conditional decision of `S` that drops the added members or, if the commit is
+   found in its majority, completes it instead
+   ([Completing a commit](#completing-a-commit)).
 6. **Finalize.** In one MDS transaction the chunk's map becomes `S'` and the
    leaving members are removed from the records of the chunk's versions (which
    by then name the added members instead, [Versions](#versions)).
@@ -268,11 +270,11 @@ write, and a proposer making a decision.
 ### Completing a commit
 
 A commit may be accepted by some members only: the executor dies between its
-`SYNC_ACCEPT`s. With `{A}` → `{B}`, `A` may hold the commit while `B` still holds
-the value that added it. Whoever then reads the register (a fresh open, a
-writer on `-ESTALE`, a proposer) finds the commit as the highest accepted value
-on `A`. Taking it as decided would make `B` the only voter without `B` ever
-having accepted it.
+`SYNC_ACCEPT`s. With `{A, P, Q}` → `{B, P, Q}`, `B` and `P` may hold the commit
+while `Q` and `A` still hold the value that added `B`. Whoever then reads the
+register (a fresh open, a writer on `-ESTALE`, a proposer) and meets `P` finds
+the commit as the highest accepted value. Taking it as decided would let the
+writers drop `A` although a majority of `S` never accepted that.
 
 The rule: **a value with `prev_voters` set is decided only by a majority of
 `prev_voters` and a majority of `voters`, and every decision built on it needs
@@ -284,10 +286,30 @@ both**, until the settle clears it. So whoever finds such a value:
 3. accepts it again under its own ballot on a majority of both sets, and only
    then uses it (and may settle it, if the MDS map already lists `S'`).
 
-The commit cannot be rolled back once any member accepted it: a member of `S'`
-that cannot be asked may have accepted it too. When a majority of `S'` is
-unreachable, the chunk stays unavailable for writes until it is back, as it
-would after a lost majority. An open does not fall back to `S`.
+**The order of the commit's accepts.** The executor sends the commit to the
+added members (`S' \ S`) first, and to the members of `S` only once every added
+member has accepted it; if one of them does not, it stops and sends nothing
+to `S`. So a member of `S` holding the commit means every added member holds it
+too, and a half-sent commit is of one of two shapes:
+
+- **only added members hold it.** A proposer of `S` prepares a majority of `S`,
+  finds no commit and goes on under `S`; its higher ballot overwrites the
+  commit on the added members when it next reaches them. The attempt is void,
+  and the plan may be aborted or the commit retried.
+- **some member of `S` holds it.** A proposer whose prepare majority of `S`
+  includes such a member must carry the commit (CASPaxos: the highest accepted
+  value in a prepare majority is never dropped), and completes it as above; the
+  added members it needs all hold it already. A proposer whose majority does not
+  include one goes on under `S`, and its decision overwrites the commit where it
+  meets it: the commit was not decided.
+
+A commit is never rolled back by rule, then: it is either carried by the next
+proposer that sees it in its majority of `S`, or superseded by one that does not.
+**Abort is a conditional decision**: "drop the added members, if the value still
+has them as non-voters and no `prev_voters`"; built on a value that turns out to
+hold the commit, it completes the commit instead. Once the commit is decided, a
+chunk whose `S'` loses its majority is unavailable for writes, as after any lost
+majority; an open does not fall back to `S`.
 
 
 This is the joint-consensus rule (Raft) applied to the one decision that changes
@@ -321,14 +343,14 @@ stage 1 lands.
 
 | Failure | Result |
 |---|---|
-| Executor dies before the commit | Its resync lease runs out; another writer excludes the added members, which stay non-voters. The plan stays in the MDS: the same command resumes it (the resync starts over, F8) or aborts it |
-| Executor dies while sending the commit | Some members hold it. The next reader of the register completes it with both majorities ([Completing a commit](#completing-a-commit)); until a majority of `S'` answers, the chunk is not writable |
+| Executor dies before the commit | Its resync lease runs out; another writer excludes the added members, which stay non-voters. Its plan lease runs out; the same command resumes the plan (the resync starts over, F8) or `--abort` drops it ([Stuck and repeated runs](#stuck-and-repeated-runs)) |
+| Executor dies while sending the commit | Only added members hold it: void, `S` goes on. A member of `S` holds it: every added member does too, and the next reader that meets it completes it ([Completing a commit](#completing-a-commit)) |
 | Executor dies after the commit, before finalize or settle | The register has `S'`; writers already run on it. Resuming finds the commit in the value, finalizes and settles |
 | MDS unreachable | Begin and finalize wait. Writers are affected only if they must locate a member they do not know |
 | An added member fails while filling | Excluded like any member, still a non-voter: `S` keeps serving. The resync restarts when it returns, or the plan is aborted |
 | A member of `S` fails | Ordinary decisions of `S`. The commit needs a majority of `S` without it; with `S = {A}`, losing `A` loses the data, a change or not |
 | The resync source fails | The owner aborts; another in-sync member is the source, or the plan waits |
-| Two plans for one chunk | The MDS refuses the second (`-EBUSY`) |
+| Two runs on one chunk | One owns the chunk's plan at a time ([Stuck and repeated runs](#stuck-and-repeated-runs)) |
 | A leaving member that missed the commit comes back | It still names itself in an older value: a stale copy by `sync_id` ancestry. It is not in the map, so no open reaches it; its volume is garbage to release |
 
 ## Operations
@@ -452,16 +474,29 @@ for later; it is the one place where a backend-specific mover pays off.
 
 Stage 2 adds to the MDS database and protocol:
 
-- a `reconfigurations` table, one row per chunk in flight: object, chunk index,
-  `S`, `S'`, the added slots' placement, the phase, the executor's idempotency
-  key; written in the same transaction as the mutation, like
+- an `operations` table, at most one row per object: the operation id
+  (client-generated), what it asks for (`migrate --from L [--to D]`,
+  `mirrors N`, or the drain of `L`), its state (`running`, `aborting`, `done`)
+  and the chunks it failed on with their last error;
+- a `reconfigurations` table, one row per chunk in flight: the operation, the
+  chunk index, `S`, `S'`, the added slots' placement, the phase, and its
+  ownership: `owner` (a random id an executor draws once per run), `lease_until`
+  and `generation`; written in the same transaction as the mutation, like
   `applied_mutations`;
-- `OBJ_RECONFIGURE_BEGIN` (places and records), `OBJ_RECONFIGURE_FINALIZE`
-  (map := `S'`, leaving members out of the chunk's version records,
-  `map_epoch++`), `OBJ_RECONFIGURE_ABORT` (only while no member holds the
-  commit); all idempotent ([Idempotent mutations](mds.md#idempotent-mutations)).
-  A plan in flight refuses a resize, a version and a removal of its object with
-  `-EBUSY`, so these never meet a half-changed chunk on the MDS side;
+- `OBJ_OPERATION_START` (creates the object's operation, or returns the one
+  that asks for the same; another one is `-EBUSY`), `OBJ_OPERATION_ABORT`
+  (state `aborting`);
+- `OBJ_RECONFIGURE_BEGIN` (places, records, and gives the plan to the caller),
+  `OBJ_RECONFIGURE_CLAIM` (takes over a plan whose lease ran out, `generation++`),
+  `OBJ_RECONFIGURE_RENEW` (extends the lease; answers the operation's state, so
+  an executor learns of an abort), `OBJ_RECONFIGURE_FINALIZE` (map := `S'`,
+  leaving members out of the chunk's version records, `map_epoch++`),
+  `OBJ_RECONFIGURE_ABORT` (drops a plan whose abort was decided in the
+  register). Every request about a plan carries its `generation`; an older one
+  is refused `-ESTALE`. All are idempotent
+  ([Idempotent mutations](mds.md#idempotent-mutations)). A chunk plan in flight
+  refuses a resize, a version and a removal of its object with `-EBUSY`, so
+  these never meet a half-changed chunk on the MDS side;
 - `LOCATE(ost_ids)`: the location URIs of topology entries, for writers;
 - a placement function for added slots next to `place_chunk()` in
   `mds/src/placement.cpp`: the same hierarchical HRW, with the kept members'
@@ -489,7 +524,9 @@ mechanism.
   so a killed executor is resumed by the same command from the plan in the MDS
   and the value in the register.
 - Progress per chunk in `rawstor object chunks` (`adding`, `filling`,
-  `committed`, `done`).
+  `committed`, `releasing`, `done`), with the plan's owner and the age of its
+  lease, so that a stuck run is visible
+  ([Stuck and repeated runs](#stuck-and-repeated-runs)).
 - **Fill rate.** A syncing member records the ranges client writes covered, at
   most 65,536 disjoint ones; a write needing another is refused `-ENOBUFS` and
   the member is excluded ([Resync across processes](multiattach.md#resync-across-processes)).
@@ -497,6 +534,53 @@ mechanism.
   fill makes it fail and start over. The fill therefore runs unthrottled, as
   resync does; throttling needs a coarser record (ranges merged into fixed
   blocks once the limit nears) and is not part of this design.
+
+## Stuck and repeated runs
+
+An operation is the object-level request (`migrate`, `mirrors`, a drain reaching
+the object), recorded in the MDS; its chunks are changed by per-chunk plans.
+The register keeps the change safe whoever runs it; the MDS records keep it
+orderly: one operation per object, one owner per chunk plan at a time.
+
+**Ownership.** An executor draws a random id per run. It takes a chunk's plan by
+`OBJ_RECONFIGURE_BEGIN` or, when the plan's lease ran out, by
+`OBJ_RECONFIGURE_CLAIM`, which raises the plan's `generation`; it renews the
+lease (60 s, renewed every 20 s) while it works on the chunk. The plan's owner is
+also the resync owner in the register; a new owner takes the resync over only
+after the register's own lease of the previous one ran out
+([Resync across processes](multiattach.md#resync-across-processes)), so two
+executors never sweep one member at once. An executor that wakes up after losing
+a plan gets `-ESTALE` from the MDS on its next request about it, its register
+proposals lose to higher ballots or find their change already made, and it
+drops the chunk.
+
+### Running a command again
+
+| Second run | Result |
+|---|---|
+| The same command while the first runs | Joins the operation (`OBJ_OPERATION_START` returns it) and takes chunks nobody owns: two executors share the work, never a chunk |
+| The same command after the first died | Resumes: claims the plans whose leases ran out, then the chunks not started |
+| The same command after the first finished | Nothing to do: no chunk has a slot on `--from`, or every chunk has width `N`. Exit 0 |
+| Another operation on the object (`--to C` while `--to B` runs, `mirrors 3` while `mirrors 2` runs) | `-EBUSY`, naming the running operation. It is aborted first, or waited for |
+| `--abort` | State `aborting`; executors learn it at their next renewal. A chunk not yet committed is aborted (the conditional decision, then `OBJ_RECONFIGURE_ABORT`, then the added members' volumes are released); a committed one is finished, as it cannot be undone. The object is left with some chunks moved; moving them back is another `migrate` |
+| A drain of `L` reaching an object whose operation removes `L` (`migrate --from L`) | Counts it as covered and goes on: the operation empties `L` |
+| A drain of `L` reaching an object with another operation | Skips it, reports it, and comes back to it on its next pass |
+| Two drains of one location | The same command twice: they join |
+| Resize, version, removal of the object | `-EBUSY` while one of its chunk plans is in flight (begun, not finalized); allowed between chunks. A scheduled snapshot retries |
+
+### When a run gets stuck
+
+| Situation | What happens | What the operator sees and does |
+|---|---|---|
+| Executor killed, host lost | Writers go on (the added members stay non-voters, excluded once the resync lease runs out). The object refuses resize, version and removal while its plan is in flight | `rawstor object chunks` shows the plan and its lapsed owner. Run the command again, or `--abort` |
+| Executor hung (stopped process, blocked I/O) | Its renewals stop: the same as killed for everyone else. When it wakes up it is refused (`-ESTALE`) and exits | As above |
+| The fill never completes (the added member keeps failing; `-ENOBUFS` under random writes, [Executor](#executor)) | The executor counts attempts per chunk; after `--attempts` (3 by default) it aborts that chunk's plan, records the error in the operation and goes on with the next chunk | The command ends with the failed chunks listed and a nonzero exit; the object is not blocked by them |
+| No location satisfies the placement | `OBJ_RECONFIGURE_BEGIN` fails for that chunk; recorded the same way | Add capacity or relax the operation (`--to`, the failure domain), run again |
+| An added member does not accept the commit | The executor sends nothing to `S`, the commit is void; it retries, then counts it as a failed attempt | As for a failing fill |
+| `S'` loses its majority after the commit | The chunk is not writable, as after any lost majority; the plan stays committed and cannot be aborted | Bring the members back; the run resumes and finalizes |
+| The MDS is unreachable | Begin, claim, renewal and finalize wait with backoff. A lease is counted by the MDS and survives its restart, so an executor that could not renew during an outage may find its plans claimed when the MDS is back | Nothing; the run goes on, or another one has taken over |
+| A leaving location cannot be released (dead, unreachable) | The plan stays in `releasing` and is retried by later runs; the map and the version records no longer name it, so drain status is 0 and the entry can leave the topology | Nothing, or remove the entry: its volume is garbage on a location that is gone |
+| Settle fails (`S'` briefly short of a majority) | Retried. Until it succeeds every decision needs both majorities ([Completing a commit](#completing-a-commit)) | Nothing |
 
 ## Permissions and capacity
 
@@ -520,11 +604,17 @@ Each stage is tested at the layer it adds, through existing interfaces:
 - stage 1: a one-member chunk refuses epoch 0 once recorded and a running writer
   adopts a new member; replacement of a copy, `{A}` → `{B}`, 2 → 3 with the
   witness swap, 3 → 2, all under a writer process; an added member excluded and
-  rejoined stays a non-voter; executor killed at every step; a writer and a
+  rejoined stays a non-voter; executor killed at every step; a commit sent to
+  the added members only (void) and to a minority of `S` (carried or
+  superseded); an abort that meets the commit completes it; a writer and a
   proposer that missed the commit; the ASAN stress shape used for resync;
 - stage 2: placement of added slots never reuses a kept domain and keeps K=1 on
-  one location; plan rows, idempotent replay, one plan per chunk, `-EBUSY` for
-  resize and versions; reconstruct of a chunk mid-change;
+  one location; plan rows, idempotent replay, one operation per object and one
+  owner per plan, a claim after the lease and `-ESTALE` for the old owner,
+  `-EBUSY` for resize and versions; reconstruct of a chunk mid-change;
+- stage 3 also: two runs of one command sharing an object, a run stopped
+  (`SIGSTOP`) and continued after another took over, `--abort` with chunks on
+  both sides of the commit, the attempt limit on a fill that keeps failing;
 - stage 3: end to end, `migrate` and `mirrors` under vhost-like writes;
 - stage 4: drain of a live and of a dead location in a multi-location topology,
   `ost://` and `file://` entries alike.
@@ -542,10 +632,11 @@ Each stage is tested at the layer it adds, through existing interfaces:
    A client of an earlier version refuses a record that names members (an
    unknown record field), so it cannot write a chunk that a newer one has
    started to manage; nothing else breaks.
-2. **MDS plans.** Plan table, `OBJ_RECONFIGURE_*`, `LOCATE`, placement of
+2. **MDS plans.** Operation and plan tables, ownership leases and
+   generations, `OBJ_OPERATION_*`, `OBJ_RECONFIGURE_*`, `LOCATE`, placement of
    added slots, `-EBUSY` rules, reconstruct from the value.
 3. **Executor and CLI.** `rawstor object migrate`, `rawstor object mirrors`,
-   resume, per-chunk progress.
+   join and resume, `--abort`, `--attempts`, per-chunk progress.
 4. **Drain.** `rawstor location drain` (with `--dead`) and its status in
    `rawstor location info`; removal from the topology.
 5. **Versions.** Copy before the commit; drain no longer blocks on them.
