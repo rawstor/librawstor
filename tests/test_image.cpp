@@ -65,7 +65,9 @@ ssize_t image_run(
     for (size_t i = 0; i + 1 < op.calls.size(); ++i) {
         EXPECT_GE(op.calls[i], 0);
         EXPECT_LT(op.calls[i], 100);
-        EXPECT_LT(op.calls[i], op.calls[i + 1]);
+        if (op.calls[i + 1] >= 0) {
+            EXPECT_LT(op.calls[i], op.calls[i + 1]);
+        }
     }
     if (calls_out != nullptr) {
         *calls_out = op.calls;
@@ -289,4 +291,38 @@ TEST(ImageTest, missing_sources_fail_and_create_nothing) {
         target_export(*queue, absent, (dir.path() / "out.img").string()),
         -ENOENT
     );
+}
+
+// A copy that fails once the new object exists removes it again: the source
+// reports more data than its file holds, so reading the second block fails
+// after the destination was created and half filled.
+TEST(ImageTest, a_failed_copy_removes_the_new_object) {
+    rawstor::tests::TmpDir dir;
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    write_file(dir.path() / "in.img", pattern(3 << 20));
+    std::string source_id = "018f4e2a-4000-7000-8000-000000000007";
+    std::string target_id = "018f4e2a-4000-7000-8000-000000000008";
+    std::string source = "file://" + dir.path().string() + "/" + source_id;
+    std::string target = "file://" + dir.path().string() + "/" + target_id;
+    RawstorObjectSpec spec{};
+    spec.width = 1;
+    ASSERT_EQ(
+        target_create_from_file(
+            *queue, source, (dir.path() / "in.img").string(), spec
+        ),
+        0
+    );
+    std::filesystem::resize_file(
+        dir.path() / source_id / "0" / "data", 1 << 20
+    );
+
+    std::vector<ssize_t> calls;
+    EXPECT_LT(
+        target_create_from_target(*queue, target, source, spec, &calls), 0
+    );
+    EXPECT_LT(calls.back(), 0);
+    EXPECT_FALSE(std::filesystem::exists(dir.path() / target_id));
+
+    EXPECT_EQ(target_remove(*queue, source), 0);
 }

@@ -252,7 +252,7 @@ rawstd::Task<void> export_image(
     int fd = -1;
     try {
         fd = co_await queue->open(
-            path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644
+            path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600
         );
         struct stat st;
         if (fstat(fd, &st) < 0) {
@@ -372,7 +372,12 @@ rawstd::Task<void> create_from(
         try {
             co_await destination.remove(*queue);
         } catch (...) {
-            rawstd_error("Failed to remove the partially created object\n");
+            // The caller gets the copy's own error; this says what is left.
+            rawstd_error(
+                "Failed to remove the partially created object %s, remove "
+                "it by hand\n",
+                destination.uris().front().str().c_str()
+            );
         }
     }
     if (error) {
