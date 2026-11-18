@@ -1265,7 +1265,8 @@ witness shares the UUID. Native ost:// access lists the witness records. No data
 I/O or CoW operation is issued to a witness.
 
 Wire changes are negotiated by `HANDSHAKE` feature bits; a protocol version
-is not planned. An I/O `map_version` fence is a future extension.
+is not planned. An I/O `map_version` fence is not planned either: a member
+change is fenced by the register epoch instead ([Migration](migration.md)).
 Interprocess mirror coordination remains multiattach stage 2.
 
 ## Implementation stages
