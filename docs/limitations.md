@@ -45,10 +45,12 @@ deciding how to deploy.
   added.
 - **Grow-only resize.** `rawstor object resize` can grow an object by whole chunks;
   shrinking is refused.
-- **No authentication or capabilities.** Anyone who can reach an MDS or OST port
-  can use it. Run them on a trusted network.
-- **No protocol version or feature negotiation** in the wire protocol yet; see
-  [Protocol](protocol.md).
+- **`--insecure` has no authentication.** A service run with `--insecure`
+  speaks plaintext and serves anyone who can reach its port; without it every
+  port requires mTLS ([Security](security.md)). Run insecure services on a
+  trusted network only.
+- **No protocol version.** `HANDSHAKE` negotiates feature bits only, and none
+  is defined yet; see [Protocol](protocol.md).
 - **Free space is reported by sampling.** `rawstor location info mds://` shows the last
   probe of every OST. A create, grow or remove makes the MDS probe the OSTs it
   touched after `RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY`, but a client that is
