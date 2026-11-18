@@ -2,6 +2,7 @@
 #include "chunks.h"
 #include "create.h"
 #include "create_version.h"
+#include "image.h"
 #include "info.h"
 #include "list.h"
 #include "output.h"
@@ -102,6 +103,9 @@ static void object_usage(void) {
         "subcommand:\n"
         "  chunks                List an object's chunks\n"
         "  create                Create rawstor object\n"
+        "  export                Write an object to a file\n"
+        "  import                Create an object from a file or another "
+        "object\n"
         "  list(ls)              List rawstor objects\n"
         "  remove(rm)            Remove rawstor object\n"
         "  resize                Grow an mds:// object\n"
@@ -138,6 +142,7 @@ static void version_usage(void) {
         "\n"
         "subcommand:\n"
         "  create                Create a version of an object\n"
+        "  export                Write a version to a file\n"
         "  list(ls)              List an object's versions\n"
         "  remove(rm)            Remove a version\n"
         "  show                  Show a version\n"
@@ -219,6 +224,71 @@ static int take_target(int argc, char** argv, char** target) {
     resolved_target = resolved;
     *target = resolved;
     optind += consumed;
+    return 0;
+}
+
+/* The object policy options `create` and `import` share: --mirrors,
+ * --failure-domain and --stripe-width, each NULL when not given. Returns 0,
+ * or EX_USAGE after saying what is wrong. */
+static int parse_policy(
+    const char* mirrors_arg, const char* failure_domain_arg,
+    const char* stripe_width_arg, unsigned int* mirrors,
+    unsigned int* failure_domain, uint64_t* stripe_width
+) {
+    {
+        char* endptr = NULL;
+        errno = 0;
+        unsigned long parsed_mirrors = strtoul(mirrors_arg, &endptr, 10);
+        if (errno != 0 || endptr == mirrors_arg || *endptr != '\0') {
+            fprintf(stderr, "Invalid mirrors value: %s\n", mirrors_arg);
+            return EX_USAGE;
+        }
+        if (parsed_mirrors == 0) {
+            fprintf(stderr, "mirrors must be greater than 0\n");
+            return EX_USAGE;
+        }
+        if (parsed_mirrors > UINT8_MAX) {
+            fprintf(stderr, "mirrors value too large: %s\n", mirrors_arg);
+            return EX_USAGE;
+        }
+        *mirrors = (unsigned int)parsed_mirrors;
+    }
+
+    *failure_domain = RAWSTOR_OBJ_DOMAIN_DEFAULT;
+    if (failure_domain_arg != NULL) {
+        if (strcmp(failure_domain_arg, "dc") == 0) {
+            *failure_domain = RAWSTOR_OBJ_DOMAIN_DC;
+        } else if (strcmp(failure_domain_arg, "row") == 0) {
+            *failure_domain = RAWSTOR_OBJ_DOMAIN_ROW;
+        } else if (strcmp(failure_domain_arg, "rack") == 0) {
+            *failure_domain = RAWSTOR_OBJ_DOMAIN_RACK;
+        } else if (strcmp(failure_domain_arg, "server") == 0) {
+            *failure_domain = RAWSTOR_OBJ_DOMAIN_SERVER;
+        } else if (strcmp(failure_domain_arg, "ost") == 0) {
+            *failure_domain = RAWSTOR_OBJ_DOMAIN_OST;
+        } else {
+            fprintf(
+                stderr, "Invalid failure-domain value: %s\n", failure_domain_arg
+            );
+            return EX_USAGE;
+        }
+    }
+
+    *stripe_width = 0;
+    if (stripe_width_arg != NULL) {
+        char* endptr = NULL;
+        errno = 0;
+        unsigned long long parsed_stripe_width =
+            strtoull(stripe_width_arg, &endptr, 10);
+        if (errno != 0 || endptr == stripe_width_arg || *endptr != '\0') {
+            fprintf(
+                stderr, "Invalid stripe-width value: %s\n", stripe_width_arg
+            );
+            return EX_USAGE;
+        }
+        *stripe_width = (uint64_t)parsed_stripe_width;
+    }
+
     return 0;
 }
 
@@ -456,58 +526,14 @@ static int command_create(int argc, char** argv) {
     }
 
     unsigned int mirrors;
-    {
-        char* endptr = NULL;
-        errno = 0;
-        unsigned long parsed_mirrors = strtoul(mirrors_arg, &endptr, 10);
-        if (errno != 0 || endptr == mirrors_arg || *endptr != '\0') {
-            fprintf(stderr, "Invalid mirrors value: %s\n", mirrors_arg);
-            return EX_USAGE;
-        }
-        if (parsed_mirrors == 0) {
-            fprintf(stderr, "mirrors must be greater than 0\n");
-            return EX_USAGE;
-        }
-        if (parsed_mirrors > UINT8_MAX) {
-            fprintf(stderr, "mirrors value too large: %s\n", mirrors_arg);
-            return EX_USAGE;
-        }
-        mirrors = (unsigned int)parsed_mirrors;
-    }
-
-    unsigned int failure_domain = RAWSTOR_OBJ_DOMAIN_DEFAULT;
-    if (failure_domain_arg != NULL) {
-        if (strcmp(failure_domain_arg, "dc") == 0) {
-            failure_domain = RAWSTOR_OBJ_DOMAIN_DC;
-        } else if (strcmp(failure_domain_arg, "row") == 0) {
-            failure_domain = RAWSTOR_OBJ_DOMAIN_ROW;
-        } else if (strcmp(failure_domain_arg, "rack") == 0) {
-            failure_domain = RAWSTOR_OBJ_DOMAIN_RACK;
-        } else if (strcmp(failure_domain_arg, "server") == 0) {
-            failure_domain = RAWSTOR_OBJ_DOMAIN_SERVER;
-        } else if (strcmp(failure_domain_arg, "ost") == 0) {
-            failure_domain = RAWSTOR_OBJ_DOMAIN_OST;
-        } else {
-            fprintf(
-                stderr, "Invalid failure-domain value: %s\n", failure_domain_arg
-            );
-            return EX_USAGE;
-        }
-    }
-
-    uint64_t stripe_width = 0;
-    if (stripe_width_arg != NULL) {
-        char* endptr = NULL;
-        errno = 0;
-        unsigned long long parsed_stripe_width =
-            strtoull(stripe_width_arg, &endptr, 10);
-        if (errno != 0 || endptr == stripe_width_arg || *endptr != '\0') {
-            fprintf(
-                stderr, "Invalid stripe-width value: %s\n", stripe_width_arg
-            );
-            return EX_USAGE;
-        }
-        stripe_width = (uint64_t)parsed_stripe_width;
+    unsigned int failure_domain;
+    uint64_t stripe_width;
+    int policy = parse_policy(
+        mirrors_arg, failure_domain_arg, stripe_width_arg, &mirrors,
+        &failure_domain, &stripe_width
+    );
+    if (policy != 0) {
+        return policy;
     }
 
     if (target_arg != NULL) {
@@ -521,6 +547,322 @@ static int command_create(int argc, char** argv) {
             stripe_width, &output_arg
         );
     }
+}
+
+static void command_export_usage(enum TargetType type) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] %s export TARGET FILE\n"
+        "\n"
+        "Writes %s to FILE (created or truncated). A regular file is "
+        "written\n"
+        "sparse: blocks that read as zero become holes. A block device "
+        "gets every\n"
+        "block.\n"
+        "\n"
+        "Nothing coordinates with other users of the object: the live "
+        "version of\n"
+        "an object some client has open is read as the storage holds it. "
+        "Export a\n"
+        "version (`rawstor version export`) for a consistent point.\n"
+        "\n"
+        "  TARGET                %s\n"
+        "  FILE                  Destination file.\n"
+        "\n"
+        "command options:\n"
+        "  -h, --help            Show this help message and exit\n",
+        type == TARGET_VERSION ? "version" : "object",
+        type == TARGET_VERSION ? "a version of an object" : "an object",
+        type == TARGET_VERSION ? "A target naming a bound version, "
+                                 "TARGET/VERSION_ID."
+                               : "The object."
+    );
+}
+
+static int command_export(int argc, char** argv, enum TargetType type) {
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {},
+    };
+
+    optind = 0;
+    while (1) {
+        int c = getopt_long(argc, argv, "h", longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+            command_export_usage(type);
+            return EXIT_SUCCESS;
+
+        default:
+            return EX_USAGE;
+        }
+    }
+
+    char* target = NULL;
+    if (optind < argc) {
+        int tres = take_target(argc, argv, &target);
+        if (tres != 0) {
+            return tres;
+        }
+    }
+    if (target == NULL) {
+        fprintf(stderr, "target required\n");
+        return EX_USAGE;
+    }
+    if (optind >= argc) {
+        fprintf(stderr, "file required\n");
+        return EX_USAGE;
+    }
+    const char* path = argv[optind++];
+    if (optind < argc) {
+        fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+        return EX_USAGE;
+    }
+
+    int checked = check_target_type(target, type);
+    if (checked != 0) {
+        return checked;
+    }
+
+    return rawstor_cli_export(target, path);
+}
+
+static void command_import_usage(void) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] object import TARGET -m N "
+        "(-f FILE | --from-target SOURCE)\n"
+        "                                       [command_options]\n"
+        "\n"
+        "Creates a new object and fills it from a file, or from another "
+        "object or\n"
+        "one of its versions. If anything fails once the object exists, it "
+        "is\n"
+        "removed again.\n"
+        "\n"
+        "  TARGET                The new object, with its UUID, as for "
+        "`object create -t`\n"
+        "                        (e.g. mds://host:port/<uuid>), or LOCATION "
+        "UUID, or a bare\n"
+        "                        UUID under RAWSTOR_LOCATION.\n"
+        "  -f, --from-file FILE  Source: a regular file or a block "
+        "device.\n"
+        "  --from-target SOURCE  Source: an object, or a version of one "
+        "(SOURCE is\n"
+        "                        TARGET or TARGET/VERSION_ID); it may live "
+        "on another\n"
+        "                        location or backend. Copy a version for a "
+        "consistent\n"
+        "                        point of an object in use: the live "
+        "version is read as\n"
+        "                        the storage holds it, and nothing "
+        "coordinates with\n"
+        "                        clients that have it open.\n"
+        "\n"
+        "command options:\n"
+        "  -h, --help            Show this help message and exit\n"
+        "  -m, --mirrors N       Number of mirrors (copies per chunk, "
+        "0 < N <= 255).\n"
+        "                        Required; nothing is inherited from the "
+        "source.\n"
+        "  -s, --size SIZE       Object size in bytes, or with a unit "
+        "suffix (K, M, G,\n"
+        "                        T, P, E). Default: the size of the "
+        "source. A larger\n"
+        "                        size pads with zeros; a smaller one is an "
+        "error.\n"
+        "  --chunk-size SIZE     Chunk size like --size, power of two. "
+        "Required for\n"
+        "                        mds://, whose objects need a size that is "
+        "a multiple\n"
+        "                        of it -- pass --size for a source of "
+        "another length.\n"
+        "\n"
+        "chunk placement (mds:// only -- docs/mds.md; an error otherwise):\n"
+        "  --failure-domain LEVEL  dc, row, rack, server (default), ost.\n"
+        "  --stripe-width K      0 = spread across the cluster (default), "
+        "1 = object-local,\n"
+        "                        K = spread across K OSTs.\n"
+        "\n"
+        "output (stdout; progress goes to stderr):\n" RAWSTOR_CLI_OUTPUT_USAGE
+    );
+}
+
+static int command_import(int argc, char** argv) {
+    const char* optstring = "hm:s:f:";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {"mirrors", required_argument, NULL, 'm'},
+        {"size", required_argument, NULL, 's'},
+        {"from-file", required_argument, NULL, 'f'},
+        {"from-target", required_argument, NULL, 'T'},
+        {"chunk-size", required_argument, NULL, 'C'},
+        {"failure-domain", required_argument, NULL, 'F'},
+        {"stripe-width", required_argument, NULL, 'K'},
+        {"format", required_argument, NULL, RAWSTOR_CLI_OPT_FORMAT},
+        {"column", required_argument, NULL, RAWSTOR_CLI_OPT_COLUMN},
+        {},
+    };
+
+    const char* mirrors_arg = NULL;
+    const char* size_arg = NULL;
+    const char* from_file_arg = NULL;
+    const char* from_target_arg = NULL;
+    const char* chunk_size_arg = NULL;
+    const char* failure_domain_arg = NULL;
+    const char* stripe_width_arg = NULL;
+    RawstorCliOutput output_arg = {.unit = global_unit};
+    optind = 0;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+            command_import_usage();
+            return EXIT_SUCCESS;
+
+        case 'm':
+            mirrors_arg = optarg;
+            break;
+
+        case 's':
+            size_arg = optarg;
+            break;
+
+        case 'f':
+            from_file_arg = optarg;
+            break;
+
+        case 'T':
+            from_target_arg = optarg;
+            break;
+
+        case 'C':
+            chunk_size_arg = optarg;
+            break;
+
+        case 'F':
+            failure_domain_arg = optarg;
+            break;
+
+        case 'K':
+            stripe_width_arg = optarg;
+            break;
+
+        case RAWSTOR_CLI_OPT_FORMAT:
+            if (rawstor_cli_output_set_format(&output_arg, optarg) != 0) {
+                fprintf(
+                    stderr, "Unknown format: %s (table, json or value)\n",
+                    optarg
+                );
+                return EX_USAGE;
+            }
+            break;
+
+        case RAWSTOR_CLI_OPT_COLUMN:
+            output_arg.columns = optarg;
+            break;
+
+        default:
+            return EX_USAGE;
+        }
+    }
+
+    char* target = NULL;
+    if (optind < argc) {
+        int tres = take_target(argc, argv, &target);
+        if (tres != 0) {
+            return tres;
+        }
+    }
+    if (target == NULL) {
+        fprintf(stderr, "target required\n");
+        return EX_USAGE;
+    }
+    if (optind < argc) {
+        fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+        return EX_USAGE;
+    }
+
+    if (from_file_arg == NULL && from_target_arg == NULL) {
+        fprintf(stderr, "--from-file or --from-target required\n");
+        return EX_USAGE;
+    }
+    if (from_file_arg != NULL && from_target_arg != NULL) {
+        fprintf(
+            stderr, "--from-file and --from-target are mutually exclusive\n"
+        );
+        return EX_USAGE;
+    }
+    if (mirrors_arg == NULL) {
+        fprintf(stderr, "mirrors required\n");
+        return EX_USAGE;
+    }
+
+    if ((failure_domain_arg != NULL || stripe_width_arg != NULL) &&
+        strncmp(target, "mds://", strlen("mds://")) != 0) {
+        fprintf(
+            stderr, "--failure-domain/--stripe-width are only valid for "
+                    "mds://\n"
+        );
+        return EX_USAGE;
+    }
+
+    int checked = check_target_type(target, TARGET_OBJECT);
+    if (checked != 0) {
+        return checked;
+    }
+
+    uint64_t size = 0;
+    if (size_arg != NULL) {
+        int res = rawstd_size_to_bytes(size_arg, &size);
+        if (res < 0) {
+            fprintf(
+                stderr, "Failed to parse units: %s\nError: %s\n", size_arg,
+                strerror(-res)
+            );
+            return EX_USAGE;
+        }
+    }
+
+    uint64_t chunk_size = 0;
+    if (chunk_size_arg != NULL) {
+        int cres = rawstd_size_to_bytes(chunk_size_arg, &chunk_size);
+        if (cres < 0) {
+            fprintf(
+                stderr, "Failed to parse units: %s\nError: %s\n",
+                chunk_size_arg, strerror(-cres)
+            );
+            return EX_USAGE;
+        }
+    }
+
+    unsigned int mirrors;
+    unsigned int failure_domain;
+    uint64_t stripe_width;
+    int policy = parse_policy(
+        mirrors_arg, failure_domain_arg, stripe_width_arg, &mirrors,
+        &failure_domain, &stripe_width
+    );
+    if (policy != 0) {
+        return policy;
+    }
+
+    return rawstor_cli_import(
+        target, from_file_arg, from_target_arg, size, chunk_size, mirrors,
+        failure_domain, stripe_width, &output_arg
+    );
 }
 
 static void command_remove_usage(enum TargetType type) {
@@ -2099,6 +2441,10 @@ static int run_object(int argc, char** argv) {
         return command_chunks(argc, argv);
     } else if (strcmp(sub, "create") == 0) {
         return command_create(argc, argv);
+    } else if (strcmp(sub, "export") == 0) {
+        return command_export(argc, argv, TARGET_OBJECT);
+    } else if (strcmp(sub, "import") == 0) {
+        return command_import(argc, argv);
     } else if (strcmp(sub, "list") == 0 || strcmp(sub, "ls") == 0) {
         return command_list(argc, argv);
     } else if (strcmp(sub, "remove") == 0 || strcmp(sub, "rm") == 0) {
@@ -2133,6 +2479,8 @@ static int run_version(int argc, char** argv) {
     argv++;
     if (strcmp(sub, "create") == 0) {
         return command_create_version(argc, argv);
+    } else if (strcmp(sub, "export") == 0) {
+        return command_export(argc, argv, TARGET_VERSION);
     } else if (strcmp(sub, "list") == 0 || strcmp(sub, "ls") == 0) {
         return command_list_versions(argc, argv);
     } else if (strcmp(sub, "remove") == 0 || strcmp(sub, "rm") == 0) {

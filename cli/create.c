@@ -228,3 +228,75 @@ int rawstor_cli_create_at(
 
     return ret;
 }
+
+int rawstor_cli_import(
+    const char* target, const char* from_file, const char* from_target,
+    uint64_t size, uint64_t chunk_size, unsigned int mirrors,
+    unsigned int failure_domain, uint64_t stripe_width,
+    const RawstorCliOutput* output
+) {
+    struct RawstorObjectSpec spec = {
+        .size = size,
+        .width = mirrors,
+        .chunk_size = chunk_size,
+        .stripe_width = stripe_width,
+        .failure_domain = failure_domain,
+    };
+
+    int checked = check_created_output(output);
+    if (checked != 0) {
+        return checked;
+    }
+
+    fprintf(
+        stderr, "Creating object %s from %s\n", target,
+        from_file != NULL ? from_file : from_target
+    );
+
+    RawstorCliOp op;
+    int res = rawstor_cli_op_init(&op);
+    if (res < 0) {
+        fprintf(stderr, "Failed to create queue: %s\n", strerror(-res));
+        return rawstd_exitcode_for_errno(-res);
+    }
+
+    const char* call;
+    int sres;
+    if (from_file != NULL) {
+        call = "rawstor_target_create_from_file()";
+        sres = rawstor_target_create_from_file(
+            op.queue, target, from_file, &spec, rawstor_cli_op_cb, &op
+        );
+    } else {
+        call = "rawstor_target_create_from_target()";
+        sres = rawstor_target_create_from_target(
+            op.queue, target, from_target, &spec, rawstor_cli_op_cb, &op
+        );
+    }
+    ssize_t result = rawstor_cli_op_wait(&op, sres);
+    rawstor_cli_op_destroy(&op);
+    if (result < 0) {
+        fprintf(stderr, "%s failed: %s\n", call, strerror((int)-result));
+        return rawstd_exitcode_for_errno((int)-result);
+    }
+
+    fprintf(stderr, "Object created\n");
+
+    /* A size left to the source is only known now: read it back. */
+    struct RawstorObjectSpec stored = spec;
+    if (stored.size == 0) {
+        struct RawstorObjectSpec read_spec;
+        memset(&read_spec, 0, sizeof(read_spec));
+        if (rawstor_cli_op_init(&op) == 0) {
+            int spres = rawstor_target_spec(
+                op.queue, target, &read_spec, rawstor_cli_op_cb, &op
+            );
+            ssize_t spec_result = rawstor_cli_op_wait(&op, spres);
+            rawstor_cli_op_destroy(&op);
+            if (spec_result == 0) {
+                stored.size = read_spec.size;
+            }
+        }
+    }
+    return print_created(output, target, &stored);
+}

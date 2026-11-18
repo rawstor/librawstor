@@ -20,6 +20,8 @@ rawstor_SOURCES = chunks.c \
                   chunks.h \
                   create.c \
                   create.h \
+                  image.c \
+                  image.h \
                   info.c \
                   info.h \
                   list.c \

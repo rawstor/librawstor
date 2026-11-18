@@ -10,8 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - An object UUID can stand in for a target: `rawstor object show|remove|resize|transfer|chunks|slots|resolve`, `rawstor version ...`, `rawstor-vhost` and `rawstor-vduse` accept `LOCATION UUID`, or a bare `UUID` with the location taken from `RAWSTOR_LOCATION`.
-- Objects and versions export to a file image and new objects are created from a file or from another object or version: `rawstor_target_export()`, `rawstor_target_create_from_file()`, `rawstor_target_create_from_target()` ([concepts](docs/concepts.md#image)); pyrawstor has `Target.export()`, `Target.create_from_file()` and `Target.create_from()`.
-
+- Objects and versions export to a file image and new objects are created from a file or from another object or version: `rawstor_target_export()`, `rawstor_target_create_from_file()`, `rawstor_target_create_from_target()` ([concepts](docs/concepts.md#image)); pyrawstor has `Target.export()`, `Target.create_from_file()` and `Target.create_from()`; the CLI has `rawstor object export`, `rawstor version export` and `rawstor object import`.
 - Python `rawstor.initialize(insecure=True)` supports running without TLS certificates.
 - All systemd services accept additional command-line arguments through `EXTRA_ARGS` in their configuration files, including `--insecure`.
 - Certificate role `none` denies unlisted objects; explicit object permissions override role defaults, supporting credentials scoped to one vhost object.
