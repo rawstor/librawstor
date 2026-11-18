@@ -103,6 +103,10 @@ The register value (`RawstorObjectConfig`) names its members:
 | `voter` | whether the member counts in `N` and in every majority |
 | `role` | in-sync, syncing, excluded, as now |
 
+and, for the value as a whole, `prev_voters`: the voters of the value a commit
+replaced, while the change is not settled (empty otherwise; see
+[Completing a commit](#completing-a-commit)).
+
 - **The value, not the MDS map and not the position in a target list, is the
   membership.** A member knows itself by its `ost_id`. A member not named in the
   value is not a member of the chunk.
@@ -115,10 +119,15 @@ The register value (`RawstorObjectConfig`) names its members:
   ordinary rejoin makes it an in-sync non-voter, a full copy with no vote. This
   is why voting is a field and not a role value: no existing transition can
   promote or demote a voter by accident.
-- **`width` is derived**: the number of `DATA` voters. A member persists the
-  width of the value it accepts, in the same record write, so `META` and the
-  F11 comparison keep working unchanged. The witness rule ("the last location
-  beyond `width`") applies to targets whose value names no members.
+- **`width` is derived**: the number of `DATA` voters of the value. A chunk
+  whose value names its members takes its width from the value an open
+  selects, never from comparing the copies' persisted spec: a member that
+  missed a commit keeps the old width in its record, and a spec comparison
+  (F11) would hold it stale with no way back. The member rewrites its
+  persisted width whenever it accepts a value, a rejoin included, so `META`
+  reports the width of the value it holds. Size and chunk size are compared
+  as before. The witness rule ("the last location beyond `width`") applies to
+  targets whose value names no members.
 - **Plain targets** (a user's `ost://a,ost://b` list without an MDS) have no
   `ost_id`s. Their value names no members, membership stays positional as now,
   and they cannot be reconfigured: their members are the user's list.
@@ -149,6 +158,15 @@ new member, and its writes would never reach the copy being filled. So:
 Cost: none on the data path (the epoch is already stamped and checked); one
 record per decision, of which a one-copy chunk has none until it is reconfigured.
 
+**Chunks created before stage 1** have no register. A writer of stage 1 records
+one at its first writable open, in the dirty gate it passes anyway (one fsync
+on the one member). `reconfigure` refuses a chunk whose record names no
+members (`-EOPNOTSUPP`): it has, or may have, a writer stamping epoch 0 that
+cannot be fenced. Such a chunk is reopened by a stage-1 writer first, which for
+a VM disk means restarting its `rawstor-vhost` or `rawstor-vduse`. There are no
+live installations ([Compatibility stance](mds.md#compatibility-stance)); this
+concerns test stands only.
+
 ## The change as register decisions
 
 `reconfigure(chunk, S')`, with `S` the current voters and `S'` the wanted ones:
@@ -176,10 +194,11 @@ sequenceDiagram
     X->>S: decide: members += L (non-voters, syncing)   [majority of S]
     Note over S,L: writers learn L on -ESTALE, duplicate their writes onto it
     X->>L: resync from an in-sync member (RESYNC writes)
-    X->>S: decide: voters = S', members = S ∪ L minus S \ S'   [majority of S and of S']
+    X->>S: decide: voters = S', prev_voters = S, members = S ∪ L minus S \ S'   [majority of S and of S']
     X->>L: (same decision)
     Note over S: members of S \ S' that accept it are fenced
-    X->>M: OBJ_RECONFIGURE_FINALIZE: map = S'
+    X->>M: OBJ_RECONFIGURE_FINALIZE: map = S', leaving members out of version records
+    X->>L: decide: prev_voters = none   [majority of S']
     X->>S: RELEASE the members that left
 ```
 
@@ -193,17 +212,22 @@ sequenceDiagram
    about the quorum changes: `N` is still `|S|`.
 4. **Fill.** The existing resync copies the data, the writers duplicate their
    writes; a witness has nothing to copy.
-5. **Commit.** One decision sets `voter` to `S'`, drops the members of `S \ S'`
-   from the value, raises the epoch and moves the `sync_id` on. It counts only
-   if it is accepted by **a majority of `S` and a majority of `S'`**, and it is
-   sent to every member of `S ∪ S'`, the leaving ones included. A leaving member
-   that accepts it no longer finds itself in the value: it refuses every write
-   below the new epoch and is not asked again. The commit is the point of no
-   return: before it the plan can be aborted (a decision of `S` drops the added
-   members), after it only finished.
-6. **Finalize.** The MDS sets the chunk's map to `S'`.
-7. **Release.** The volumes of the members that left are destroyed, later and
-   without hurry.
+5. **Commit.** One decision sets `voter` to `S'`, records `prev_voters = S`,
+   drops the members of `S \ S'` from the value, raises the epoch and moves the
+   `sync_id` on. It is decided only once accepted by **a majority of `S` and a
+   majority of `S'`**, and it is sent to every member of `S ∪ S'`, the leaving
+   ones included. A leaving member that accepts it no longer finds itself in the
+   value: it refuses every write below the new epoch and is not asked again.
+   Once any member has accepted it, the plan can only be finished
+   ([Completing a commit](#completing-a-commit)); before that it can be aborted
+   (a decision of `S` drops the added members).
+6. **Finalize.** In one MDS transaction the chunk's map becomes `S'` and the
+   leaving members are removed from the records of the chunk's versions (which
+   by then name the added members instead, [Versions](#versions)).
+7. **Settle.** A decision of `S'` alone clears `prev_voters`. From then on the
+   chunk is at rest under `S'`.
+8. **Release.** The volumes of the members that left, versions included, are
+   destroyed, later and without hurry.
 
 The MDS map changes once, after the commit. Until then it lists `S`, afterwards
 `S'`; since the commit was accepted by majorities of both, an open that reads
@@ -222,16 +246,41 @@ write, and a proposer making a decision.
   must reach `A` and why a one-copy chunk needs a register.
 - **A proposer that missed the commit** prepares a majority of the voters it
   knows, `S`. That majority intersects the majority of `S` that accepted the
-  commit, so its prepare returns the commit (or a later value), and the proposer
-  adopts it and learns `S'` before it changes anything. A proposer that knows
-  `S'` intersects the majority of `S'` that accepted it.
+  commit, so its prepare returns the commit (or a later value). It does not
+  take that value as decided: it completes it as below, and learns `S'` before
+  it changes anything.
 - **A decision of `S` racing the commit** (an exclusion by another writer) holds
   a higher ballot on some member of every majority of `S`, so the commit fails
   to reach a majority of `S`, is not decided, and is retried on top of that
   decision.
 - Decisions before the commit (step 3, exclusions while filling) are ordinary
-  decisions of `S`; decisions after it are ordinary decisions of `S'`. Only the
-  commit needs both.
+  decisions of `S`; decisions after the settle are ordinary decisions of `S'`.
+  Every decision in between needs both.
+
+### Completing a commit
+
+A commit may be accepted by some members only: the executor dies between its
+`SYNC_ACCEPT`s. With `{A}` → `{B}`, `A` may hold the commit while `B` still holds
+the value that added it. Whoever then reads the register (a fresh open, a
+writer on `-ESTALE`, a proposer) finds the commit as the highest accepted value
+on `A`. Taking it as decided would make `B` the only voter without `B` ever
+having accepted it.
+
+The rule: **a value with `prev_voters` set is decided only by a majority of
+`prev_voters` and a majority of `voters`, and every decision built on it needs
+both**, until the settle clears it. So whoever finds such a value:
+
+1. prepares a majority of both sets (locating the members it does not know,
+   [How a writer follows](#how-a-writer-follows-a-change));
+2. takes the highest accepted value among all replies, as CASPaxos does;
+3. accepts it again under its own ballot on a majority of both sets, and only
+   then uses it (and may settle it, if the MDS map already lists `S'`).
+
+The commit cannot be rolled back once any member accepted it: a member of `S'`
+that cannot be asked may have accepted it too. When a majority of `S'` is
+unreachable, the chunk stays unavailable for writes until it is back, as it
+would after a lost majority. An open does not fall back to `S`.
+
 
 This is the joint-consensus rule (Raft) applied to the one decision that changes
 the voters, with the added members first made acceptors that do not count,
@@ -250,10 +299,11 @@ stage 1 lands.
 - Until it has done so it acknowledges nothing, exactly as a writer that has just
   been refused `-ESTALE`.
 - **A fresh open** resolves the map, reads `META` from the members it lists, and
-  takes the value with the highest `accepted` among them, as it does now. If the
-  value names members the map does not (a change in flight), it locates and
-  opens them the same way. The map lists either `S` or `S'`, and both contain a
-  majority that holds the newest value.
+  takes the value with the highest `accepted` among them. If that value names
+  members the map does not (a change in flight), it locates and opens them the
+  same way, and a value with `prev_voters` set is completed before the open
+  uses it ([Completing a commit](#completing-a-commit)). The map lists either
+  `S` or `S'`, and both contain a member that holds the newest value.
 - The writer keeps the MDS location for the life of the chunk, which it does not
   today: `Target::open()` expands an `mds://` target into plain chunk targets.
   A writer that has to locate a member while the MDS is unreachable freezes
@@ -264,7 +314,8 @@ stage 1 lands.
 | Failure | Result |
 |---|---|
 | Executor dies before the commit | Its resync lease runs out; another writer excludes the added members, which stay non-voters. The plan stays in the MDS: the same command resumes it (the resync starts over, F8) or aborts it |
-| Executor dies after the commit, before finalize | The register has `S'`; writers already run on it. Resuming finds the commit in the value and finalizes |
+| Executor dies while sending the commit | Some members hold it. The next reader of the register completes it with both majorities ([Completing a commit](#completing-a-commit)); until a majority of `S'` answers, the chunk is not writable |
+| Executor dies after the commit, before finalize or settle | The register has `S'`; writers already run on it. Resuming finds the commit in the value, finalizes and settles |
 | MDS unreachable | Begin and finalize wait. Writers are affected only if they must locate a member they do not know |
 | An added member fails while filling | Excluded like any member, still a non-voter: `S` keeps serving. The resync restarts when it returns, or the plan is aborted |
 | A member of `S` fails | Ordinary decisions of `S`. The commit needs a majority of `S` without it; with `S = {A}`, losing `A` loses the data, a change or not |
@@ -367,9 +418,13 @@ those OSTs.
   allocated blank volume is written with the oldest version's content (read
   through `SET_OBJECT(id, version_id)` from a member holding it), snapshotted
   natively as `s<version_id>`, then written with the next version, and so on.
-  Versions are immutable, so no barrier is needed. Each version is then added to
-  `versions[version_id].members`, and only after the commit may a leaving member
-  holding it be released.
+  Versions are immutable, so no barrier is needed. Each copied version is added
+  to `versions[version_id].members` as it is done (a reader may use it from
+  then on). The finalize removes the leaving members from those records in the
+  same transaction that moves the map, so no record names a member that is
+  about to be released; the release comes after it, and a crash in between
+  leaves volumes no record refers to, garbage to collect. Drain status counts
+  version records, so it reaches 0 only after the finalize.
 
 The copy writes whole versions, not differences, and the live resync after it
 rewrites every block again. On `zfs://` that breaks block sharing between the
@@ -388,7 +443,8 @@ Stage 2 adds to the MDS database and protocol:
   key; written in the same transaction as the mutation, like
   `applied_mutations`;
 - `OBJ_RECONFIGURE_BEGIN` (places and records), `OBJ_RECONFIGURE_FINALIZE`
-  (map := `S'`, `map_epoch++`), `OBJ_RECONFIGURE_ABORT` (only before the
+  (map := `S'`, leaving members out of the chunk's version records,
+  `map_epoch++`), `OBJ_RECONFIGURE_ABORT` (only while no member holds the
   commit); all idempotent ([Idempotent mutations](mds.md#idempotent-mutations)).
   A plan in flight refuses a resize, a version and a removal of its object with
   `-EBUSY`, so these never meet a half-changed chunk on the MDS side;
@@ -428,6 +484,21 @@ mechanism.
   resync does; throttling needs a coarser record (ranges merged into fixed
   blocks once the limit nears) and is not part of this design.
 
+## Permissions and capacity
+
+- **Who may do what** ([Accounts](accounts.md)): changing the number of mirrors
+  of an object is an operation on the object, allowed to its owner like resize.
+  Migrating a disk and draining an OST choose OSTs and are allowed to the
+  provider administrator only; an account cannot name an OST. `OST_LOCATE`
+  answers a writer of the chunk for the OSTs its value names, no others.
+- **Capacity.** Adding mirrors multiplies the space an object takes; copied
+  versions take their full size on the new member ([Versions](#versions)), and
+  a migration holds the space of the added members until the release frees the
+  old ones. Account quotas are separate, not yet designed work
+  ([Security](security.md)); when they exist, the added members count against
+  the owner and a change that would exceed the quota is refused before
+  `OBJ_RECONFIGURE_BEGIN`.
+
 ## Tests
 
 Each stage is tested at the layer it adds, through existing interfaces:
@@ -450,8 +521,12 @@ Each stage is tested at the layer it adds, through existing interfaces:
 1. **Membership in the register.** Member ids, kind and voter in the value, the
    record and the wire; `N` over voters; derived `width`; the joint commit; a
    register for one-member chunks and epoch 0 refused; writers following a
-   change (`OST_LOCATE` from a test resolver at this stage). Servers before
-   clients.
+   change (`OST_LOCATE` from a test resolver at this stage); completing a
+   partly accepted commit. Upgrade order: `rawstor-ost` and `rawstor-mds`
+   first, since they store and answer the new record and value; clients after.
+   A client of an earlier version refuses a record that names members (an
+   unknown record field), so it cannot write a chunk that a newer one has
+   started to manage; nothing else breaks.
 2. **MDS plans.** Plan table, `OBJ_RECONFIGURE_*`, `OST_LOCATE`, placement of
    added slots, `-EBUSY` rules, reconstruct from the value.
 3. **Executor and CLI.** `rawstor object migrate`, `rawstor object mirrors`,
