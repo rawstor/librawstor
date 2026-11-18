@@ -1691,3 +1691,73 @@ PyObject* py_rawstor_object_create_from_target(
 ) {
     return create_from(args, rawstor_target_create_from_target);
 }
+
+// Shared by object_create_at_from_file() and object_create_at_from_target():
+// the "szsO" arguments are the location, the id (or None), the source (a path
+// or a target) and an ObjectSpec, with an optional progress callable after
+// them. Returns the new object's target.
+static PyObject* create_at_from(
+    PyObject* args, int (*create)(
+                        RawIOQueue*, const char*, const char*, const char*,
+                        const struct RawstorObjectSpec*, char*, size_t,
+                        int (*)(ssize_t, void*), void*
+                    )
+) {
+    const char* location;
+    const char* uuid = NULL;
+    const char* source;
+    PyObject* spec_obj;
+    PyObject* progress = NULL;
+    if (!PyArg_ParseTuple(
+            args, "szsO|O", &location, &uuid, &source, &spec_obj, &progress
+        )) {
+        return NULL;
+    }
+    if (!PyObject_TypeCheck(spec_obj, PyObjectSpecType)) {
+        PyErr_SetString(PyExc_TypeError, "spec must be an ObjectSpec instance");
+        return NULL;
+    }
+
+    PyObjectSpec* py_spec = (PyObjectSpec*)spec_obj;
+    struct RawstorObjectSpec spec = {
+        .size = py_spec->size,
+        .width = py_spec->width,
+        .chunk_size = py_spec->chunk_size,
+        .stripe_width = py_spec->stripe_width,
+        .failure_domain = py_spec->failure_domain,
+    };
+
+    ImageOp image = {.progress = NULL, .exception = NULL};
+    if (image_progress_arg(progress, &image.progress) < 0) {
+        return NULL;
+    }
+    char target[65536];
+    int ires = rawstor_sync_op_init(&image.op);
+    if (ires < 0) {
+        set_os_error(-ires);
+        return NULL;
+    }
+    int sres = create(
+        image.op.queue, location, uuid, source, &spec, target, sizeof(target),
+        image_op_cb, &image
+    );
+    ssize_t res = rawstor_sync_op_wait(&image.op, sres);
+    PyObject* done = image_op_result(&image, res);
+    if (done == NULL) {
+        return NULL;
+    }
+    Py_DECREF(done);
+    return PyUnicode_FromString(target);
+}
+
+PyObject* py_rawstor_object_create_at_from_file(
+    PyObject* Py_UNUSED(self), PyObject* args
+) {
+    return create_at_from(args, rawstor_location_create_from_file);
+}
+
+PyObject* py_rawstor_object_create_at_from_target(
+    PyObject* Py_UNUSED(self), PyObject* args
+) {
+    return create_at_from(args, rawstor_location_create_from_target);
+}

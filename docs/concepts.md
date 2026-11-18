@@ -372,6 +372,11 @@ the object through the ordinary `Object` path, so any backend, mirrored or
 - `rawstor_target_create_from_target(target, source, spec)` creates a new
   object as a copy of another object, or of one of its versions, possibly
   on another location, backend or account.
+- `rawstor_location_create_from_file(location, uuid, path, spec, target, size)`
+  and `rawstor_location_create_from_target(location, uuid, source, spec,
+  target, size)` do the same at a location, as `rawstor_location_create()`
+  does for an empty object: the id is generated unless `uuid` is given, and
+  the new object's target is written into `target` before anything starts.
 
 From the CLI: `rawstor object export TARGET FILE`, `rawstor version export
 TARGET/VERSION_ID FILE`, `rawstor object import FILE -m N` and

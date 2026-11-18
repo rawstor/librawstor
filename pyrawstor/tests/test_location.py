@@ -18,6 +18,54 @@ class TestLocation(unittest.TestCase):
 
             target.remove()
 
+    def test_create_from_file_and_from_object(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            location = rawstor.Location(f"file://{temp_dir}/store")
+            Path(f"{temp_dir}/store").mkdir()
+            data = bytes(range(256)) * 5000
+            Path(f"{temp_dir}/in.img").write_bytes(data)
+
+            calls = []
+            target = location.create_from_file(
+                f"{temp_dir}/in.img", width=1, progress=calls.append)
+            self.assertEqual(calls[-1], 100)
+            self.assertEqual(calls, sorted(set(calls)))
+            self.assertEqual(target.spec().size, len(data))
+            target.export(f"{temp_dir}/out.img")
+            self.assertEqual(Path(f"{temp_dir}/out.img").read_bytes(), data)
+
+            copy = location.create_from(target, width=1)
+            self.assertNotEqual(copy, target)
+            copy.export(f"{temp_dir}/copy.img")
+            self.assertEqual(Path(f"{temp_dir}/copy.img").read_bytes(), data)
+
+            self.assertEqual(
+                sorted(t.uri for t in location.objects()),
+                sorted([target.uri, copy.uri]))
+            copy.remove()
+            target.remove()
+
+    def test_create_from_file_with_uuid(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            location = rawstor.Location(f"file://{temp_dir}")
+            Path(f"{temp_dir}/in.img").write_bytes(b"x" * 4096)
+            uuid = "00000000-0000-7000-8000-00000000000a"
+
+            target = location.create_from_file(
+                f"{temp_dir}/in.img", width=1, uuid=uuid)
+
+            self.assertIn(uuid, target.uri)
+            target.remove()
+
+    def test_create_from_file_missing_source(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            location = rawstor.Location(f"file://{temp_dir}")
+
+            with self.assertRaises(FileNotFoundError):
+                location.create_from_file(
+                    f"{temp_dir}/missing.img", width=1)
+            self.assertEqual(list(location.objects()), [])
+
     def test_empty(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             location = rawstor.Location(f"file://{temp_dir}")

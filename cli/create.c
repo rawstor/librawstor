@@ -236,10 +236,10 @@ int rawstor_cli_create_at(
 }
 
 int rawstor_cli_import(
-    const char* target, const char* from_file, const char* from_target,
-    uint64_t size, uint64_t chunk_size, unsigned int mirrors,
-    unsigned int failure_domain, uint64_t stripe_width,
-    const RawstorCliOutput* output
+    const char* target, const char* location, const char* uuid,
+    const char* from_file, const char* from_target, uint64_t size,
+    uint64_t chunk_size, unsigned int mirrors, unsigned int failure_domain,
+    uint64_t stripe_width, const RawstorCliOutput* output
 ) {
     struct RawstorObjectSpec spec = {
         .size = size,
@@ -255,7 +255,8 @@ int rawstor_cli_import(
     }
 
     fprintf(
-        stderr, "Creating object %s from %s\n", target,
+        stderr, "Creating object %s from %s\n",
+        target != NULL ? target : location,
         from_file != NULL ? from_file : from_target
     );
 
@@ -266,19 +267,35 @@ int rawstor_cli_import(
         return rawstd_exitcode_for_errno(-res);
     }
 
+    /* By location, the library names the new object (the id generated unless
+     * `uuid` is given) and hands the target back before it starts. */
+    char created[65536];
+    created[0] = '\0';
     op.on_progress = rawstor_cli_progress;
     const char* call;
     int sres;
-    if (from_file != NULL) {
+    if (target != NULL && from_file != NULL) {
         call = "rawstor_target_create_from_file()";
         sres = rawstor_target_create_from_file(
             op.queue, target, from_file, &spec, rawstor_cli_op_progress_cb, &op
         );
-    } else {
+    } else if (target != NULL) {
         call = "rawstor_target_create_from_target()";
         sres = rawstor_target_create_from_target(
             op.queue, target, from_target, &spec, rawstor_cli_op_progress_cb,
             &op
+        );
+    } else if (from_file != NULL) {
+        call = "rawstor_location_create_from_file()";
+        sres = rawstor_location_create_from_file(
+            op.queue, location, uuid, from_file, &spec, created,
+            sizeof(created), rawstor_cli_op_progress_cb, &op
+        );
+    } else {
+        call = "rawstor_location_create_from_target()";
+        sres = rawstor_location_create_from_target(
+            op.queue, location, uuid, from_target, &spec, created,
+            sizeof(created), rawstor_cli_op_progress_cb, &op
         );
     }
     ssize_t result = rawstor_cli_op_wait(&op, sres);
@@ -290,6 +307,14 @@ int rawstor_cli_import(
     }
 
     fprintf(stderr, "Object created\n");
+
+    /* The library's target names the owner; the one shown keeps only the
+     * account LOCATION itself names, as `object create` does. */
+    char* shown = NULL;
+    if (target == NULL) {
+        target = created;
+        shown = rawstor_cli_list_target(created, location);
+    }
 
     /* A size left to the source is only known now: read it back. */
     struct RawstorObjectSpec stored = spec;
@@ -307,5 +332,7 @@ int rawstor_cli_import(
             }
         }
     }
-    return print_created(output, target, &stored);
+    int ret = print_created(output, shown != NULL ? shown : target, &stored);
+    free(shown);
+    return ret;
 }

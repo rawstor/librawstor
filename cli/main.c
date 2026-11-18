@@ -159,43 +159,6 @@ static void version_usage(void) {
     );
 }
 
-/* The target of a new object: under `location`, or under RAWSTOR_LOCATION when
- * it is NULL, with the id `uuid` names, or a generated one when it is NULL.
- * Returns a malloc()ed string, or NULL after saying what is wrong. */
-static char* new_object_target(const char* location, const char* uuid) {
-    struct RawstdUUID id;
-    if (uuid != NULL) {
-        if (rawstd_uuid_from_string(&id, uuid) < 0 || rawstd_uuid_is_nil(&id)) {
-            fprintf(stderr, "Invalid uuid: %s\n", uuid);
-            return NULL;
-        }
-    } else {
-        int res = rawstd_uuid7_init(&id);
-        if (res < 0) {
-            fprintf(stderr, "Failed to generate an id: %s\n", strerror(-res));
-            return NULL;
-        }
-    }
-    RawstdUUIDString text;
-    rawstd_uuid_to_string(&id, &text);
-
-    int consumed = 0;
-    char* target = location != NULL
-                       ? rawstd_target_resolve(location, text, &consumed)
-                       : rawstd_target_resolve(text, NULL, &consumed);
-    if (target == NULL) {
-        if (errno == ENOENT) {
-            fprintf(
-                stderr, "location required (set RAWSTOR_LOCATION or pass "
-                        "LOCATION)\n"
-            );
-        } else {
-            fprintf(stderr, "Failed to build a target: %s\n", strerror(errno));
-        }
-    }
-    return target;
-}
-
 /* Whether `target` names an object, rather than only a location. */
 static int names_object(const char* target) {
     char uuid[64];
@@ -880,7 +843,7 @@ command_image_create(int argc, char** argv, enum ImageSourceType type) {
      * generated id, under RAWSTOR_LOCATION when no location is named. */
     char* source = NULL;
     char* target = NULL;
-    char* generated = NULL;
+    const char* location = NULL;
     const char* file = NULL;
     int ret = EX_USAGE;
     int end = argc;
@@ -938,11 +901,25 @@ command_image_create(int argc, char** argv, enum ImageSourceType type) {
         }
         target = (char*)target_arg;
     } else if (target == NULL || !names_object(target)) {
-        generated = new_object_target(target, uuid_arg);
-        if (generated == NULL) {
+        /* A location -- the one given, or RAWSTOR_LOCATION -- and an id
+         * generated unless -u names one. */
+        location = target != NULL ? target : getenv("RAWSTOR_LOCATION");
+        if (location == NULL || location[0] == '\0') {
+            fprintf(
+                stderr, "location required (set RAWSTOR_LOCATION or pass "
+                        "LOCATION)\n"
+            );
             goto done;
         }
-        target = generated;
+        target = NULL;
+        if (uuid_arg != NULL) {
+            struct RawstdUUID id;
+            if (rawstd_uuid_from_string(&id, uuid_arg) < 0 ||
+                rawstd_uuid_is_nil(&id)) {
+                fprintf(stderr, "Invalid uuid: %s\n", uuid_arg);
+                goto done;
+            }
+        }
     } else if (uuid_arg != NULL) {
         fprintf(stderr, "uuid argument requires location\n");
         goto done;
@@ -952,8 +929,10 @@ command_image_create(int argc, char** argv, enum ImageSourceType type) {
         goto done;
     }
 
+    /* The new object is `target`, or one at `location`. */
+    const char* dest = target != NULL ? target : location;
     if ((failure_domain_arg != NULL || stripe_width_arg != NULL) &&
-        strncmp(target, "mds://", strlen("mds://")) != 0) {
+        strncmp(dest, "mds://", strlen("mds://")) != 0) {
         fprintf(
             stderr, "--failure-domain/--stripe-width are only valid for "
                     "mds://\n"
@@ -961,10 +940,12 @@ command_image_create(int argc, char** argv, enum ImageSourceType type) {
         goto done;
     }
 
-    int checked = check_target_type(target, TARGET_OBJECT);
-    if (checked != 0) {
-        ret = checked;
-        goto done;
+    if (target != NULL) {
+        int checked = check_target_type(target, TARGET_OBJECT);
+        if (checked != 0) {
+            ret = checked;
+            goto done;
+        }
     }
 
     uint64_t size = 0;
@@ -1004,13 +985,12 @@ command_image_create(int argc, char** argv, enum ImageSourceType type) {
     }
 
     ret = rawstor_cli_import(
-        target, file, source, size, chunk_size, mirrors, failure_domain,
-        stripe_width, &output_arg
+        target, location, uuid_arg, file, source, size, chunk_size, mirrors,
+        failure_domain, stripe_width, &output_arg
     );
 
 done:
     free(source);
-    free(generated);
     return ret;
 }
 

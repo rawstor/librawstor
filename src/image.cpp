@@ -1,3 +1,5 @@
+#include "image.hpp"
+
 #include "object.hpp"
 #include "target.hpp"
 
@@ -461,25 +463,65 @@ int rawstor_target_export(
     );
 }
 
+namespace rawstor {
+
+int image_create_from_file(
+    RawIOQueue* queue, Target destination, const RawstorObjectSpec& spec,
+    const std::string& path, int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    return submit(
+        [&](std::shared_ptr<Progress> progress) {
+            return create_from(
+                static_cast<rawio::Queue*>(queue), std::move(progress),
+                std::move(destination), spec, ImageSource{path, std::nullopt}
+            );
+        },
+        cb, data
+    );
+}
+
+int image_create_from_target(
+    RawIOQueue* queue, Target destination, const RawstorObjectSpec& spec,
+    Target source, int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    return submit(
+        [&](std::shared_ptr<Progress> progress) {
+            return create_from(
+                static_cast<rawio::Queue*>(queue), std::move(progress),
+                std::move(destination), spec,
+                ImageSource{std::string(), std::move(source)}
+            );
+        },
+        cb, data
+    );
+}
+
+} // namespace rawstor
+
 int rawstor_target_create_from_file(
     RawIOQueue* queue, const char* target, const char* path,
     const struct RawstorObjectSpec* spec, int (*cb)(ssize_t result, void* data),
     void* data
 ) noexcept {
-    return submit(
-        [&](std::shared_ptr<Progress> progress) {
-            if (path == nullptr) {
-                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-            }
-            return create_from(
-                static_cast<rawio::Queue*>(queue), std::move(progress),
-                rawstor::Target(rawstd::URI::uriv(target)),
-                spec != nullptr ? *spec : RawstorObjectSpec{},
-                ImageSource{path, std::nullopt}
-            );
-        },
-        cb, data
-    );
+    try {
+        if (path == nullptr) {
+            return -EINVAL;
+        }
+        return rawstor::image_create_from_file(
+            queue, rawstor::Target(rawstd::URI::uriv(target)),
+            spec != nullptr ? *spec : RawstorObjectSpec{}, path, cb, data
+        );
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc&) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
 }
 
 int rawstor_target_create_from_target(
@@ -487,20 +529,24 @@ int rawstor_target_create_from_target(
     const struct RawstorObjectSpec* spec, int (*cb)(ssize_t result, void* data),
     void* data
 ) noexcept {
-    return submit(
-        [&](std::shared_ptr<Progress> progress) {
-            if (source == nullptr) {
-                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-            }
-            return create_from(
-                static_cast<rawio::Queue*>(queue), std::move(progress),
-                rawstor::Target(rawstd::URI::uriv(target)),
-                spec != nullptr ? *spec : RawstorObjectSpec{},
-                ImageSource{
-                    std::string(), rawstor::Target(rawstd::URI::uriv(source))
-                }
-            );
-        },
-        cb, data
-    );
+    try {
+        if (source == nullptr) {
+            return -EINVAL;
+        }
+        return rawstor::image_create_from_target(
+            queue, rawstor::Target(rawstd::URI::uriv(target)),
+            spec != nullptr ? *spec : RawstorObjectSpec{},
+            rawstor::Target(rawstd::URI::uriv(source)), cb, data
+        );
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc&) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
 }

@@ -1,5 +1,6 @@
 #include "location.hpp"
 
+#include "image.hpp"
 #include "opts.h"
 #include "slot.hpp"
 #include "target.hpp"
@@ -551,6 +552,74 @@ void launch_create_op(
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
+// What creating an object at `location` under `uuid` (generated when NULL)
+// comes to: the URIs of its chunks and the target string that names them.
+struct CreatePlan {
+    std::vector<rawstd::URI> uris;
+    std::string target;
+};
+
+CreatePlan plan_create(
+    const char* location, const char* uuid, const RawstorObjectSpec& sp
+) {
+    RawstdUUID id;
+    int res;
+
+    if (uuid == nullptr) {
+        res = rawstd_uuid7_init(&id);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+    } else {
+        res = rawstd_uuid_from_string(&id, uuid);
+        if (res < 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(-res);
+        }
+    }
+
+    RawstdUUIDString uuid_string;
+    rawstd_uuid_to_string(&id, &uuid_string);
+
+    CreatePlan plan;
+    plan.uris = build_create_uris(rawstd::URI::uriv(location), uuid_string, sp);
+    plan.target = rawstd::URI::uris(
+        address_of(plan.uris, rawstor::Target(plan.uris).owner())
+    );
+    return plan;
+}
+
+// Shared by rawstor_location_create_from_file()/_target(): the target string
+// is written into `target` before anything starts, as rawstor_location_
+// create() does, and `start` begins the actual creation and fill. A target
+// that does not fit is -ENAMETOOLONG: the callback of these functions reports
+// progress, so it cannot carry the length that rawstor_location_create()'s
+// does.
+template <typename Start>
+int create_from_location(
+    const char* location, const char* uuid, const RawstorObjectSpec* spec,
+    char* target, size_t size, Start&& start
+) noexcept {
+    try {
+        RawstorObjectSpec sp = spec != nullptr ? *spec : RawstorObjectSpec{};
+        CreatePlan plan = plan_create(location, uuid, sp);
+        if (size == 0 || target == nullptr || plan.target.size() >= size) {
+            return -ENAMETOOLONG;
+        }
+        memcpy(target, plan.target.c_str(), plan.target.size() + 1);
+        return start(rawstor::Target(plan.uris), sp);
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc&) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
 } // namespace
 
 namespace rawstor {
@@ -951,33 +1020,11 @@ int rawstor_location_create(
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     try {
-        RawstdUUID id;
         int res;
+        CreatePlan plan = plan_create(location, uuid, *spec);
+        std::vector<rawstd::URI>& ret = plan.uris;
 
-        if (uuid == nullptr) {
-            res = rawstd_uuid7_init(&id);
-            if (res < 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(-res);
-            }
-        } else {
-            res = rawstd_uuid_from_string(&id, uuid);
-            if (res < 0) {
-                RAWSTD_THROW_SYSTEM_ERROR(-res);
-            }
-        }
-
-        RawstdUUIDString uuid_string;
-        rawstd_uuid_to_string(&id, &uuid_string);
-
-        std::vector<rawstd::URI> uris = rawstd::URI::uriv(location);
-        std::vector<rawstd::URI> ret =
-            build_create_uris(uris, uuid_string, *spec);
-
-        res = snprintf(
-            target, size, "%s",
-            rawstd::URI::uris(address_of(ret, rawstor::Target(ret).owner()))
-                .c_str()
-        );
+        res = snprintf(target, size, "%s", plan.target.c_str());
         if (res < 0) {
             return res;
         }
@@ -1010,4 +1057,41 @@ int rawstor_location_create(
         rawstd_error("Unexpected error\n");
         return -EINVAL;
     }
+}
+
+int rawstor_location_create_from_file(
+    RawIOQueue* queue, const char* location, const char* uuid, const char* path,
+    const struct RawstorObjectSpec* spec, char* target, size_t size,
+    int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    if (path == nullptr) {
+        return -EINVAL;
+    }
+    return create_from_location(
+        location, uuid, spec, target, size,
+        [&](rawstor::Target destination, const RawstorObjectSpec& sp) {
+            return rawstor::image_create_from_file(
+                queue, std::move(destination), sp, path, cb, data
+            );
+        }
+    );
+}
+
+int rawstor_location_create_from_target(
+    RawIOQueue* queue, const char* location, const char* uuid,
+    const char* source, const struct RawstorObjectSpec* spec, char* target,
+    size_t size, int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    if (source == nullptr) {
+        return -EINVAL;
+    }
+    return create_from_location(
+        location, uuid, spec, target, size,
+        [&](rawstor::Target destination, const RawstorObjectSpec& sp) {
+            return rawstor::image_create_from_target(
+                queue, std::move(destination), sp,
+                rawstor::Target(rawstd::URI::uriv(source)), cb, data
+            );
+        }
+    );
 }

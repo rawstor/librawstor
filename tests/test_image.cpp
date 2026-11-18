@@ -9,6 +9,7 @@
 
 #include <rawstd/uri.hpp>
 
+#include <rawstor/location.h>
 #include <rawstor/target.h>
 
 #include <gtest/gtest.h>
@@ -356,6 +357,174 @@ TEST(ImageTest, a_size_left_to_the_source_is_rounded_up_to_the_chunk_size) {
         read_file(dir.path() / "out.img"),
         data + std::string(chunk_size / 2, '\0')
     );
+
+    EXPECT_EQ(target_remove(*queue, target), 0);
+}
+
+namespace {
+
+ssize_t location_create_from_file(
+    rawio::Queue& queue, const std::string& location, const char* uuid,
+    const std::string& path, const RawstorObjectSpec& spec, char* target,
+    size_t size, std::vector<ssize_t>* calls = nullptr
+) {
+    return image_run(
+        queue,
+        [&](auto cb, void* data) {
+            return rawstor_location_create_from_file(
+                &queue, location.c_str(), uuid, path.c_str(), &spec, target,
+                size, cb, data
+            );
+        },
+        calls
+    );
+}
+
+ssize_t location_create_from_target(
+    rawio::Queue& queue, const std::string& location, const char* uuid,
+    const std::string& source, const RawstorObjectSpec& spec, char* target,
+    size_t size, std::vector<ssize_t>* calls = nullptr
+) {
+    return image_run(
+        queue,
+        [&](auto cb, void* data) {
+            return rawstor_location_create_from_target(
+                &queue, location.c_str(), uuid, source.c_str(), &spec, target,
+                size, cb, data
+            );
+        },
+        calls
+    );
+}
+
+} // namespace
+
+// The target string comes back before anything is done, the id generated or
+// the one asked for, and the object it names holds the file.
+TEST(ImageTest, a_location_creates_an_object_from_a_file) {
+    rawstor::tests::TmpDir dir;
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+    std::string location = "file://" + dir.path().string();
+
+    std::string data = pattern(3 << 19);
+    write_file(dir.path() / "in.img", data);
+    RawstorObjectSpec spec{};
+    spec.width = 1;
+
+    char generated[4096];
+    std::vector<ssize_t> calls;
+    ASSERT_EQ(
+        location_create_from_file(
+            *queue, location, nullptr, (dir.path() / "in.img").string(), spec,
+            generated, sizeof(generated), &calls
+        ),
+        0
+    );
+    EXPECT_EQ(calls.back(), 100);
+    ASSERT_EQ(
+        target_export(*queue, generated, (dir.path() / "out.img").string()), 0
+    );
+    EXPECT_EQ(read_file(dir.path() / "out.img"), data);
+
+    const char* uuid = "018f4e2a-4000-7000-8000-00000000000a";
+    char named[4096];
+    ASSERT_EQ(
+        location_create_from_file(
+            *queue, location, uuid, (dir.path() / "in.img").string(), spec,
+            named, sizeof(named)
+        ),
+        0
+    );
+    EXPECT_NE(std::string(named).find(uuid), std::string::npos);
+    EXPECT_NE(std::string(generated), std::string(named));
+
+    EXPECT_EQ(target_remove(*queue, generated), 0);
+    EXPECT_EQ(target_remove(*queue, named), 0);
+}
+
+TEST(ImageTest, a_location_creates_an_object_from_an_object) {
+    rawstor::tests::TmpDir dir;
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+    std::string location = "file://" + dir.path().string();
+
+    std::string data = pattern(3 << 19);
+    write_file(dir.path() / "in.img", data);
+    RawstorObjectSpec spec{};
+    spec.width = 1;
+
+    char origin[4096];
+    ASSERT_EQ(
+        location_create_from_file(
+            *queue, location, nullptr, (dir.path() / "in.img").string(), spec,
+            origin, sizeof(origin)
+        ),
+        0
+    );
+
+    char copy[4096];
+    ASSERT_EQ(
+        location_create_from_target(
+            *queue, location, nullptr, origin, spec, copy, sizeof(copy)
+        ),
+        0
+    );
+    ASSERT_EQ(
+        target_export(*queue, copy, (dir.path() / "copy.img").string()), 0
+    );
+    EXPECT_EQ(read_file(dir.path() / "copy.img"), data);
+
+    EXPECT_EQ(target_remove(*queue, copy), 0);
+    EXPECT_EQ(target_remove(*queue, origin), 0);
+}
+
+// A target string that does not fit is refused before anything is created.
+TEST(ImageTest, a_location_target_that_does_not_fit_creates_nothing) {
+    rawstor::tests::TmpDir dir;
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+    std::string location = "file://" + dir.path().string();
+
+    write_file(dir.path() / "in.img", pattern(4096));
+    RawstorObjectSpec spec{};
+    spec.width = 1;
+    const char* uuid = "018f4e2a-4000-7000-8000-00000000000b";
+
+    char small[16];
+    EXPECT_EQ(
+        location_create_from_file(
+            *queue, location, uuid, (dir.path() / "in.img").string(), spec,
+            small, sizeof(small)
+        ),
+        -ENAMETOOLONG
+    );
+    EXPECT_EQ(
+        location_create_from_file(
+            *queue, location, uuid, (dir.path() / "in.img").string(), spec,
+            nullptr, 0
+        ),
+        -ENAMETOOLONG
+    );
+    EXPECT_FALSE(std::filesystem::exists(dir.path() / uuid));
+}
+
+TEST(ImageTest, a_location_of_an_mds_rounds_a_size_left_to_the_file_up) {
+    rawstor::tests::ObjectEnv env(8930, 8931);
+    rawstor::tests::TmpDir dir;
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    std::string data = pattern(chunk_size + chunk_size / 2);
+    write_file(dir.path() / "in.img", data);
+
+    char target[4096];
+    ASSERT_EQ(
+        location_create_from_file(
+            *queue, env.location(), nullptr, (dir.path() / "in.img").string(),
+            mds_spec(0), target, sizeof(target)
+        ),
+        0
+    );
+    RawstorObjectSpec spec{};
+    ASSERT_EQ(target_spec(*queue, target, &spec), 0);
+    EXPECT_EQ(spec.size, 2 * chunk_size);
 
     EXPECT_EQ(target_remove(*queue, target), 0);
 }
