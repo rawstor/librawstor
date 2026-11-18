@@ -33,16 +33,16 @@ struct WireMap {
     uint64_t logical_size;
     uint64_t chunk_size;
     RawstorFrameObjPolicy policy;
-    uint64_t map_epoch;
+    uint64_t map_version;
     std::vector<std::vector<WireSlot>> chunks;
 };
 
 /*
- * What OBJ_RESIZE did: the new map_epoch, the chunk count it grew from and the
- * owner of the object.
+ * What OBJ_RESIZE did: the new map_version, the chunk count it grew from and
+ * the owner of the object.
  */
 struct WireResized {
-    uint64_t map_epoch;
+    uint64_t map_version;
     uint64_t old_nchunks;
     RawstdUUID owner;
 };
@@ -100,7 +100,7 @@ private:
     /*
      * Registers the version; version_id is the caller's own already-
      * generated version id (like every object id). Returns the bumped
-     * map_epoch.
+     * map_version.
      */
     rawstd::Task<uint64_t> _obj_commit_version(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,

@@ -74,7 +74,7 @@ WireMap decode_object_map(const std::vector<unsigned char>& data) {
     }
     map.chunk_size = 1ull << descriptor.chunk_shift;
     map.policy = descriptor.policy;
-    map.map_epoch = descriptor.map_epoch;
+    map.map_version = descriptor.map_version;
     // Every chunk entry takes at least sizeof(RawstorFrameObjChunkEntry)
     // bytes, so a count the remaining payload can't hold is malformed --
     // rejected before it sizes an allocation.
@@ -306,7 +306,7 @@ rawstd::Task<uint64_t> Backend::_obj_create(
     }
     RawstorFrameObjCreatedPayload out;
     memcpy(&out, data.data(), sizeof(out));
-    co_return out.map_epoch;
+    co_return out.map_version;
 }
 
 rawstd::Task<WireMap>
@@ -356,7 +356,9 @@ rawstd::Task<WireResized> Backend::_obj_resize(
     RawstorFrameObjResizedPayload out;
     memcpy(&out, data.data(), sizeof(out));
     WireResized ret{
-        .map_epoch = out.map_epoch, .old_nchunks = out.old_nchunks, .owner = {}
+        .map_version = out.map_version,
+        .old_nchunks = out.old_nchunks,
+        .owner = {}
     };
     memcpy(ret.owner.bytes, out.account_id, sizeof(ret.owner.bytes));
     co_return ret;
@@ -421,7 +423,7 @@ rawstd::Task<uint64_t> Backend::_obj_commit_version(
     }
     RawstorFrameObjVersionCommittedPayload out;
     memcpy(&out, data.data(), sizeof(out));
-    co_return out.map_epoch;
+    co_return out.map_version;
 }
 
 rawstd::Task<std::vector<RawstdUUID>>

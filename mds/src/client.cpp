@@ -82,7 +82,7 @@ encode_object_map(const Topology& topology, const ObjectMap& map) {
     RawstorFrameObjDescriptorPayload descriptor{};
     memcpy(descriptor.id, map.descriptor.id.bytes, sizeof(descriptor.id));
     descriptor.logical_size = map.descriptor.logical_size;
-    descriptor.map_epoch = map.descriptor.map_epoch;
+    descriptor.map_version = map.descriptor.map_version;
     descriptor.policy = RawstorFrameObjPolicy{
         .stripe_width = map.descriptor.policy.stripe_width,
         .placement_seed = map.descriptor.policy.seed,
@@ -560,7 +560,7 @@ rawstd::Task<void> Client::_dispatch(
                 owner, uuid_of(payload.idempotency_key), uuid_of(payload.id),
                 payload.logical_size, 1ull << payload.chunk_shift, policy
             );
-            out.map_epoch = descriptor.map_epoch;
+            out.map_version = descriptor.map_version;
         } catch (const std::system_error& e) {
             res = -e.code().value();
         }
@@ -699,7 +699,7 @@ rawstd::Task<void> Client::_dispatch(
                 uuid_of(payload.idempotency_key), uuid_of(payload.id),
                 payload.val
             );
-            out.map_epoch = result.map_epoch;
+            out.map_version = result.map_version;
             out.old_nchunks = static_cast<uint32_t>(result.old_nchunks);
             memcpy(
                 out.account_id, result.account.bytes, sizeof(out.account_id)
@@ -789,7 +789,7 @@ rawstd::Task<void> Client::_dispatch(
                     }
                 );
             }
-            out.map_epoch = store.commit_version(
+            out.map_version = store.commit_version(
                 uuid_of(payload.idempotency_key), uuid_of(payload.id),
                 uuid_of(payload.version_id), members
             );

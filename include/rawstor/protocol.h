@@ -631,7 +631,7 @@ struct RawstorFrameObjCreate {
 
 /* OBJ_CREATE response payload. */
 struct RawstorFrameObjCreatedPayload {
-    uint64_t map_epoch;
+    uint64_t map_version;
 } RAWSTOR_PACKED;
 
 /*
@@ -659,7 +659,7 @@ struct RawstorFrameObjOp {
  * chunks it adds are created for.
  */
 struct RawstorFrameObjResizedPayload {
-    uint64_t map_epoch;
+    uint64_t map_version;
     uint32_t old_nchunks;
     uint8_t account_id[16];
 } RAWSTOR_PACKED;
@@ -679,7 +679,7 @@ struct RawstorFrameObjTransferredPayload {
 struct RawstorFrameObjDescriptorPayload {
     uint8_t id[16];
     uint64_t logical_size;
-    uint64_t map_epoch;
+    uint64_t map_version;
     struct RawstorFrameObjPolicy policy;
     uint8_t chunk_shift; /* log2(chunk_size), see OBJ_CREATE's */
     uint32_t nchunks;
@@ -733,7 +733,7 @@ struct RawstorFrameObjVersionMemberPayload {
 
 /* OBJ_COMMIT_VERSION response payload. */
 struct RawstorFrameObjVersionCommittedPayload {
-    uint64_t map_epoch;
+    uint64_t map_version;
 } RAWSTOR_PACKED;
 
 /* Conversions copy between wire records and native structures. Fallible
