@@ -1095,13 +1095,22 @@ int rawstor_target_resize(
  * holds at that moment -- including a half-finished state if the writer is
  * mid-flight -- and quiescing it is the caller's business.
  *
+ * Progress: unlike the other calls here, @p cb is called many times. @p result
+ * is the completion percentage, an integer from 0 to 100. Each percentage is
+ * reported at most once, in increasing order, so a call is always for a larger
+ * number than the one before. 100 means the whole operation succeeded (data
+ * flushed, everything closed) and is the last call; a negative errno is a
+ * failure and is the last call too, whatever percentage was reached. Exactly
+ * one of the two ends every operation that was started. The return value of a
+ * call that is not the last one is ignored.
+ *
  * @param queue   Queue used to drive the asynchronous export.
  * @param target  Object (or bound version) to export.
  * @param path    Destination file; copied before this call returns.
- * @param cb      Callback invoked on completion; @p result is zero on
- *                success, or a negative errno (@c -ENOENT if the object
- *                does not exist, @c -EIO, @c -EACCES, anything the file
- *                system reports for @p path).
+ * @param cb      Called repeatedly with the progress, see "Progress" above;
+ *                @p result is 0..99 while working, then 100 on success or
+ *                a negative errno (@c -ENOENT, @c -EIO, @c -EACCES, ...) on
+ *                failure -- either is the last call.
  * @param data    Passed to @p cb.
  *
  * @return 0 if the export was started; a negative errno otherwise, in which
@@ -1133,8 +1142,11 @@ int rawstor_target_export(
  * @param target  The new object, as for rawstor_target_create().
  * @param path    Source file; copied before this call returns.
  * @param spec    The object's shape. Only read during this call.
- * @param cb      Callback invoked on completion; @p result is zero on
- *                success, or a negative errno.
+ * @param cb      Called repeatedly with the progress, see "Progress" at
+ *                rawstor_target_export();
+ *                @p result is 0..99 while working, then 100 on success or
+ *                a negative errno (@c -ENOENT, @c -EIO, @c -EACCES, ...) on
+ *                failure -- either is the last call.
  * @param data    Passed to @p cb.
  *
  * @return 0 if the operation was started; a negative errno otherwise, in
@@ -1165,8 +1177,11 @@ int rawstor_target_create_from_file(
  * @param target  The new object, as for rawstor_target_create().
  * @param source  Object (or bound version) to copy.
  * @param spec    The new object's shape. Only read during this call.
- * @param cb      Callback invoked on completion; @p result is zero on
- *                success, or a negative errno.
+ * @param cb      Called repeatedly with the progress, see "Progress" at
+ *                rawstor_target_export();
+ *                @p result is 0..99 while working, then 100 on success or
+ *                a negative errno (@c -ENOENT, @c -EIO, @c -EACCES, ...) on
+ *                failure -- either is the last call.
  * @param data    Passed to @p cb.
  *
  * @return 0 if the operation was started; a negative errno otherwise, in

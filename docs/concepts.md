@@ -379,6 +379,13 @@ TARGET/VERSION_ID FILE`, and `rawstor object import TARGET -m N (-f FILE |
 target: in full, `LOCATION UUID` (for SOURCE, `--from-target LOCATION` with the
 UUID after TARGET), or a bare UUID under `RAWSTOR_LOCATION`.
 
+The three calls report progress through their one callback, which is called
+many times: `result` is the completion percentage, 0 to 100, each value at
+most once and always larger than the one before. 100 means success and is
+the last call; a negative errno is a failure and is the last call too.
+The CLI shows it on stderr, pyrawstor passes it to an optional `progress`
+callable.
+
 `spec.width` is mandatory, as for `rawstor_target_create()`; nothing is
 inherited from a source. `spec.size` of 0 means the size of the source, a
 larger one pads the object with zeros, a smaller one is `-EINVAL`. A

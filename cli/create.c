@@ -1,5 +1,6 @@
 #include "create.h"
 
+#include "image.h"
 #include "output.h"
 #include "rawio_sync.h"
 
@@ -260,21 +261,24 @@ int rawstor_cli_import(
         return rawstd_exitcode_for_errno(-res);
     }
 
+    op.on_progress = rawstor_cli_progress;
     const char* call;
     int sres;
     if (from_file != NULL) {
         call = "rawstor_target_create_from_file()";
         sres = rawstor_target_create_from_file(
-            op.queue, target, from_file, &spec, rawstor_cli_op_cb, &op
+            op.queue, target, from_file, &spec, rawstor_cli_op_progress_cb, &op
         );
     } else {
         call = "rawstor_target_create_from_target()";
         sres = rawstor_target_create_from_target(
-            op.queue, target, from_target, &spec, rawstor_cli_op_cb, &op
+            op.queue, target, from_target, &spec, rawstor_cli_op_progress_cb,
+            &op
         );
     }
     ssize_t result = rawstor_cli_op_wait(&op, sres);
     rawstor_cli_op_destroy(&op);
+    rawstor_cli_progress_end();
     if (result < 0) {
         fprintf(stderr, "%s failed: %s\n", call, strerror((int)-result));
         return rawstd_exitcode_for_errno((int)-result);

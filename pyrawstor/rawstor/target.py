@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 from . import librawstor
 from .constants import FAILURE_DOMAINS, OBJ_DOMAIN_DEFAULT
@@ -102,36 +102,49 @@ class Target:
         """
         return Target(librawstor.object_create_version(self._uri, uuid))
 
-    def export(self, path: str | os.PathLike) -> None:
+    def export(
+        self, path: str | os.PathLike,
+        progress: Callable[[int], None] | None = None
+    ) -> None:
         """Write this object -- or, if this target names a bound version,
         that version -- to the file `path`, created or truncated. A regular
         file is written sparse. Nothing coordinates with other users of the
         object: exporting the live version of an object that is open (and
         possibly dirty) elsewhere reads whatever the storage holds, which is
         the caller's business to avoid -- export a version instead for a
-        consistent point. See rawstor_target_export(), <rawstor/target.h>."""
-        librawstor.object_export(self._uri, os.fspath(path))
+        consistent point. See rawstor_target_export(), <rawstor/target.h>.
+
+        `progress`, if given, is called with the completion percentage
+        (an int, 0 to 100; 100 means done), each value at most once, in increasing order.
+        The call returns after the last one; an exception raised by
+        `progress` stops further calls to it and is raised once the
+        operation has finished (it cannot be cancelled)."""
+        librawstor.object_export(self._uri, os.fspath(path), progress)
 
     def create_from_file(
         self, path: str | os.PathLike, *, width: int, size: int = 0,
         chunk_size: int = 0, stripe_width: int = 0,
-        failure_domain: int | str = OBJ_DOMAIN_DEFAULT
+        failure_domain: int | str = OBJ_DOMAIN_DEFAULT,
+        progress: Callable[[int], None] | None = None
     ) -> None:
         """Create this object and fill it with the contents of the file
         `path`. `size` of 0 is the size of the file; a larger one pads with
         zeros, a smaller one is EINVAL. If anything fails once the object
         exists, it is removed again. See
-        rawstor_target_create_from_file(), <rawstor/target.h>."""
+        rawstor_target_create_from_file(), <rawstor/target.h>. `progress`
+        is as for export()."""
         librawstor.object_create_from_file(
             self._uri, os.fspath(path),
             object_spec(
                 size=size, width=width, chunk_size=chunk_size,
-                stripe_width=stripe_width, failure_domain=failure_domain))
+                stripe_width=stripe_width, failure_domain=failure_domain),
+            progress)
 
     def create_from(
         self, source: "Target | str", *, width: int, size: int = 0,
         chunk_size: int = 0, stripe_width: int = 0,
-        failure_domain: int | str = OBJ_DOMAIN_DEFAULT
+        failure_domain: int | str = OBJ_DOMAIN_DEFAULT,
+        progress: Callable[[int], None] | None = None
     ) -> None:
         """Create this object as a copy of `source`, another object or one
         of its versions (a Target whose URI names a bound version, e.g. from
@@ -139,14 +152,16 @@ class Target:
         source. Nothing is inherited from the source: `width` and the other
         placement parameters are this object's own. If anything fails once
         the object exists, it is removed again. See
-        rawstor_target_create_from_target(), <rawstor/target.h>."""
+        rawstor_target_create_from_target(), <rawstor/target.h>. `progress`
+        is as for export()."""
         if isinstance(source, Target):
             source = source.uri
         librawstor.object_create_from_target(
             self._uri, source,
             object_spec(
                 size=size, width=width, chunk_size=chunk_size,
-                stripe_width=stripe_width, failure_domain=failure_domain))
+                stripe_width=stripe_width, failure_domain=failure_domain),
+            progress)
 
     def spec(self) -> librawstor.ObjectSpec:
         return librawstor.object_spec(self._uri)

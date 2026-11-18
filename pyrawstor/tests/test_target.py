@@ -406,6 +406,95 @@ class TestTargetImage(unittest.TestCase):
             for t in (from_version, copy, version, origin):
                 t.remove()
 
+    def _assert_progress(self, calls):
+        self.assertGreaterEqual(len(calls), 3)
+        self.assertEqual(calls[0], 0)
+        self.assertEqual(calls[-1], 100)
+        self.assertEqual(calls, sorted(set(calls)))
+        self.assertTrue(all(0 <= c <= 100 for c in calls))
+
+    def test_progress(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            src = os.path.join(temp_dir, "src.img")
+            dst = os.path.join(temp_dir, "dst.img")
+            self._write(src, os.urandom(5 << 20))
+            first = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000021")
+            second = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000022")
+
+            calls = []
+            first.create_from_file(src, width=1, progress=calls.append)
+            self._assert_progress(calls)
+
+            calls = []
+            first.export(dst, progress=calls.append)
+            self._assert_progress(calls)
+
+            calls = []
+            second.create_from(first, width=1, progress=calls.append)
+            self._assert_progress(calls)
+
+            second.remove()
+            first.remove()
+
+    def test_progress_of_empty_source(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            src = os.path.join(temp_dir, "src.img")
+            self._write(src, b"")
+            target = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000023")
+
+            calls = []
+            target.create_from_file(
+                src, width=1, size=4096, progress=calls.append)
+
+            self.assertEqual(calls[-1], 100)
+            self.assertEqual(calls, sorted(set(calls)))
+            target.remove()
+
+    def test_progress_failure_is_not_reported_as_100(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000024")
+
+            calls = []
+            with self.assertRaises(FileNotFoundError):
+                target.export(
+                    os.path.join(temp_dir, "dst.img"), progress=calls.append)
+            self.assertNotIn(100, calls)
+
+    def test_progress_exception_is_raised_after_the_operation(self):
+        class Boom(Exception):
+            pass
+
+        calls = []
+
+        def progress(percent):
+            calls.append(percent)
+            raise Boom()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            src = os.path.join(temp_dir, "src.img")
+            self._write(src, os.urandom(3 << 20))
+            target = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000025")
+
+            with self.assertRaises(Boom):
+                target.create_from_file(src, width=1, progress=progress)
+
+            # No further calls once it raised, but the object was made.
+            self.assertEqual(calls, [0])
+            self.assertEqual(target.spec().size, 3 << 20)
+            target.remove()
+
+    def test_progress_must_be_callable(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000026")
+            with self.assertRaises(TypeError):
+                target.export(os.path.join(temp_dir, "x"), progress=5)
+
     def test_create_from_missing_object_leaves_nothing(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             source = rawstor.Target(

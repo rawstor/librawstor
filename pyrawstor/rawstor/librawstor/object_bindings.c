@@ -1533,29 +1533,104 @@ PyObject* py_rawstor_location_info(PyObject* Py_UNUSED(self), PyObject* args) {
     return (PyObject*)py_info;
 }
 
-PyObject* py_rawstor_object_export(PyObject* Py_UNUSED(self), PyObject* args) {
-    const char* target;
-    const char* path;
-    if (!PyArg_ParseTuple(args, "ss", &target, &path)) {
-        return NULL;
-    }
+// The state of one image call (export, create from file/object), whose
+// callback is called with a progress percentage 0..99 any number of times
+// and then once more with 100 or a negative errno.
+typedef struct {
+    RawstorSyncOp op;    // must stay first: the sync helpers take it by pointer
+    PyObject* progress;  // callable(int percent) or NULL
+    PyObject* exception; // what `progress` raised; set at most once
+} ImageOp;
 
-    RawstorSyncOp op;
-    int ires = rawstor_sync_op_init(&op);
-    if (ires < 0) {
-        set_os_error(-ires);
+static int image_op_cb(ssize_t result, void* data) {
+    ImageOp* image = (ImageOp*)data;
+    if (result >= 0) {
+        if (image->progress != NULL && image->exception == NULL) {
+            PyObject* ret =
+                PyObject_CallFunction(image->progress, "i", (int)result);
+            if (ret != NULL) {
+                Py_DECREF(ret);
+            } else {
+                // Keep the operation going to its end -- it cannot be
+                // cancelled -- and raise this afterwards.
+#if PY_VERSION_HEX >= 0x030C0000
+                image->exception = PyErr_GetRaisedException();
+#else
+                PyObject *type, *value, *traceback;
+                PyErr_Fetch(&type, &value, &traceback);
+                PyErr_NormalizeException(&type, &value, &traceback);
+                if (traceback != NULL) {
+                    PyException_SetTraceback(value, traceback);
+                }
+                Py_XDECREF(type);
+                Py_XDECREF(traceback);
+                image->exception = value;
+#endif
+            }
+        }
+        if (result < 100) {
+            return 0;
+        }
+    }
+    return rawstor_sync_op_cb(result, &image->op);
+}
+
+// Validates the optional `progress` argument: NULL for none or None.
+static int image_progress_arg(PyObject* progress, PyObject** out) {
+    *out = NULL;
+    if (progress == NULL || progress == Py_None) {
+        return 0;
+    }
+    if (!PyCallable_Check(progress)) {
+        PyErr_SetString(PyExc_TypeError, "progress must be callable");
+        return -1;
+    }
+    *out = progress;
+    return 0;
+}
+
+// Finishes an image call: the result of its last callback, or what the
+// progress callable raised.
+static PyObject* image_op_result(ImageOp* image, ssize_t res) {
+    rawstor_sync_op_destroy(&image->op);
+    if (image->exception != NULL) {
+#if PY_VERSION_HEX >= 0x030C0000
+        PyErr_SetRaisedException(image->exception);
+#else
+        PyErr_SetObject((PyObject*)Py_TYPE(image->exception), image->exception);
+        Py_DECREF(image->exception);
+#endif
         return NULL;
     }
-    int sres =
-        rawstor_target_export(op.queue, target, path, rawstor_sync_op_cb, &op);
-    ssize_t res = rawstor_sync_op_wait(&op, sres);
-    rawstor_sync_op_destroy(&op);
     if (res < 0) {
         set_os_error((int)-res);
         return NULL;
     }
-
     Py_RETURN_NONE;
+}
+
+PyObject* py_rawstor_object_export(PyObject* Py_UNUSED(self), PyObject* args) {
+    const char* target;
+    const char* path;
+    PyObject* progress = NULL;
+    if (!PyArg_ParseTuple(args, "ss|O", &target, &path, &progress)) {
+        return NULL;
+    }
+
+    ImageOp image = {.progress = NULL, .exception = NULL};
+    if (image_progress_arg(progress, &image.progress) < 0) {
+        return NULL;
+    }
+    int ires = rawstor_sync_op_init(&image.op);
+    if (ires < 0) {
+        set_os_error(-ires);
+        return NULL;
+    }
+    int sres = rawstor_target_export(
+        image.op.queue, target, path, image_op_cb, &image
+    );
+    ssize_t res = rawstor_sync_op_wait(&image.op, sres);
+    return image_op_result(&image, res);
 }
 
 // Shared by object_create_from_file() and object_create_from_target(): the
@@ -1571,7 +1646,10 @@ static PyObject* create_from(
     const char* target;
     const char* source;
     PyObject* spec_obj;
-    if (!PyArg_ParseTuple(args, "ssO", &target, &source, &spec_obj)) {
+    PyObject* progress = NULL;
+    if (!PyArg_ParseTuple(
+            args, "ssO|O", &target, &source, &spec_obj, &progress
+        )) {
         return NULL;
     }
     if (!PyObject_TypeCheck(spec_obj, PyObjectSpecType)) {
@@ -1588,21 +1666,19 @@ static PyObject* create_from(
         .failure_domain = py_spec->failure_domain,
     };
 
-    RawstorSyncOp op;
-    int ires = rawstor_sync_op_init(&op);
+    ImageOp image = {.progress = NULL, .exception = NULL};
+    if (image_progress_arg(progress, &image.progress) < 0) {
+        return NULL;
+    }
+    int ires = rawstor_sync_op_init(&image.op);
     if (ires < 0) {
         set_os_error(-ires);
         return NULL;
     }
-    int sres = create(op.queue, target, source, &spec, rawstor_sync_op_cb, &op);
-    ssize_t res = rawstor_sync_op_wait(&op, sres);
-    rawstor_sync_op_destroy(&op);
-    if (res < 0) {
-        set_os_error((int)-res);
-        return NULL;
-    }
-
-    Py_RETURN_NONE;
+    int sres =
+        create(image.op.queue, target, source, &spec, image_op_cb, &image);
+    ssize_t res = rawstor_sync_op_wait(&image.op, sres);
+    return image_op_result(&image, res);
 }
 
 PyObject*

@@ -21,6 +21,9 @@ typedef struct {
     RawIOQueue* queue;
     ssize_t result;
     int done;
+    /* Called with each progress percentage by rawstor_cli_op_progress_cb();
+     * may be NULL. */
+    void (*on_progress)(int percent);
 } RawstorCliOp;
 
 /* Creates op->queue. Returns 0 on success, negative errno on failure. */
@@ -31,6 +34,11 @@ void rawstor_cli_op_destroy(RawstorCliOp* op);
 /* The int (*)(ssize_t result, void* data) callback every async call in
  * this file is issued with `op` as `data`. */
 int rawstor_cli_op_cb(ssize_t result, void* data);
+
+/* The callback of the image calls (export, create from file/object): 0..99
+ * is progress, handed to op->on_progress; 100 or a negative errno is the
+ * last call, ends the operation and is what rawstor_cli_op_wait() returns. */
+int rawstor_cli_op_progress_cb(ssize_t result, void* data);
 
 /* Pumps op->queue until op->done, then returns op->result. `res` is the
  * async call's own synchronous return value (0 if queued, negative on

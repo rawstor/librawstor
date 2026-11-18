@@ -18,6 +18,7 @@
 #include <iterator>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <cerrno>
 #include <cstdlib>
@@ -26,36 +27,95 @@ namespace {
 
 const size_t chunk_size = 512ull << 10;
 
+// Drives one image call to its last callback, collecting every call, and
+// checks what the progress contract promises: percentages strictly increase
+// (so none repeats), nothing but the last call is 100 or negative, and
+// nothing follows the last call. Returns 0 when the last call is 100, else
+// its negative errno.
+template <typename F>
+ssize_t image_run(
+    rawio::Queue& queue, F&& submit, std::vector<ssize_t>* calls_out = nullptr
+) {
+    struct Op {
+        std::vector<ssize_t> calls;
+        bool done = false;
+    } op;
+
+    int (*cb)(ssize_t, void*) = [](ssize_t result, void* data) -> int {
+        Op* op = static_cast<Op*>(data);
+        EXPECT_FALSE(op->done) << "a call after the last one: " << result;
+        op->calls.push_back(result);
+        op->done = result < 0 || result == 100;
+        return 0;
+    };
+
+    int res = submit(cb, static_cast<void*>(&op));
+    if (res < 0) {
+        return res;
+    }
+    while (!op.done) {
+        EXPECT_GE(rawio_wait(&queue), 0);
+    }
+    // Let anything that would wrongly follow the last call arrive.
+    for (int i = 0; i < 4; ++i) {
+        rawio_wait_timeout(&queue, 1);
+    }
+
+    EXPECT_FALSE(op.calls.empty());
+    for (size_t i = 0; i + 1 < op.calls.size(); ++i) {
+        EXPECT_GE(op.calls[i], 0);
+        EXPECT_LT(op.calls[i], 100);
+        EXPECT_LT(op.calls[i], op.calls[i + 1]);
+    }
+    if (calls_out != nullptr) {
+        *calls_out = op.calls;
+    }
+    return op.calls.back() == 100 ? 0 : op.calls.back();
+}
+
 ssize_t target_create_from_file(
     rawio::Queue& queue, const std::string& target, const std::string& path,
-    const RawstorObjectSpec& spec
+    const RawstorObjectSpec& spec, std::vector<ssize_t>* calls = nullptr
 ) {
-    return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
-        return rawstor_target_create_from_file(
-            &queue, target.c_str(), path.c_str(), &spec, cb, data
-        );
-    });
+    return image_run(
+        queue,
+        [&](auto cb, void* data) {
+            return rawstor_target_create_from_file(
+                &queue, target.c_str(), path.c_str(), &spec, cb, data
+            );
+        },
+        calls
+    );
 }
 
 ssize_t target_create_from_target(
     rawio::Queue& queue, const std::string& target, const std::string& source,
-    const RawstorObjectSpec& spec
+    const RawstorObjectSpec& spec, std::vector<ssize_t>* calls = nullptr
 ) {
-    return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
-        return rawstor_target_create_from_target(
-            &queue, target.c_str(), source.c_str(), &spec, cb, data
-        );
-    });
+    return image_run(
+        queue,
+        [&](auto cb, void* data) {
+            return rawstor_target_create_from_target(
+                &queue, target.c_str(), source.c_str(), &spec, cb, data
+            );
+        },
+        calls
+    );
 }
 
 ssize_t target_export(
-    rawio::Queue& queue, const std::string& target, const std::string& path
+    rawio::Queue& queue, const std::string& target, const std::string& path,
+    std::vector<ssize_t>* calls = nullptr
 ) {
-    return rawstor::tests::sync_run(&queue, [&](auto cb, void* data) {
-        return rawstor_target_export(
-            &queue, target.c_str(), path.c_str(), cb, data
-        );
-    });
+    return image_run(
+        queue,
+        [&](auto cb, void* data) {
+            return rawstor_target_export(
+                &queue, target.c_str(), path.c_str(), cb, data
+            );
+        },
+        calls
+    );
 }
 
 ssize_t target_spec(
@@ -126,12 +186,17 @@ TEST(ImageTest, file_to_object_to_object_to_file) {
     std::string second =
         object_target(env, "018f4e2a-4000-7000-8000-000000000002");
 
+    std::vector<ssize_t> calls;
     ASSERT_EQ(
         target_create_from_file(
-            *queue, first, (dir.path() / "in.img").string(), mds_spec(0)
+            *queue, first, (dir.path() / "in.img").string(), mds_spec(0), &calls
         ),
         0
     );
+    // 2 MiB in 1 MiB blocks: at least the start, the half and the end.
+    EXPECT_GE(calls.size(), 3u);
+    EXPECT_EQ(calls.front(), 0);
+    EXPECT_EQ(calls.back(), 100);
     RawstorObjectSpec spec{};
     ASSERT_EQ(target_spec(*queue, first, &spec), 0);
     EXPECT_EQ(spec.size, data.size());

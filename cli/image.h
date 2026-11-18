@@ -5,6 +5,12 @@
 extern "C" {
 #endif
 
+/* Shows progress on stderr: a line rewritten in place on a terminal, a line
+ * per 10% otherwise. rawstor_cli_progress_end() finishes the display (before
+ * anything else is printed). */
+void rawstor_cli_progress(int percent);
+void rawstor_cli_progress_end(void);
+
 /* Writes an object, or a version of it (a target that names one), to the
  * file `path`: rawstor_target_export(). */
 int rawstor_cli_export(const char* target, const char* path);
