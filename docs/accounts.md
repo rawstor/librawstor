@@ -456,7 +456,8 @@ rawstor object transfer mds://10.0.0.2:7776/<uuid> <account>         # <account>
 
 `create`, `list` and `show` print the owner of the object as a column of its
 own (`account`), also for an administrator, whose location names no account. The
-`target` column names the owner too, unless it is the default account.
+`target` column keeps only the account `LOCATION` names, as `list` does: when
+it names none, none is added to the target.
 `create -t TARGET` makes the object for the account its target names.
 
 ## Python

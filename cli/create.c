@@ -223,7 +223,12 @@ int rawstor_cli_create_at(
     }
 
     fprintf(stderr, "Object created\n");
-    int ret = print_created(output, target, &spec);
+    /* The library's target names the owner; the one shown keeps only the
+     * account LOCATION itself names, as `object list` does. The owner is
+     * still reported in the account column. */
+    char* shown = rawstor_cli_list_target(target, location);
+    int ret = print_created(output, shown != NULL ? shown : target, &spec);
+    free(shown);
 
     free(target);
 
