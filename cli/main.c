@@ -657,9 +657,13 @@ static void command_import_usage(void) {
         "device.\n"
         "  --from-target SOURCE  Source: an object, or a version of one "
         "(SOURCE is\n"
-        "                        TARGET or TARGET/VERSION_ID); it may live "
-        "on another\n"
-        "                        location or backend. Copy a version for a "
+        "                        spelled like TARGET above, with or without "
+        "/VERSION_ID;\n"
+        "                        for LOCATION UUID pass --from-target "
+        "LOCATION and the UUID\n"
+        "                        after TARGET). It may live on another "
+        "location or\n"
+        "                        backend. Copy a version for a "
         "consistent\n"
         "                        point of an object in use: the live "
         "version is read as\n"
@@ -790,8 +794,38 @@ static int command_import(int argc, char** argv) {
         fprintf(stderr, "target required\n");
         return EX_USAGE;
     }
+
+    /* SOURCE is spelled like any target: as is, a bare UUID under
+     * RAWSTOR_LOCATION, or a LOCATION whose UUID is the next positional
+     * argument. */
+    char* source_target = NULL;
+    if (from_target_arg != NULL) {
+        int consumed = 0;
+        source_target = rawstd_target_resolve(
+            from_target_arg, optind < argc ? argv[optind] : NULL, &consumed
+        );
+        if (source_target == NULL) {
+            if (errno == ENOENT) {
+                fprintf(
+                    stderr,
+                    "%s is an object id: location required (set "
+                    "RAWSTOR_LOCATION or pass LOCATION UUID)\n",
+                    from_target_arg
+                );
+            } else {
+                fprintf(
+                    stderr, "Failed to resolve source: %s\n", strerror(errno)
+                );
+            }
+            return EX_USAGE;
+        }
+        optind += consumed;
+        from_target_arg = source_target;
+    }
+
     if (optind < argc) {
         fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+        free(source_target);
         return EX_USAGE;
     }
 
@@ -859,10 +893,12 @@ static int command_import(int argc, char** argv) {
         return policy;
     }
 
-    return rawstor_cli_import(
+    int ret = rawstor_cli_import(
         target, from_file_arg, from_target_arg, size, chunk_size, mirrors,
         failure_domain, stripe_width, &output_arg
     );
+    free(source_target);
+    return ret;
 }
 
 static void command_remove_usage(enum TargetType type) {

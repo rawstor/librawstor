@@ -375,8 +375,9 @@ the object through the ordinary `Object` path, so any backend, mirrored or
 
 From the CLI: `rawstor object export TARGET FILE`, `rawstor version export
 TARGET/VERSION_ID FILE`, and `rawstor object import TARGET -m N (-f FILE |
---from-target SOURCE)`, which takes the new object's full target, UUID
-included.
+--from-target SOURCE)`. Both the new object and SOURCE are spelled like any
+target: in full, `LOCATION UUID` (for SOURCE, `--from-target LOCATION` with the
+UUID after TARGET), or a bare UUID under `RAWSTOR_LOCATION`.
 
 `spec.width` is mandatory, as for `rawstor_target_create()`; nothing is
 inherited from a source. `spec.size` of 0 means the size of the source, a
