@@ -697,7 +697,7 @@ In this order:
    certificate: delete the SPIRE entry, or do not renew; where the CA
    publishes a CRL, add its serial. Without revocation the old certificate
    stays valid until it expires (hours).
-3. **Fence the clients.** The MDS increments the objects' `map_epoch` and
+3. **Fence the clients.** The MDS increments the objects' `map_version` and
    writes the new watermark (`slot.fence`) on the remaining members of every
    chunk it held ([epoch-fence](mds.md#epoch-fence)). A client that still has
    the old map is refused by a healthy member with `STALE`, re-reads the map

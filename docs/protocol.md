@@ -35,7 +35,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | `HANDSHAKE`: the first request of every connection, feature bits (no protocol version) | ✅ | `include/rawstor/protocol.h`, OST `ost/src/client.cpp`, MDS `mds/src/client.cpp`, `src/wire_backend.cpp` |
 | Account: owner of an object (`ALLOCATE`, `OBJ_CREATE`, `META`), filter of `LIST`; registry `LIST_ACCOUNTS`, `ACCOUNT_CREATE` / `ACCOUNT_REMOVE` on the MDS | ✅ | OST `ost/src/client.cpp`, MDS `mds/src/client.cpp`; [Accounts](accounts.md) |
 | Explicit `len` field in the response (`{res, len, hash}`) | ❌ | `res` still carries the payload size |
-| `map_epoch` in the IO frame (epoch-fence) | ❌ | planned in [MDS design](mds.md) |
+| `map_version` in the IO frame (epoch-fence) | ❌ | planned in [MDS design](mds.md) |
 | Authentication: mutual TLS on every connection, identity from the certificate | ✅ | [Security design](security.md) (stage 2) |
 | Authorization: certificate account roles and object restrictions, checked by MDS and OST | ✅ | [Security design](security.md), `librawtls/authorization.hpp`, MDS and OST dispatch |
 
@@ -712,7 +712,7 @@ a nonzero power of two, so 0 (and anything from 64 on) is rejected.
      +----------+----------+----------+----------+
 ```
 
-ObjCreated and ObjVersionCommitted are a single `uint64_t map_epoch`.
+ObjCreated and ObjVersionCommitted are a single `uint64_t map_version`.
 
 ### ObjOp — 56 bytes
 
@@ -766,14 +766,14 @@ transfer has come in since its own.
 
 ### ObjResized — 28 bytes
 
-`OBJ_RESIZE`'s reply: the new `map_epoch` and the chunk count the object grew
+`OBJ_RESIZE`'s reply: the new `map_version` and the chunk count the object grew
 from, so a retried resize still knows which chunks it has to create, and the
 `account_id` that owns the object now, which they are created for.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
      +---------------------------------------------------------------------------------------+
-  0  |                                  uint64_t map_epoch                                   |
+  0  |                                 uint64_t map_version                                  |
      |                                                                                       |
      +-------------------------------------------+-------------------------------------------+
   8  |           uint32_t old_nchunks            |           account_id[0..3]     |
@@ -808,7 +808,7 @@ OST.
  16  |                                 uint64_t logical_size                                 |
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
- 24  |                                  uint64_t map_epoch                                   |
+ 24  |                                 uint64_t map_version                                  |
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
  32  |                                  policy.stripe_width                                  |

@@ -57,7 +57,7 @@ constexpr const char* SCHEMA =
     "  failure_domain INTEGER NOT NULL,"
     "  stripe_width INTEGER NOT NULL,"
     "  placement_seed INTEGER NOT NULL,"
-    "  map_epoch INTEGER NOT NULL,"
+    "  map_version INTEGER NOT NULL,"
     "  created_at INTEGER NOT NULL"
     ");"
     "CREATE TABLE IF NOT EXISTS chunk_map ("
@@ -415,7 +415,7 @@ encode_map(const rawstor::mdsserver::ObjectMap& map) {
         .put(static_cast<uint64_t>(d.policy.failure_domain))
         .put(d.policy.stripe_width)
         .put(d.policy.seed)
-        .put(d.map_epoch)
+        .put(d.map_version)
         .put(static_cast<uint64_t>(map.chunks.size()));
     for (const auto& slots : map.chunks) {
         w.put(static_cast<uint64_t>(slots.size()));
@@ -439,7 +439,7 @@ decode_map(const std::vector<unsigned char>& data) {
         rawstor::mdsserver::level_of(static_cast<unsigned>(r.get<uint64_t>()));
     d.policy.stripe_width = r.get<uint64_t>();
     d.policy.seed = r.get<uint64_t>();
-    d.map_epoch = r.get<uint64_t>();
+    d.map_version = r.get<uint64_t>();
     map.chunks.resize(r.get<uint64_t>());
     for (auto& slots : map.chunks) {
         slots.resize(r.get<uint64_t>());
@@ -550,7 +550,7 @@ void ObjectStore::_require_account(const RawstdUUID& account) {
 ObjectDescriptor ObjectStore::_descriptor(const RawstdUUID& id) {
     Stmt select(
         _db, "SELECT logical_size, chunk_size, width, failure_domain,"
-             " stripe_width, placement_seed, map_epoch"
+             " stripe_width, placement_seed, map_version"
              " FROM objects WHERE id = ?;"
     );
     select.bind_blob(1, id.bytes, sizeof(id.bytes));
@@ -568,7 +568,7 @@ ObjectDescriptor ObjectStore::_descriptor(const RawstdUUID& id) {
         level_of(static_cast<unsigned>(select.column_int64(3)));
     ret.policy.stripe_width = select.column_int64(4);
     ret.policy.seed = select.column_int64(5);
-    ret.map_epoch = select.column_int64(6);
+    ret.map_version = select.column_int64(6);
     return ret;
 }
 
@@ -1183,7 +1183,7 @@ ObjectDescriptor ObjectStore::create(
     ret.logical_size = logical_size;
     ret.chunk_size = chunk_size;
     ret.policy = policy;
-    ret.map_epoch = 1;
+    ret.map_version = 1;
 
     uint64_t nchunks = nchunks_of(logical_size, chunk_size);
 
@@ -1200,7 +1200,7 @@ ObjectDescriptor ObjectStore::create(
         Stmt insert(
             _db, "INSERT INTO objects"
                  " (id, account_id, logical_size, chunk_size, width,"
-                 " failure_domain, stripe_width, placement_seed, map_epoch,"
+                 " failure_domain, stripe_width, placement_seed, map_version,"
                  " created_at)"
                  " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
         );
@@ -1212,7 +1212,7 @@ ObjectDescriptor ObjectStore::create(
             .bind_int64(6, static_cast<uint64_t>(policy.failure_domain))
             .bind_int64(7, policy.stripe_width)
             .bind_int64(8, policy.seed)
-            .bind_int64(9, ret.map_epoch)
+            .bind_int64(9, ret.map_version)
             .bind_int64(10, static_cast<uint64_t>(time(nullptr)))
             .step();
     }
@@ -1298,7 +1298,7 @@ ResizeResult ObjectStore::resize(
             replay_mutation(_db, idempotency_key, MutationType::resize, id)) {
         ResultReader r(*recorded);
         ResizeResult ret{};
-        ret.map_epoch = r.get<uint64_t>();
+        ret.map_version = r.get<uint64_t>();
         ret.old_nchunks = r.get<uint64_t>();
         // Not recorded: the owner may have changed since.
         ret.account = object_owner(_db, id);
@@ -1318,17 +1318,17 @@ ResizeResult ObjectStore::resize(
     uint64_t old_chunks =
         nchunks_of(descriptor.logical_size, descriptor.chunk_size);
     uint64_t new_chunks = nchunks_of(new_size, descriptor.chunk_size);
-    uint64_t map_epoch = descriptor.map_epoch + 1;
+    uint64_t map_version = descriptor.map_version + 1;
 
     Transaction tx(_db);
 
     {
         Stmt update(
-            _db, "UPDATE objects SET logical_size = ?, map_epoch = ?"
+            _db, "UPDATE objects SET logical_size = ?, map_version = ?"
                  " WHERE id = ?;"
         );
         update.bind_int64(1, new_size)
-            .bind_int64(2, map_epoch)
+            .bind_int64(2, map_version)
             .bind_blob(3, id.bytes, sizeof(id.bytes))
             .step();
     }
@@ -1341,14 +1341,14 @@ ResizeResult ObjectStore::resize(
 
     record_mutation(
         _db, idempotency_key, MutationType::resize, id,
-        ResultWriter().put(map_epoch).put(old_chunks).data()
+        ResultWriter().put(map_version).put(old_chunks).data()
     );
 
     tx.commit();
     _notify_space_change(std::move(touched));
 
     return ResizeResult{
-        .map_epoch = map_epoch,
+        .map_version = map_version,
         .old_nchunks = old_chunks,
         .account = object_owner(_db, id)
     };
@@ -1492,7 +1492,7 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
                 _db, "INSERT INTO objects"
                      " (id, account_id, logical_size, chunk_size, width,"
                      " failure_domain, stripe_width, placement_seed,"
-                     " map_epoch, created_at)"
+                     " map_version, created_at)"
                      " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
             );
             insert.bind_blob(1, id.bytes, sizeof(id.bytes))
@@ -1714,7 +1714,7 @@ uint64_t ObjectStore::commit_version(
         }
     }
 
-    uint64_t map_epoch = descriptor.map_epoch + 1;
+    uint64_t map_version = descriptor.map_version + 1;
 
     Transaction tx(_db);
 
@@ -1748,20 +1748,20 @@ uint64_t ObjectStore::commit_version(
     }
 
     {
-        Stmt update(_db, "UPDATE objects SET map_epoch = ? WHERE id = ?;");
-        update.bind_int64(1, map_epoch)
+        Stmt update(_db, "UPDATE objects SET map_version = ? WHERE id = ?;");
+        update.bind_int64(1, map_version)
             .bind_blob(2, id.bytes, sizeof(id.bytes))
             .step();
     }
 
     record_mutation(
         _db, idempotency_key, MutationType::commit_version, id,
-        ResultWriter().put(map_epoch).data()
+        ResultWriter().put(map_version).data()
     );
 
     tx.commit();
 
-    return map_epoch;
+    return map_version;
 }
 
 std::vector<VersionMember> ObjectStore::remove_version(

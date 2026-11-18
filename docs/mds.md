@@ -17,7 +17,7 @@ numbers its stages separately.
 | Static `topology.conf`, `SIGHUP` reload, refusal to drop OSTs in use | 1 | ✅ | `mds/src/topology.cpp`, `mds/src/main.cpp` |
 | Idempotent mutations (`idempotency_key`, `applied_mutations`, 1-day expiry) | 1 | ✅ | `mds/src/store.cpp` |
 | Grow-only resize | 1 | ✅ | `mds/src/store.cpp` (shrink refused) |
-| `map_epoch` per object | 1 | 🟡 | stored and returned by `OBJ_*`; not sent in IO frames |
+| `map_version` per object | 1 | 🟡 | stored and returned by `OBJ_*`; not sent in IO frames |
 | epoch-fence (`slot.fence` watermark on OSTs) | 1 | ❌ | — |
 | `updatePlacement` / migration / rebalance | 1 | ❌ | — |
 | One connection per (OST, object) serving all its chunks | 1 | 🟡 | one connection pool per chunk slot (`SET_OBJECT` with the chunk offset) |
@@ -187,7 +187,7 @@ in four places and spent on one addition:
 | Hand-rolled packed structs, count prefixes, `format_version` | Keep | codebase idiom, no new dependency |
 | Chunk identity rides `RawstorFrameBasicPayload` unchanged | Keep | see *Chunk identity* |
 | Opaque stable `ost_id` (UUID), resolved via topology | Keep | required for HRW stability |
-| epoch-fence (client cache vs per-chunk hard gate) | Keep, **collapsed + renamed** | one counter `map_epoch` per object; the per-slot fence is a stored *watermark* of it, not a second counter; the mirroring per-copy `mirror_epoch` (already shipped) provably cannot be merged in — see *epoch-fence* |
+| epoch-fence (client cache vs per-chunk hard gate) | Keep, **collapsed + renamed** | one counter `map_version` per object; the per-slot fence is a stored *watermark* of it, not a second counter; the mirroring per-copy `mirror_epoch` (already shipped) provably cannot be merged in — see *epoch-fence* |
 | Shard by `id`; primary + replicated log per shard; reads from any replica | **Replaced in v1: single MDS instance** | witness availability does not require MDS replication (a dead witness = one lost vote); the map is rebuildable by scan; replication is v2, the epoch/CAS model below is compatible with primary+log |
 
 ## Chunk identity
@@ -295,7 +295,7 @@ object_descriptor {
     placement_seed
   },
   project_id, created_at,
-  map_epoch                              // monotonic, ++ on any map/descriptor
+  map_version                              // monotonic, ++ on any map/descriptor
                                          // change (incl. version, resize)
 }
 
@@ -336,7 +336,7 @@ classDiagram
       id
       logical_size
       chunk_size
-      map_epoch
+      map_version
     }
     class policy {
       redundancy: mirror R | ec k+m
@@ -400,8 +400,8 @@ not move the topology into the MDS database.
 
 | Method | When | Hot? |
 |--------|------|------|
-| `createObject(size, chunk_size, policy) -> {id, map_epoch}` | once | no |
-| `openObject(id) -> {descriptor, map_epoch, chunk_map}` | at open | **only hot read**, client-cached |
+| `createObject(size, chunk_size, policy) -> {id, map_version}` | once | no |
+| `openObject(id) -> {descriptor, map_version, chunk_map}` | at open | **only hot read**, client-cached |
 | `resizeObject(id, new_size)` | grow (v1: grow-only) | no |
 | `version(id, version_id)` | version -- `version_id` is client-generated, like `id` itself | no |
 | `updatePlacement(id, index, slots)` | rebalance/recovery | rare |
@@ -673,15 +673,15 @@ sequenceDiagram
 One placement counter per object; the fence is a stored watermark of it, not
 a second counter:
 
-- `object.map_epoch` — the **only** placement counter. ++ on any map change,
+- `object.map_version` — the **only** placement counter. ++ on any map change,
   rides in every IO frame (advisory freshness hint), and doubles as the CAS
   token for MDS mutations.
-- `slot.fence` on the OST — a **watermark**: the `map_epoch` value at which
+- `slot.fence` on the OST — a **watermark**: the `map_version` value at which
   this slot's placement moved away, recorded on the **old** owner
   (migration/recovery only).
 
-`write: if client_map_epoch < slot.fence -> STALE -> client re-reads map ->
-retry`. Version creation and resize bump `map_epoch` but record no watermark on any
+`write: if client_map_version < slot.fence -> STALE -> client re-reads map ->
+retry`. Version creation and resize bump `map_version` but record no watermark on any
 slot, so they *cannot* STALE anything — the "no STALE storm on un-migrated
 chunks" property is structural, not a convention about when to raise a gate.
 
@@ -691,9 +691,9 @@ Merging the mirroring per-copy `mirror_epoch` into the map/fence numbering
 fails by counterexample: a degrade bump is written by the client to the
 surviving arms only, with no MDS round-trip (the hot-path requirement). If it
 shared the fence numbering, the surviving client would either fence *itself*
-out (its cached `map_epoch` is now behind the value it just wrote to the
+out (its cached `map_version` is now behind the value it just wrote to the
 survivors) or need the MDS at the failure moment — both unacceptable. The two
-also differ in scope and writer: `map_epoch` is per-object, MDS-issued, and
+also differ in scope and writer: `map_version` is per-object, MDS-issued, and
 versions *placement*; `mirror_epoch` is per slot-set, client-issued, versions
 *membership health*, and is part of the durable consistency tuple on arms and
 witness. (Within mirroring, `mirror_epoch` vs `sync_id` is likewise left
@@ -708,8 +708,8 @@ still talks to:
 
 ```
 1. copy the slot to the new OST (resync machinery, source = an IN-SYNC slot)
-2. MDS reserves E' = map_epoch + 1; record E' as slot.fence on the OLD owner (fsync'd)
-3. MDS: chunk_map[index] slot -> new ost_id, publish map_epoch = E'
+2. MDS reserves E' = map_version + 1; record E' as slot.fence on the OLD owner (fsync'd)
+3. MDS: chunk_map[index] slot -> new ost_id, publish map_version = E'
 4. (later) release the old slot
 ```
 
@@ -721,13 +721,13 @@ sequenceDiagram
     participant New as new OST
     participant S as stale client
     M->>New: copy the slot (resync from an IN-SYNC slot)
-    M->>Old: fence = E' (= map_epoch + 1), fsync'd
-    S->>Old: WRITE with map_epoch < E'
+    M->>Old: fence = E' (= map_version + 1), fsync'd
+    S->>Old: WRITE with map_version < E'
     Old-->>S: STALE
     S->>M: re-read map (still old until the next step), retry
-    M->>M: chunk_map[index]: slot -> new ost_id, map_epoch = E'
+    M->>M: chunk_map[index]: slot -> new ost_id, map_version = E'
     S->>M: re-read map
-    S->>New: WRITE with map_epoch = E'
+    S->>New: WRITE with map_version = E'
     M->>Old: (later) release the old slot
 ```
 
@@ -769,7 +769,7 @@ create_version(id, version_id):
   OST*:   FREEZE -> new writes wait, admitted ones drain, the member is flushed, then it answers
   OST*:   each IN-SYNC member -> backend CoW (zfs snapshot zvol@s<version_id> / lvcreate -s)
   MDS:    OBJ_COMMIT_VERSION -> record versions[version_id] { members = the IN-SYNC set },
-                             map_epoch++ -- rejects a version_id already registered (EEXIST,
+                             map_version++ -- rejects a version_id already registered (EEXIST,
                              the versions table's own primary key) or nil (EINVAL, reserved
                              for the live version)
   client: THAW every member                               (writes resume; ESTALE = lease ran
@@ -793,7 +793,7 @@ sequenceDiagram
     C->>A: CREATE_VERSION(version_id): native CoW
     C->>B: CREATE_VERSION(version_id): native CoW
     C->>M: OBJ_COMMIT_VERSION(id, version_id, members = {a, b})
-    M-->>C: map_epoch++
+    M-->>C: map_version++
     C->>A: THAW(version_id)
     C->>B: THAW(version_id)
     Note over C,M: later: SET_OBJECT(id, version_id) reads that version
@@ -1147,7 +1147,7 @@ One `rawstor-mds` process, no replication in v1. Justification: the map is
 rebuildable by scan; witness loss costs one vote (availability), not
 correctness; and a witness for the *data* quorum does not itself need to be
 replicated. Replication (primary + log shipping, reads from any replica with
-the `map_epoch` fence catching lagging reads) is reserved for v2 — the
+the `map_version` fence catching lagging reads) is reserved for v2 — the
 epoch/CAS data model here is already compatible with it.
 
 Within that one process, `-w/--workers N` (default 4) worker threads each
@@ -1265,13 +1265,13 @@ witness shares the UUID. Native ost:// access lists the witness records. No data
 I/O or CoW operation is issued to a witness.
 
 Wire changes are negotiated by `HANDSHAKE` feature bits; a protocol version
-is not planned. An I/O `map_epoch` fence is a future extension.
+is not planned. An I/O `map_version` fence is a future extension.
 Interprocess mirror coordination remains multiattach stage 2.
 
 ## Implementation stages
 
 1. **Chunking**: `CMD_OBJ_CREATE/OPEN/RESIZE/REMOVE`, HRW placement + topology config,
-   explicit map in MDS (SQLite), client-side routing, `map_epoch` + fence watermark,
+   explicit map in MDS (SQLite), client-side routing, `map_version` + fence watermark,
    `LIST` + per-object `META` reconstruct scan.
 2. **Versions**: `CMD_OBJ_COMMIT_VERSION/REMOVE_VERSION/LIST_VERSIONS`, client-generated UUID
    `version`/`version_id` in chunk identity, member-set registry, deletion,

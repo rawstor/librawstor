@@ -109,7 +109,7 @@ TEST_F(ObjectStoreTest, create_populates_chunk_map) {
 
     EXPECT_EQ(descriptor.logical_size, 3 * chunk_size);
     EXPECT_EQ(descriptor.chunk_size, chunk_size);
-    EXPECT_EQ(descriptor.map_epoch, 1u);
+    EXPECT_EQ(descriptor.map_version, 1u);
 
     ObjectMap map = store.open(id, RawstdUUID{});
     ASSERT_EQ(map.chunks.size(), 3u);
@@ -249,7 +249,7 @@ TEST_F(ObjectStoreTest, create_replays_repeated_idempotency_key) {
         RawstdUUID{}, idempotency_key, id, chunk_size, chunk_size,
         make_policy(1)
     );
-    EXPECT_EQ(again.map_epoch, first.map_epoch);
+    EXPECT_EQ(again.map_version, first.map_version);
 
     // A different op for the same id is a genuine second create.
     EXPECT_THROW(
@@ -291,9 +291,9 @@ TEST_F(ObjectStoreTest, resize_replays_repeated_idempotency_key) {
 
     EXPECT_EQ(first.old_nchunks, 1u);
     EXPECT_EQ(again.old_nchunks, 1u);
-    EXPECT_EQ(again.map_epoch, first.map_epoch);
+    EXPECT_EQ(again.map_version, first.map_version);
     EXPECT_EQ(
-        store.open(id, RawstdUUID{}).descriptor.map_epoch, first.map_epoch
+        store.open(id, RawstdUUID{}).descriptor.map_version, first.map_version
     );
 }
 
@@ -380,13 +380,13 @@ TEST_F(ObjectStoreTest, resize_grows_chunk_count_and_bumps_epoch) {
         RawstdUUID{}, RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1)
     );
 
-    uint64_t map_epoch =
-        store.resize(RawstdUUID{}, id, 3 * chunk_size).map_epoch;
+    uint64_t map_version =
+        store.resize(RawstdUUID{}, id, 3 * chunk_size).map_version;
 
-    EXPECT_EQ(map_epoch, 2u);
+    EXPECT_EQ(map_version, 2u);
     ObjectMap map = store.open(id, RawstdUUID{});
     EXPECT_EQ(map.descriptor.logical_size, 3 * chunk_size);
-    EXPECT_EQ(map.descriptor.map_epoch, 2u);
+    EXPECT_EQ(map.descriptor.map_version, 2u);
     ASSERT_EQ(map.chunks.size(), 3u);
     for (const auto& slots : map.chunks) {
         EXPECT_EQ(slots.size(), 1u);
@@ -417,7 +417,7 @@ TEST_F(ObjectStoreTest, resize_rejects_size_not_chunk_multiple) {
 
     ObjectMap map = store.open(id, RawstdUUID{});
     EXPECT_EQ(map.descriptor.logical_size, chunk_size);
-    EXPECT_EQ(map.descriptor.map_epoch, 1u);
+    EXPECT_EQ(map.descriptor.map_version, 1u);
 }
 
 TEST_F(ObjectStoreTest, resize_rejects_zero_size) {
@@ -487,9 +487,9 @@ TEST_F(ObjectStoreTest, commit_version_and_open_round_trip) {
             members.push_back(VersionMember{index, slot.ost_id});
         }
     }
-    uint64_t map_epoch =
+    uint64_t map_version =
         store.commit_version(RawstdUUID{}, id, version_id, members);
-    EXPECT_EQ(map_epoch, 2u);
+    EXPECT_EQ(map_version, 2u);
 
     ObjectMap version_map = store.open(id, version_id);
     EXPECT_EQ(version_map.descriptor.logical_size, 2 * chunk_size);

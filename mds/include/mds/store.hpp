@@ -37,7 +37,7 @@ struct ObjectDescriptor {
     uint64_t logical_size;
     uint64_t chunk_size;
     PlacementPolicy policy;
-    uint64_t map_epoch;
+    uint64_t map_version;
 };
 
 struct ObjectMap {
@@ -63,11 +63,11 @@ struct ScanRecord {
 };
 
 /*
- * What resize() did: the new map_epoch, the chunk count it grew from and the
+ * What resize() did: the new map_version, the chunk count it grew from and the
  * owner of the object now (nil if it is gone).
  */
 struct ResizeResult {
-    uint64_t map_epoch;
+    uint64_t map_version;
     uint64_t old_nchunks;
     RawstdUUID account;
 };
@@ -303,7 +303,7 @@ public:
      * for the live version) and not already registered (EEXIST). Every
      * chunk of the object must be covered (an unreadable version is
      * never registered — EINVAL). The object's logical size is frozen
-     * into the version. Returns the bumped map_epoch.
+     * into the version. Returns the bumped map_version.
      */
     uint64_t commit_version(
         const RawstdUUID& idempotency_key, const RawstdUUID& id,
