@@ -37,6 +37,17 @@ int rawstor_cli_create_at(
     const RawstorCliOutput* output
 );
 
+/* Creates a new object and fills it from a file (`from_file`) or from another
+ * object or version (`from_target`) -- exactly one is non-NULL. The new object
+ * is `target`, or, when that is NULL, one at `location` with the id `uuid`
+ * names (a generated one when NULL). `size` 0 is the size of the source. */
+int rawstor_cli_import(
+    const char* target, const char* location, const char* uuid,
+    const char* from_file, const char* from_target, uint64_t size,
+    uint64_t chunk_size, unsigned int mirrors, unsigned int failure_domain,
+    uint64_t stripe_width, const RawstorCliOutput* output
+);
+
 #ifdef __cplusplus
 }
 #endif

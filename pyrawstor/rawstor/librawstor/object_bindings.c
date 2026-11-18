@@ -1532,3 +1532,232 @@ PyObject* py_rawstor_location_info(PyObject* Py_UNUSED(self), PyObject* args) {
 
     return (PyObject*)py_info;
 }
+
+// The state of one image call (export, create from file/object), whose
+// callback is called with a progress percentage 0..99 any number of times
+// and then once more with 100 or a negative errno.
+typedef struct {
+    RawstorSyncOp op;    // must stay first: the sync helpers take it by pointer
+    PyObject* progress;  // callable(int percent) or NULL
+    PyObject* exception; // what `progress` raised; set at most once
+} ImageOp;
+
+static int image_op_cb(ssize_t result, void* data) {
+    ImageOp* image = (ImageOp*)data;
+    if (result >= 0) {
+        if (image->progress != NULL && image->exception == NULL) {
+            PyObject* ret =
+                PyObject_CallFunction(image->progress, "i", (int)result);
+            if (ret != NULL) {
+                Py_DECREF(ret);
+            } else {
+                // Keep the operation going to its end -- it cannot be
+                // cancelled -- and raise this afterwards.
+#if PY_VERSION_HEX >= 0x030C0000
+                image->exception = PyErr_GetRaisedException();
+#else
+                PyObject *type, *value, *traceback;
+                PyErr_Fetch(&type, &value, &traceback);
+                PyErr_NormalizeException(&type, &value, &traceback);
+                if (traceback != NULL) {
+                    PyException_SetTraceback(value, traceback);
+                }
+                Py_XDECREF(type);
+                Py_XDECREF(traceback);
+                image->exception = value;
+#endif
+            }
+        }
+        if (result < 100) {
+            return 0;
+        }
+    }
+    return rawstor_sync_op_cb(result, &image->op);
+}
+
+// Validates the optional `progress` argument: NULL for none or None.
+static int image_progress_arg(PyObject* progress, PyObject** out) {
+    *out = NULL;
+    if (progress == NULL || progress == Py_None) {
+        return 0;
+    }
+    if (!PyCallable_Check(progress)) {
+        PyErr_SetString(PyExc_TypeError, "progress must be callable");
+        return -1;
+    }
+    *out = progress;
+    return 0;
+}
+
+// Finishes an image call: the result of its last callback, or what the
+// progress callable raised.
+static PyObject* image_op_result(ImageOp* image, ssize_t res) {
+    rawstor_sync_op_destroy(&image->op);
+    if (image->exception != NULL) {
+#if PY_VERSION_HEX >= 0x030C0000
+        PyErr_SetRaisedException(image->exception);
+#else
+        PyErr_SetObject((PyObject*)Py_TYPE(image->exception), image->exception);
+        Py_DECREF(image->exception);
+#endif
+        return NULL;
+    }
+    if (res < 0) {
+        set_os_error((int)-res);
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+PyObject* py_rawstor_object_export(PyObject* Py_UNUSED(self), PyObject* args) {
+    const char* target;
+    const char* path;
+    PyObject* progress = NULL;
+    if (!PyArg_ParseTuple(args, "ss|O", &target, &path, &progress)) {
+        return NULL;
+    }
+
+    ImageOp image = {.progress = NULL, .exception = NULL};
+    if (image_progress_arg(progress, &image.progress) < 0) {
+        return NULL;
+    }
+    int ires = rawstor_sync_op_init(&image.op);
+    if (ires < 0) {
+        set_os_error(-ires);
+        return NULL;
+    }
+    int sres = rawstor_target_export(
+        image.op.queue, target, path, image_op_cb, &image
+    );
+    ssize_t res = rawstor_sync_op_wait(&image.op, sres);
+    return image_op_result(&image, res);
+}
+
+// Shared by object_create_from_file() and object_create_from_target(): the
+// "ssO" arguments are the new target, the source (a path or a target) and
+// an ObjectSpec.
+static PyObject* create_from(
+    PyObject* args,
+    int (*create)(
+        RawIOQueue*, const char*, const char*, const struct RawstorObjectSpec*,
+        int (*)(ssize_t, void*), void*
+    )
+) {
+    const char* target;
+    const char* source;
+    PyObject* spec_obj;
+    PyObject* progress = NULL;
+    if (!PyArg_ParseTuple(
+            args, "ssO|O", &target, &source, &spec_obj, &progress
+        )) {
+        return NULL;
+    }
+    if (!PyObject_TypeCheck(spec_obj, PyObjectSpecType)) {
+        PyErr_SetString(PyExc_TypeError, "spec must be an ObjectSpec instance");
+        return NULL;
+    }
+
+    PyObjectSpec* py_spec = (PyObjectSpec*)spec_obj;
+    struct RawstorObjectSpec spec = {
+        .size = py_spec->size,
+        .width = py_spec->width,
+        .chunk_size = py_spec->chunk_size,
+        .stripe_width = py_spec->stripe_width,
+        .failure_domain = py_spec->failure_domain,
+    };
+
+    ImageOp image = {.progress = NULL, .exception = NULL};
+    if (image_progress_arg(progress, &image.progress) < 0) {
+        return NULL;
+    }
+    int ires = rawstor_sync_op_init(&image.op);
+    if (ires < 0) {
+        set_os_error(-ires);
+        return NULL;
+    }
+    int sres =
+        create(image.op.queue, target, source, &spec, image_op_cb, &image);
+    ssize_t res = rawstor_sync_op_wait(&image.op, sres);
+    return image_op_result(&image, res);
+}
+
+PyObject*
+py_rawstor_object_create_from_file(PyObject* Py_UNUSED(self), PyObject* args) {
+    return create_from(args, rawstor_target_create_from_file);
+}
+
+PyObject* py_rawstor_object_create_from_target(
+    PyObject* Py_UNUSED(self), PyObject* args
+) {
+    return create_from(args, rawstor_target_create_from_target);
+}
+
+// Shared by object_create_at_from_file() and object_create_at_from_target():
+// the "szsO" arguments are the location, the id (or None), the source (a path
+// or a target) and an ObjectSpec, with an optional progress callable after
+// them. Returns the new object's target.
+static PyObject* create_at_from(
+    PyObject* args, int (*create)(
+                        RawIOQueue*, const char*, const char*, const char*,
+                        const struct RawstorObjectSpec*, char*, size_t,
+                        int (*)(ssize_t, void*), void*
+                    )
+) {
+    const char* location;
+    const char* uuid = NULL;
+    const char* source;
+    PyObject* spec_obj;
+    PyObject* progress = NULL;
+    if (!PyArg_ParseTuple(
+            args, "szsO|O", &location, &uuid, &source, &spec_obj, &progress
+        )) {
+        return NULL;
+    }
+    if (!PyObject_TypeCheck(spec_obj, PyObjectSpecType)) {
+        PyErr_SetString(PyExc_TypeError, "spec must be an ObjectSpec instance");
+        return NULL;
+    }
+
+    PyObjectSpec* py_spec = (PyObjectSpec*)spec_obj;
+    struct RawstorObjectSpec spec = {
+        .size = py_spec->size,
+        .width = py_spec->width,
+        .chunk_size = py_spec->chunk_size,
+        .stripe_width = py_spec->stripe_width,
+        .failure_domain = py_spec->failure_domain,
+    };
+
+    ImageOp image = {.progress = NULL, .exception = NULL};
+    if (image_progress_arg(progress, &image.progress) < 0) {
+        return NULL;
+    }
+    char target[65536];
+    int ires = rawstor_sync_op_init(&image.op);
+    if (ires < 0) {
+        set_os_error(-ires);
+        return NULL;
+    }
+    int sres = create(
+        image.op.queue, location, uuid, source, &spec, target, sizeof(target),
+        image_op_cb, &image
+    );
+    ssize_t res = rawstor_sync_op_wait(&image.op, sres);
+    PyObject* done = image_op_result(&image, res);
+    if (done == NULL) {
+        return NULL;
+    }
+    Py_DECREF(done);
+    return PyUnicode_FromString(target);
+}
+
+PyObject* py_rawstor_object_create_at_from_file(
+    PyObject* Py_UNUSED(self), PyObject* args
+) {
+    return create_at_from(args, rawstor_location_create_from_file);
+}
+
+PyObject* py_rawstor_object_create_at_from_target(
+    PyObject* Py_UNUSED(self), PyObject* args
+) {
+    return create_at_from(args, rawstor_location_create_from_target);
+}

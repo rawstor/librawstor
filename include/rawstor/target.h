@@ -1081,6 +1081,121 @@ int rawstor_target_resize(
 ) RAWSTOR_NOEXCEPT;
 
 /**
+ * @brief Asynchronously export an object, or one of its versions, to a file.
+ *
+ * Reads the whole of @p target, opened read-only, into the file @p path:
+ * created if missing, truncated otherwise. A target that names a bound
+ * version (see rawstor_target_version_id()) exports that version, which is
+ * the way to export a consistent point of an object that is in use. A
+ * regular file is written sparse: blocks that read as zero are left as
+ * holes. Any other file (a block device) gets every block.
+ *
+ * Nothing coordinates with other users of the object. Exporting the live
+ * version of an object some client has open reads whatever the storage
+ * holds at that moment -- including a half-finished state if the writer is
+ * mid-flight -- and quiescing it is the caller's business.
+ *
+ * Progress: unlike the other calls here, @p cb is called many times. @p result
+ * is the completion percentage, an integer from 0 to 100. Each percentage is
+ * reported at most once, in increasing order, so a call is always for a larger
+ * number than the one before. 100 means the whole operation succeeded (data
+ * flushed, everything closed) and is the last call; a negative errno is a
+ * failure and is the last call too, whatever percentage was reached. Exactly
+ * one of the two ends every operation that was started. The return value of a
+ * call that is not the last one is ignored.
+ *
+ * @param queue   Queue used to drive the asynchronous export.
+ * @param target  Object (or bound version) to export.
+ * @param path    Destination file; copied before this call returns.
+ * @param cb      Called repeatedly with the progress, see "Progress" above;
+ *                @p result is 0..99 while working, then 100 on success or
+ *                a negative errno (@c -ENOENT, @c -EIO, @c -EACCES, ...) on
+ *                failure -- either is the last call.
+ * @param data    Passed to @p cb.
+ *
+ * @return 0 if the export was started; a negative errno otherwise, in which
+ *         case @p cb is never invoked. A file that was already created and
+ *         then failed to be filled is left in place, partial.
+ *
+ * @see rawstor_target_create_from_file
+ */
+int rawstor_target_export(
+    RawIOQueue* queue, const char* target, const char* path,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously create a new object holding the contents of a file.
+ *
+ * Creates @p target as rawstor_target_create() does, then fills it from the
+ * file @p path (a regular file or a block device) and flushes it. The object
+ * is created with the shape in @p spec, except that @p spec->size may be 0,
+ * meaning the size of the file; a larger size pads the object with zeros,
+ * a smaller one fails with @c -EINVAL. @p spec->width is mandatory, as for
+ * rawstor_target_create(). An mds:// object is made of whole chunks: a size
+ * left to the file (0) is rounded up to @p spec->chunk_size, the tail reading
+ * back as zero, while an explicit @p spec->size must be a multiple of it.
+ *
+ * If anything fails after the object exists, it is removed again.
+ *
+ * @param queue   Queue used to drive the asynchronous operation.
+ * @param target  The new object, as for rawstor_target_create().
+ * @param path    Source file; copied before this call returns.
+ * @param spec    The object's shape. Only read during this call.
+ * @param cb      Called repeatedly with the progress, see "Progress" at
+ *                rawstor_target_export();
+ *                @p result is 0..99 while working, then 100 on success or
+ *                a negative errno (@c -ENOENT, @c -EIO, @c -EACCES, ...) on
+ *                failure -- either is the last call.
+ * @param data    Passed to @p cb.
+ *
+ * @return 0 if the operation was started; a negative errno otherwise, in
+ *         which case @p cb is never invoked.
+ *
+ * @see rawstor_target_export
+ * @see rawstor_target_create_from_target
+ */
+int rawstor_target_create_from_file(
+    RawIOQueue* queue, const char* target, const char* path,
+    const struct RawstorObjectSpec* spec, int (*cb)(ssize_t result, void* data),
+    void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously create a new object holding a copy of another
+ *        object, or of one of its versions.
+ *
+ * Same as rawstor_target_create_from_file(), with @p source -- opened
+ * read-only -- as the data. @p source may name a bound version, which is
+ * the way to copy a consistent point of an object that is in use; for the
+ * live version of an object a client has open the same caveat as for
+ * rawstor_target_export() holds. @p source and @p target may live on
+ * different locations, backends and accounts. @p spec->size of 0 means the
+ * size of @p source; @p spec->width is mandatory, nothing is inherited.
+ *
+ * @param queue   Queue used to drive the asynchronous operation.
+ * @param target  The new object, as for rawstor_target_create().
+ * @param source  Object (or bound version) to copy.
+ * @param spec    The new object's shape. Only read during this call.
+ * @param cb      Called repeatedly with the progress, see "Progress" at
+ *                rawstor_target_export();
+ *                @p result is 0..99 while working, then 100 on success or
+ *                a negative errno (@c -ENOENT, @c -EIO, @c -EACCES, ...) on
+ *                failure -- either is the last call.
+ * @param data    Passed to @p cb.
+ *
+ * @return 0 if the operation was started; a negative errno otherwise, in
+ *         which case @p cb is never invoked.
+ *
+ * @see rawstor_target_create_from_file
+ */
+int rawstor_target_create_from_target(
+    RawIOQueue* queue, const char* target, const char* source,
+    const struct RawstorObjectSpec* spec, int (*cb)(ssize_t result, void* data),
+    void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
  * @brief Asynchronously make another account the owner of an object.
  *
  * The owner is recorded with every member of the object (every copy of every

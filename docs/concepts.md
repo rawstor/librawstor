@@ -356,6 +356,57 @@ independent mechanisms use the same id, at different layers:
   a comma-separated list of its own — it binds whichever single URI it's
   attached to.
 
+## Image
+
+An **image** is a whole object (or one of its versions) as a plain file.
+Three calls move data between files and objects, each reading and writing
+the object through the ordinary `Object` path, so any backend, mirrored or
+`mds://` multi-chunk, works the same way:
+
+- `rawstor_target_export(target, path)` writes the object to `path`
+  (created or truncated). A target that names a bound version exports that
+  version. A regular file is written sparse — blocks that read as zero
+  become holes; a block device gets every block.
+- `rawstor_target_create_from_file(target, path, spec)` creates a new
+  object and fills it from a file or block device.
+- `rawstor_target_create_from_target(target, source, spec)` creates a new
+  object as a copy of another object, or of one of its versions, possibly
+  on another location, backend or account.
+- `rawstor_location_create_from_file(location, uuid, path, spec, target, size)`
+  and `rawstor_location_create_from_target(location, uuid, source, spec,
+  target, size)` do the same at a location, as `rawstor_location_create()`
+  does for an empty object: the id is generated unless `uuid` is given, and
+  the new object's target is written into `target` before anything starts.
+
+From the CLI: `rawstor object export TARGET FILE`, `rawstor version export
+TARGET/VERSION_ID FILE`, `rawstor object import FILE -m N` and
+`rawstor object copy(cp) SOURCE -m N` (`rawstor copy`/`cp` is the shorthand).
+A TARGET or SOURCE is spelled like any target: in full, `LOCATION UUID`, or a
+bare UUID under `RAWSTOR_LOCATION`. The new object is named as for `rawstor
+object create`: by `LOCATION` (`RAWSTOR_LOCATION` when none is given) with an
+optional `-u UUID`, a generated one otherwise, or by `-t TARGET`.
+
+The three calls report progress through their one callback, which is called
+many times: `result` is the completion percentage, 0 to 100, each value at
+most once and always larger than the one before. 100 means success and is
+the last call; a negative errno is a failure and is the last call too.
+The CLI shows it on stderr, pyrawstor passes it to an optional `progress`
+callable.
+
+`spec.width` is mandatory, as for `rawstor_target_create()`; nothing is
+inherited from a source. `spec.size` of 0 means the size of the source, a
+larger one pads the object with zeros, a smaller one is `-EINVAL`. An
+`mds://` object is made of whole chunks: a size left to the source is rounded
+up to the chunk size, the tail reading back as zero, while an explicit size
+must be a multiple of it. If anything fails once the new object exists, it is
+removed again.
+
+Nothing coordinates with other users of the objects involved. The live
+version of an object that some client has open — and may have written to
+without flushing — is read as the storage holds it; keeping such an object
+quiescent is the caller's responsibility. A version is a consistent point
+and is the safe thing to export or copy while an object is in use.
+
 ## Chunk offset (not for manual entry)
 
 A chunk's own byte offset within its parent `mds://` object

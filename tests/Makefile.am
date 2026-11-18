@@ -64,6 +64,7 @@ AM_LDFLAGS += -pthread
 test_all_SOURCES += object_env.cpp \
                     object_env.hpp \
                     test_barrier.cpp \
+                    test_image.cpp \
                     test_tls_mds.cpp \
                     test_object.cpp \
                     test_resync_stress.cpp \

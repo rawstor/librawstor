@@ -388,6 +388,86 @@ int rawstor_location_create(
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 
+/**
+ * @brief Asynchronously create an object at a location from the contents of
+ *        a file, and return the resulting target string.
+ *
+ * What rawstor_target_create_from_file() does for a target that is already
+ * known, this does for a @p location and a @p uuid, as rawstor_location_
+ * create() does for an empty object: the target string -- @p location with
+ * @p uuid (a fresh UUIDv7 when NULL) spliced onto every URI, and the
+ * owner's account named as rawstor_location_create() names it -- is written
+ * into @p target before this call returns, before any I/O, and then the
+ * object is created and filled. @p spec is as for
+ * rawstor_target_create_from_file(): @p spec->width is mandatory,
+ * @p spec->size 0 is the size of the file (rounded up to @p spec->chunk_size
+ * for an mds:// location). For a location that is not an mds:// one,
+ * @p spec->chunk_size splits the object into chunks of that size as
+ * rawstor_location_create() does, which needs an explicit @p spec->size.
+ *
+ * The callback reports progress exactly as rawstor_target_export() describes
+ * it: a percentage from 0 to 99 any number of times, each at most once and in
+ * increasing order, then 100 on success or a negative errno on failure, either
+ * being the last call. Unlike rawstor_location_create()'s, it never carries
+ * the length of the target string, which is known when this call returns.
+ *
+ * @param queue     Queue used to drive the asynchronous operation.
+ * @param location  Location, as for rawstor_location_create().
+ * @param uuid      UUID of the new object, or NULL to generate one.
+ * @param path      Source file: a regular file or a block device. Copied
+ *                  before this call returns.
+ * @param spec      The object's shape. Only read during this call.
+ * @param target    Output buffer for the new object's target string, written
+ *                  before this call returns. Size it as for
+ *                  rawstor_location_create() (e.g. 65536 bytes).
+ * @param size      Size of @p target in bytes, with the terminating null.
+ * @param cb        Callback, as described above.
+ * @param data      Passed to @p cb.
+ *
+ * @return 0 if the operation was started; a negative errno otherwise, in
+ *         which case @p cb is never invoked: @c -EINVAL for a bad
+ *         @p location, @p uuid or @p path, @c -ENAMETOOLONG if the target
+ *         string does not fit @p target (nothing is created).
+ *
+ * @see rawstor_location_create
+ * @see rawstor_target_create_from_file
+ * @see rawstor_location_create_from_target
+ */
+int rawstor_location_create_from_file(
+    RawIOQueue* queue, const char* location, const char* uuid, const char* path,
+    const struct RawstorObjectSpec* spec, char* target, size_t size,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
+ * @brief Asynchronously create an object at a location as a copy of another
+ *        object, or of one of its versions, and return the resulting target
+ *        string.
+ *
+ * Same as rawstor_location_create_from_file(), with @p source -- opened
+ * read-only -- as the data, as for rawstor_target_create_from_target().
+ *
+ * @param queue     Queue used to drive the asynchronous operation.
+ * @param location  Location, as for rawstor_location_create().
+ * @param uuid      UUID of the new object, or NULL to generate one.
+ * @param source    Object (or bound version) to copy.
+ * @param spec      The new object's shape. Only read during this call.
+ * @param target    Output buffer for the new object's target string.
+ * @param size      Size of @p target in bytes, with the terminating null.
+ * @param cb        Callback; see rawstor_location_create_from_file().
+ * @param data      Passed to @p cb.
+ *
+ * @return As for rawstor_location_create_from_file().
+ *
+ * @see rawstor_location_create
+ * @see rawstor_target_create_from_target
+ */
+int rawstor_location_create_from_target(
+    RawIOQueue* queue, const char* location, const char* uuid,
+    const char* source, const struct RawstorObjectSpec* spec, char* target,
+    size_t size, int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
 #ifdef __cplusplus
 }
 #endif

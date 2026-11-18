@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+import os
+from collections.abc import Callable, Iterator
 from uuid import uuid4
 
 from . import librawstor
@@ -60,6 +61,51 @@ class Location:
                     size=size, width=width, chunk_size=chunk_size,
                     stripe_width=stripe_width,
                     failure_domain=failure_domain)))
+
+    def create_from_file(
+        self, path: str | os.PathLike, *, width: int, size: int = 0,
+        chunk_size: int = 0, stripe_width: int = 0,
+        failure_domain: int | str = OBJ_DOMAIN_DEFAULT,
+        uuid: str | None = None,
+        progress: Callable[[int], None] | None = None
+    ) -> Target:
+        """Create an object at this location and fill it with the contents of
+        the file `path`; returns its Target. As for create(), `uuid` names it
+        and a fresh one is generated if None. `size` of 0 is the size of the
+        file (rounded up to `chunk_size` for an mds:// location); see
+        Target.create_from_file() for that and `progress`. If anything fails
+        once the object exists, it is removed again. See
+        rawstor_location_create_from_file(), <rawstor/location.h>."""
+        return Target(
+            librawstor.object_create_at_from_file(
+                self._uri, uuid, os.fspath(path),
+                object_spec(
+                    size=size, width=width, chunk_size=chunk_size,
+                    stripe_width=stripe_width,
+                    failure_domain=failure_domain),
+                progress))
+
+    def create_from(
+        self, source: Target | str, *, width: int, size: int = 0,
+        chunk_size: int = 0, stripe_width: int = 0,
+        failure_domain: int | str = OBJ_DOMAIN_DEFAULT,
+        uuid: str | None = None,
+        progress: Callable[[int], None] | None = None
+    ) -> Target:
+        """Create an object at this location as a copy of `source`, another
+        object or one of its versions; returns its Target. See
+        create_from_file() and Target.create_from(). See
+        rawstor_location_create_from_target(), <rawstor/location.h>."""
+        if isinstance(source, Target):
+            source = source.uri
+        return Target(
+            librawstor.object_create_at_from_target(
+                self._uri, uuid, source,
+                object_spec(
+                    size=size, width=width, chunk_size=chunk_size,
+                    stripe_width=stripe_width,
+                    failure_domain=failure_domain),
+                progress))
 
     def info(self) -> librawstor.LocationInfo:
         return librawstor.location_info(self._uri)

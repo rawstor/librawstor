@@ -1,0 +1,552 @@
+#include "image.hpp"
+
+#include "object.hpp"
+#include "target.hpp"
+
+#include <rawstor/target.h>
+
+#include <rawio/awaitable.hpp>
+#include <rawio/queue.hpp>
+
+#include <rawstd/coro.hpp>
+#include <rawstd/gpp.hpp>
+#include <rawstd/logging.hpp>
+#include <rawstd/uri.hpp>
+
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+#include <algorithm>
+#include <exception>
+#include <memory>
+#include <new>
+#include <optional>
+#include <string>
+#include <system_error>
+#include <utility>
+#include <vector>
+
+#include <cerrno>
+#include <cstdint>
+#include <cstring>
+
+#include <fcntl.h>
+
+// Images: a whole object -- or one of its versions -- as a plain file, and
+// a new object filled from a file or from another object (version). Data
+// moves in sequential blocks through the ordinary Object read/write path,
+// so every backend, mirrored or not, works the same way.
+//
+// Nothing here coordinates with other users of the objects involved: an
+// object that is open elsewhere and has unflushed writes is read as the
+// storage currently holds it, and the caller is responsible for quiescing
+// it first (or exporting a version, which is a consistent point).
+
+namespace {
+
+// The unit data moves in, both directions.
+const size_t block_size = 1024 * 1024;
+
+bool is_zero(const char* buf, size_t size) {
+    return size == 0 || (buf[0] == 0 && memcmp(buf, buf + 1, size - 1) == 0);
+}
+
+size_t block_at(uint64_t offset, uint64_t size) {
+    return static_cast<size_t>(std::min<uint64_t>(block_size, size - offset));
+}
+
+// Reads exactly `size` bytes at `offset`; a read that makes no progress is
+// EIO, so a short object cannot spin this forever.
+rawstd::Task<void>
+read_object(rawstor::Object& object, char* buf, size_t size, uint64_t offset) {
+    size_t done = 0;
+    while (done < size) {
+        size_t n =
+            co_await object.pread(buf + done, size - done, offset + done);
+        if (n == 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(EIO);
+        }
+        done += n;
+    }
+}
+
+rawstd::Task<void> write_object(
+    rawstor::Object& object, const char* buf, size_t size, uint64_t offset
+) {
+    size_t done = 0;
+    while (done < size) {
+        size_t n = co_await object.pwrite(
+            buf + done, size - done, offset + done, false
+        );
+        if (n == 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(EIO);
+        }
+        done += n;
+    }
+}
+
+rawstd::Task<void> write_file(
+    rawio::Queue& queue, int fd, const char* buf, size_t size, uint64_t offset
+) {
+    size_t done = 0;
+    while (done < size) {
+        size_t n = co_await queue.pwrite(
+            fd, buf + done, size - done, static_cast<off_t>(offset + done),
+            false
+        );
+        if (n == 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(EIO);
+        }
+        done += n;
+    }
+}
+
+rawstd::Task<void> read_file(
+    rawio::Queue& queue, int fd, char* buf, size_t size, uint64_t offset
+) {
+    size_t done = 0;
+    while (done < size) {
+        size_t n = co_await queue.pread(
+            fd, buf + done, size - done, static_cast<off_t>(offset + done)
+        );
+        if (n == 0) {
+            // The file shrank after its size was taken.
+            RAWSTD_THROW_SYSTEM_ERROR(EIO);
+        }
+        done += n;
+    }
+}
+
+// What a caller of the three image calls hears: the completion percentage
+// as it grows, each value at most once, then the result. Values below 100
+// are progress, 100 is success and the last call, a negative errno is
+// failure and the last call. The return value of a progress call is
+// ignored; the last call's is the usual completion callback contract.
+class Progress {
+private:
+    int (*_cb)(ssize_t result, void* data);
+    void* _data;
+    int _last = -1;
+
+    void _emit(int percent) {
+        if (percent > _last) {
+            _last = percent;
+            _cb(percent, _data);
+        }
+    }
+
+public:
+    Progress(int (*cb)(ssize_t result, void* data), void* data) noexcept :
+        _cb(cb),
+        _data(data) {}
+
+    // `done` of `total` bytes are copied. Never reaches 100: that is
+    // reserved for finish(), once everything is flushed and closed.
+    void report(uint64_t done, uint64_t total) {
+        int percent = 0;
+        if (total != 0) {
+            percent = static_cast<int>(std::min<unsigned __int128>(
+                99, static_cast<unsigned __int128>(done) * 100 / total
+            ));
+        }
+        _emit(percent);
+    }
+
+    // The last call: `result` is 0 for success, or a negative errno.
+    int finish(ssize_t result) {
+        if (result < 0) {
+            return _cb(result, _data);
+        }
+        _last = 100;
+        return _cb(100, _data);
+    }
+};
+
+// Copies `size` bytes of `source` into the file `fd`. With `sparse` (a
+// regular file, already sized) an all-zero block is left as a hole instead
+// of being written.
+rawstd::Task<void> copy_object_to_file(
+    rawio::Queue& queue, rawstor::Object& source, int fd, uint64_t size,
+    bool sparse, Progress& progress
+) {
+    std::vector<char> buf(block_size);
+    for (uint64_t offset = 0; offset < size; offset += block_size) {
+        size_t n = block_at(offset, size);
+        co_await read_object(source, buf.data(), n, offset);
+        if (!sparse || !is_zero(buf.data(), n)) {
+            co_await write_file(queue, fd, buf.data(), n, offset);
+        }
+        progress.report(offset + n, size);
+    }
+}
+
+rawstd::Task<void> copy_file_to_object(
+    rawio::Queue& queue, int fd, rawstor::Object& destination, uint64_t size,
+    Progress& progress
+) {
+    std::vector<char> buf(block_size);
+    for (uint64_t offset = 0; offset < size; offset += block_size) {
+        size_t n = block_at(offset, size);
+        co_await read_file(queue, fd, buf.data(), n, offset);
+        co_await write_object(destination, buf.data(), n, offset);
+        progress.report(offset + n, size);
+    }
+}
+
+rawstd::Task<void> copy_object_to_object(
+    rawstor::Object& source, rawstor::Object& destination, uint64_t size,
+    Progress& progress
+) {
+    std::vector<char> buf(block_size);
+    for (uint64_t offset = 0; offset < size; offset += block_size) {
+        size_t n = block_at(offset, size);
+        co_await read_object(source, buf.data(), n, offset);
+        co_await write_object(destination, buf.data(), n, offset);
+        progress.report(offset + n, size);
+    }
+}
+
+// Size of a file as a reader sees it: st_size for a regular file, the
+// device size for a block device.
+uint64_t file_size(int fd) {
+    struct stat st;
+    if (fstat(fd, &st) < 0) {
+        RAWSTD_THROW_ERRNO();
+    }
+    if (S_ISREG(st.st_mode)) {
+        return static_cast<uint64_t>(st.st_size);
+    }
+    off_t end = lseek(fd, 0, SEEK_END);
+    if (end < 0) {
+        RAWSTD_THROW_ERRNO();
+    }
+    return static_cast<uint64_t>(end);
+}
+
+// The size of the new object: the source's own unless the caller asks for
+// a larger one (the tail then reads back as zero). An mds:// object is made of
+// whole chunks, so a size left to the source is rounded up to the chunk size.
+uint64_t image_size(
+    const RawstorObjectSpec& sp, uint64_t source_size,
+    const rawstor::Target& destination
+) {
+    if (sp.size == 0) {
+        if (sp.chunk_size != 0 && source_size % sp.chunk_size != 0 &&
+            destination.uris().front().scheme() == "mds") {
+            return (source_size / sp.chunk_size + 1) * sp.chunk_size;
+        }
+        return source_size;
+    }
+    if (sp.size < source_size) {
+        rawstd_error(
+            "Spec size (%llu) is smaller than the source (%llu)\n",
+            static_cast<unsigned long long>(sp.size),
+            static_cast<unsigned long long>(source_size)
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    return sp.size;
+}
+
+// Every parameter is taken by value: the task outlives the caller's frame.
+rawstd::Task<void> export_image(
+    rawio::Queue* queue, std::shared_ptr<Progress> progress,
+    rawstor::Target source, std::string path
+) {
+    RawstorObjectSpec sp = co_await source.spec(*queue);
+    std::unique_ptr<rawstor::Object> object =
+        co_await source.open(*queue, RAWSTOR_READONLY);
+
+    std::exception_ptr error;
+    int fd = -1;
+    try {
+        fd = co_await queue->open(
+            path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600
+        );
+        struct stat st;
+        if (fstat(fd, &st) < 0) {
+            RAWSTD_THROW_ERRNO();
+        }
+        bool sparse = S_ISREG(st.st_mode);
+        if (sparse && ftruncate(fd, static_cast<off_t>(sp.size)) < 0) {
+            RAWSTD_THROW_ERRNO();
+        }
+        progress->report(0, sp.size);
+        co_await copy_object_to_file(
+            *queue, *object, fd, sp.size, sparse, *progress
+        );
+        co_await queue->fsync(fd, false);
+    } catch (...) {
+        error = std::current_exception();
+    }
+    if (fd >= 0) {
+        try {
+            co_await queue->close(fd);
+        } catch (...) {
+            if (!error) {
+                error = std::current_exception();
+            }
+        }
+    }
+    try {
+        co_await object->close();
+    } catch (...) {
+        if (!error) {
+            error = std::current_exception();
+        }
+    }
+    if (error) {
+        std::rethrow_exception(error);
+    }
+}
+
+// What a new object is filled from: a file, or another object (version).
+struct ImageSource {
+    std::string path;
+    std::optional<rawstor::Target> target;
+};
+
+// Creates `destination` and fills it from `from`. A failure once the object
+// exists removes it again, so a failed import leaves nothing behind.
+rawstd::Task<void> create_from(
+    rawio::Queue* queue, std::shared_ptr<Progress> progress,
+    rawstor::Target destination, RawstorObjectSpec sp, ImageSource from
+) {
+    int fd = -1;
+    std::unique_ptr<rawstor::Object> source;
+    uint64_t source_size = 0;
+
+    std::exception_ptr error;
+    try {
+        if (!from.target) {
+            fd = co_await queue->open(
+                from.path.c_str(), O_RDONLY | O_CLOEXEC, 0
+            );
+            source_size = file_size(fd);
+        } else {
+            RawstorObjectSpec source_spec = co_await from.target->spec(*queue);
+            source_size = source_spec.size;
+            source = co_await from.target->open(*queue, RAWSTOR_READONLY);
+        }
+        sp.size = image_size(sp, source_size, destination);
+    } catch (...) {
+        error = std::current_exception();
+    }
+
+    bool created = false;
+    std::unique_ptr<rawstor::Object> object;
+    if (!error) {
+        try {
+            co_await destination.create(*queue, sp);
+            created = true;
+            object = co_await destination.open(*queue, 0);
+            progress->report(0, source_size);
+            if (!from.target) {
+                co_await copy_file_to_object(
+                    *queue, fd, *object, source_size, *progress
+                );
+            } else {
+                co_await copy_object_to_object(
+                    *source, *object, source_size, *progress
+                );
+            }
+            co_await object->flush();
+        } catch (...) {
+            error = std::current_exception();
+        }
+    }
+
+    if (object) {
+        try {
+            co_await object->close(!error);
+        } catch (...) {
+            if (!error) {
+                error = std::current_exception();
+            }
+        }
+    }
+    if (fd >= 0) {
+        try {
+            co_await queue->close(fd);
+        } catch (...) {
+        }
+    }
+    if (source) {
+        try {
+            co_await source->close();
+        } catch (...) {
+        }
+    }
+    if (error && created) {
+        try {
+            co_await destination.remove(*queue);
+        } catch (...) {
+            // The caller gets the copy's own error; this says what is left.
+            rawstd_error(
+                "Failed to remove the partially created object %s, remove "
+                "it by hand\n",
+                destination.uris().front().str().c_str()
+            );
+        }
+    }
+    if (error) {
+        std::rethrow_exception(error);
+    }
+}
+
+// Same shape as launch_create_op_coro() in target.cpp: the last call to the
+// callback (through `progress`) carries the result, every exception becomes
+// an errno.
+rawstd::DetachedTask launch_image_op_coro(
+    rawstd::Task<void> task, std::shared_ptr<Progress> progress
+) {
+    ssize_t result = 0;
+    try {
+        co_await std::move(task);
+    } catch (const std::system_error& e) {
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        result = -EINVAL;
+    }
+    int res = progress->finish(result);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
+// Common tail of the three entry points: validates and parses what can fail
+// synchronously, launches, and maps a synchronous failure to an errno.
+template <typename F>
+int submit(F&& make_task, int (*cb)(ssize_t, void*), void* data) {
+    try {
+        auto progress = std::make_shared<Progress>(cb, data);
+        launch_image_op_coro(make_task(progress), progress);
+        rawstd::DetachedTask::rethrow_if_pending();
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc&) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+} // namespace
+
+int rawstor_target_export(
+    RawIOQueue* queue, const char* target, const char* path,
+    int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    return submit(
+        [&](std::shared_ptr<Progress> progress) {
+            if (path == nullptr) {
+                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            }
+            return export_image(
+                static_cast<rawio::Queue*>(queue), std::move(progress),
+                rawstor::Target(rawstd::URI::uriv(target)), path
+            );
+        },
+        cb, data
+    );
+}
+
+namespace rawstor {
+
+int image_create_from_file(
+    RawIOQueue* queue, Target destination, const RawstorObjectSpec& spec,
+    const std::string& path, int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    return submit(
+        [&](std::shared_ptr<Progress> progress) {
+            return create_from(
+                static_cast<rawio::Queue*>(queue), std::move(progress),
+                std::move(destination), spec, ImageSource{path, std::nullopt}
+            );
+        },
+        cb, data
+    );
+}
+
+int image_create_from_target(
+    RawIOQueue* queue, Target destination, const RawstorObjectSpec& spec,
+    Target source, int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    return submit(
+        [&](std::shared_ptr<Progress> progress) {
+            return create_from(
+                static_cast<rawio::Queue*>(queue), std::move(progress),
+                std::move(destination), spec,
+                ImageSource{std::string(), std::move(source)}
+            );
+        },
+        cb, data
+    );
+}
+
+} // namespace rawstor
+
+int rawstor_target_create_from_file(
+    RawIOQueue* queue, const char* target, const char* path,
+    const struct RawstorObjectSpec* spec, int (*cb)(ssize_t result, void* data),
+    void* data
+) noexcept {
+    try {
+        if (path == nullptr) {
+            return -EINVAL;
+        }
+        return rawstor::image_create_from_file(
+            queue, rawstor::Target(rawstd::URI::uriv(target)),
+            spec != nullptr ? *spec : RawstorObjectSpec{}, path, cb, data
+        );
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc&) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_target_create_from_target(
+    RawIOQueue* queue, const char* target, const char* source,
+    const struct RawstorObjectSpec* spec, int (*cb)(ssize_t result, void* data),
+    void* data
+) noexcept {
+    try {
+        if (source == nullptr) {
+            return -EINVAL;
+        }
+        return rawstor::image_create_from_target(
+            queue, rawstor::Target(rawstd::URI::uriv(target)),
+            spec != nullptr ? *spec : RawstorObjectSpec{},
+            rawstor::Target(rawstd::URI::uriv(source)), cb, data
+        );
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc&) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}

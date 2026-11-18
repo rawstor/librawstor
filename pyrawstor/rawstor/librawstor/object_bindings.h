@@ -46,6 +46,13 @@ PyObject* py_rawstor_object_slots(PyObject* self, PyObject* args);
 
 PyObject* py_rawstor_object_versions(PyObject* self, PyObject* args);
 
+PyObject* py_rawstor_object_export(PyObject* self, PyObject* args);
+PyObject* py_rawstor_object_create_at_from_file(PyObject* self, PyObject* args);
+PyObject*
+py_rawstor_object_create_at_from_target(PyObject* self, PyObject* args);
+PyObject* py_rawstor_object_create_from_file(PyObject* self, PyObject* args);
+PyObject* py_rawstor_object_create_from_target(PyObject* self, PyObject* args);
+
 PyObject* py_rawstor_location_info(PyObject* self, PyObject* args);
 
 #ifdef __cplusplus

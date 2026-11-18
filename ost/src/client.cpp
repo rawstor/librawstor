@@ -686,14 +686,20 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                 if (client == nullptr) {
                     co_return;
                 }
-                if (int error = co_await client->_authorize(
-                        head.cmd, client->_bound_object.bytes,
-                        client->_bound_offset, client->_bound_version.bytes, 0
-                    )) {
-                    co_await client->_send_response(
-                        head.cmd, head.cid, -error, 0
-                    );
-                    break;
+                // A connection with no object bound -- a witness member's:
+                // it only exchanges configuration records -- has no session
+                // to leave, so there is no object to authorize against.
+                if (client->_slot != nullptr) {
+                    if (int error = co_await client->_authorize(
+                            head.cmd, client->_bound_object.bytes,
+                            client->_bound_offset, client->_bound_version.bytes,
+                            0
+                        )) {
+                        co_await client->_send_response(
+                            head.cmd, head.cid, -error, 0
+                        );
+                        break;
+                    }
                 }
                 _leave(weak, head);
                 rawstd::DetachedTask::rethrow_if_pending();

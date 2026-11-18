@@ -1,5 +1,6 @@
 #include "create.h"
 
+#include "image.h"
 #include "output.h"
 #include "rawio_sync.h"
 
@@ -222,9 +223,116 @@ int rawstor_cli_create_at(
     }
 
     fprintf(stderr, "Object created\n");
-    int ret = print_created(output, target, &spec);
+    /* The library's target names the owner; the one shown keeps only the
+     * account LOCATION itself names, as `object list` does. The owner is
+     * still reported in the account column. */
+    char* shown = rawstor_cli_list_target(target, location);
+    int ret = print_created(output, shown != NULL ? shown : target, &spec);
+    free(shown);
 
     free(target);
 
+    return ret;
+}
+
+int rawstor_cli_import(
+    const char* target, const char* location, const char* uuid,
+    const char* from_file, const char* from_target, uint64_t size,
+    uint64_t chunk_size, unsigned int mirrors, unsigned int failure_domain,
+    uint64_t stripe_width, const RawstorCliOutput* output
+) {
+    struct RawstorObjectSpec spec = {
+        .size = size,
+        .width = mirrors,
+        .chunk_size = chunk_size,
+        .stripe_width = stripe_width,
+        .failure_domain = failure_domain,
+    };
+
+    int checked = check_created_output(output);
+    if (checked != 0) {
+        return checked;
+    }
+
+    fprintf(
+        stderr, "Creating object %s from %s\n",
+        target != NULL ? target : location,
+        from_file != NULL ? from_file : from_target
+    );
+
+    RawstorCliOp op;
+    int res = rawstor_cli_op_init(&op);
+    if (res < 0) {
+        fprintf(stderr, "Failed to create queue: %s\n", strerror(-res));
+        return rawstd_exitcode_for_errno(-res);
+    }
+
+    /* By location, the library names the new object (the id generated unless
+     * `uuid` is given) and hands the target back before it starts. */
+    char created[65536];
+    created[0] = '\0';
+    op.on_progress = rawstor_cli_progress;
+    const char* call;
+    int sres;
+    if (target != NULL && from_file != NULL) {
+        call = "rawstor_target_create_from_file()";
+        sres = rawstor_target_create_from_file(
+            op.queue, target, from_file, &spec, rawstor_cli_op_progress_cb, &op
+        );
+    } else if (target != NULL) {
+        call = "rawstor_target_create_from_target()";
+        sres = rawstor_target_create_from_target(
+            op.queue, target, from_target, &spec, rawstor_cli_op_progress_cb,
+            &op
+        );
+    } else if (from_file != NULL) {
+        call = "rawstor_location_create_from_file()";
+        sres = rawstor_location_create_from_file(
+            op.queue, location, uuid, from_file, &spec, created,
+            sizeof(created), rawstor_cli_op_progress_cb, &op
+        );
+    } else {
+        call = "rawstor_location_create_from_target()";
+        sres = rawstor_location_create_from_target(
+            op.queue, location, uuid, from_target, &spec, created,
+            sizeof(created), rawstor_cli_op_progress_cb, &op
+        );
+    }
+    ssize_t result = rawstor_cli_op_wait(&op, sres);
+    rawstor_cli_op_destroy(&op);
+    rawstor_cli_progress_end((int)result);
+    if (result < 0) {
+        fprintf(stderr, "%s failed: %s\n", call, strerror((int)-result));
+        return rawstd_exitcode_for_errno((int)-result);
+    }
+
+    fprintf(stderr, "Object created\n");
+
+    /* The library's target names the owner; the one shown keeps only the
+     * account LOCATION itself names, as `object create` does. */
+    char* shown = NULL;
+    if (target == NULL) {
+        target = created;
+        shown = rawstor_cli_list_target(created, location);
+    }
+
+    /* A size left to the source is only known now: read it back. */
+    struct RawstorObjectSpec stored = spec;
+    if (stored.size == 0) {
+        struct RawstorObjectSpec read_spec;
+        memset(&read_spec, 0, sizeof(read_spec));
+        if (rawstor_cli_op_init(&op) == 0) {
+            int spres = rawstor_target_spec(
+                op.queue, target, &read_spec, rawstor_cli_op_cb, &op
+            );
+            ssize_t spec_result = rawstor_cli_op_wait(&op, spres);
+            rawstor_cli_op_destroy(&op);
+            if (spec_result == 0) {
+                stored.size = read_spec.size;
+            }
+        }
+    }
+    int ret = print_created(output, shown != NULL ? shown : target, &stored);
+    free(shown);
     return ret;
 }

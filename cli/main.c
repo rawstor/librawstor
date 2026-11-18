@@ -2,6 +2,7 @@
 #include "chunks.h"
 #include "create.h"
 #include "create_version.h"
+#include "image.h"
 #include "info.h"
 #include "list.h"
 #include "output.h"
@@ -19,6 +20,7 @@
 #include <rawstd/gcc.h>
 #include <rawstd/target.h>
 #include <rawstd/units.h>
+#include <rawstd/uuid.h>
 
 #include <rawstor.h>
 
@@ -80,6 +82,7 @@ static void usage(void) {
         "  version               Work with versions of an object\n"
         "\n"
         "shorthand:\n"
+        "  copy(cp)              = object copy\n"
         "  create                = object create\n"
         "  info                  = location info\n"
         "  list(ls)              = object list\n"
@@ -101,7 +104,11 @@ static void object_usage(void) {
         "\n"
         "subcommand:\n"
         "  chunks                List an object's chunks\n"
+        "  copy(cp)              Create an object as a copy of another "
+        "object or version\n"
         "  create                Create rawstor object\n"
+        "  export                Write an object to a file\n"
+        "  import                Create an object from a file\n"
         "  list(ls)              List rawstor objects\n"
         "  remove(rm)            Remove rawstor object\n"
         "  resize                Grow an mds:// object\n"
@@ -138,6 +145,7 @@ static void version_usage(void) {
         "\n"
         "subcommand:\n"
         "  create                Create a version of an object\n"
+        "  export                Write a version to a file\n"
         "  list(ls)              List an object's versions\n"
         "  remove(rm)            Remove a version\n"
         "  show                  Show a version\n"
@@ -149,6 +157,16 @@ static void version_usage(void) {
         "\n"
         "Run `rawstor version <subcommand> --help` to show its usage.\n"
     );
+}
+
+/* Whether `target` names an object, rather than only a location. */
+static int names_object(const char* target) {
+    char uuid[64];
+    char version_id[64];
+    rawstor_cli_target_ids(
+        target, uuid, sizeof(uuid), version_id, sizeof(version_id)
+    );
+    return uuid[0] != '\0';
 }
 
 /* What a command may be given: the address of an object, or of a version of
@@ -219,6 +237,71 @@ static int take_target(int argc, char** argv, char** target) {
     resolved_target = resolved;
     *target = resolved;
     optind += consumed;
+    return 0;
+}
+
+/* The object policy options `create` and `import` share: --mirrors,
+ * --failure-domain and --stripe-width, each NULL when not given. Returns 0,
+ * or EX_USAGE after saying what is wrong. */
+static int parse_policy(
+    const char* mirrors_arg, const char* failure_domain_arg,
+    const char* stripe_width_arg, unsigned int* mirrors,
+    unsigned int* failure_domain, uint64_t* stripe_width
+) {
+    {
+        char* endptr = NULL;
+        errno = 0;
+        unsigned long parsed_mirrors = strtoul(mirrors_arg, &endptr, 10);
+        if (errno != 0 || endptr == mirrors_arg || *endptr != '\0') {
+            fprintf(stderr, "Invalid mirrors value: %s\n", mirrors_arg);
+            return EX_USAGE;
+        }
+        if (parsed_mirrors == 0) {
+            fprintf(stderr, "mirrors must be greater than 0\n");
+            return EX_USAGE;
+        }
+        if (parsed_mirrors > UINT8_MAX) {
+            fprintf(stderr, "mirrors value too large: %s\n", mirrors_arg);
+            return EX_USAGE;
+        }
+        *mirrors = (unsigned int)parsed_mirrors;
+    }
+
+    *failure_domain = RAWSTOR_OBJ_DOMAIN_DEFAULT;
+    if (failure_domain_arg != NULL) {
+        if (strcmp(failure_domain_arg, "dc") == 0) {
+            *failure_domain = RAWSTOR_OBJ_DOMAIN_DC;
+        } else if (strcmp(failure_domain_arg, "row") == 0) {
+            *failure_domain = RAWSTOR_OBJ_DOMAIN_ROW;
+        } else if (strcmp(failure_domain_arg, "rack") == 0) {
+            *failure_domain = RAWSTOR_OBJ_DOMAIN_RACK;
+        } else if (strcmp(failure_domain_arg, "server") == 0) {
+            *failure_domain = RAWSTOR_OBJ_DOMAIN_SERVER;
+        } else if (strcmp(failure_domain_arg, "ost") == 0) {
+            *failure_domain = RAWSTOR_OBJ_DOMAIN_OST;
+        } else {
+            fprintf(
+                stderr, "Invalid failure-domain value: %s\n", failure_domain_arg
+            );
+            return EX_USAGE;
+        }
+    }
+
+    *stripe_width = 0;
+    if (stripe_width_arg != NULL) {
+        char* endptr = NULL;
+        errno = 0;
+        unsigned long long parsed_stripe_width =
+            strtoull(stripe_width_arg, &endptr, 10);
+        if (errno != 0 || endptr == stripe_width_arg || *endptr != '\0') {
+            fprintf(
+                stderr, "Invalid stripe-width value: %s\n", stripe_width_arg
+            );
+            return EX_USAGE;
+        }
+        *stripe_width = (uint64_t)parsed_stripe_width;
+    }
+
     return 0;
 }
 
@@ -456,58 +539,14 @@ static int command_create(int argc, char** argv) {
     }
 
     unsigned int mirrors;
-    {
-        char* endptr = NULL;
-        errno = 0;
-        unsigned long parsed_mirrors = strtoul(mirrors_arg, &endptr, 10);
-        if (errno != 0 || endptr == mirrors_arg || *endptr != '\0') {
-            fprintf(stderr, "Invalid mirrors value: %s\n", mirrors_arg);
-            return EX_USAGE;
-        }
-        if (parsed_mirrors == 0) {
-            fprintf(stderr, "mirrors must be greater than 0\n");
-            return EX_USAGE;
-        }
-        if (parsed_mirrors > UINT8_MAX) {
-            fprintf(stderr, "mirrors value too large: %s\n", mirrors_arg);
-            return EX_USAGE;
-        }
-        mirrors = (unsigned int)parsed_mirrors;
-    }
-
-    unsigned int failure_domain = RAWSTOR_OBJ_DOMAIN_DEFAULT;
-    if (failure_domain_arg != NULL) {
-        if (strcmp(failure_domain_arg, "dc") == 0) {
-            failure_domain = RAWSTOR_OBJ_DOMAIN_DC;
-        } else if (strcmp(failure_domain_arg, "row") == 0) {
-            failure_domain = RAWSTOR_OBJ_DOMAIN_ROW;
-        } else if (strcmp(failure_domain_arg, "rack") == 0) {
-            failure_domain = RAWSTOR_OBJ_DOMAIN_RACK;
-        } else if (strcmp(failure_domain_arg, "server") == 0) {
-            failure_domain = RAWSTOR_OBJ_DOMAIN_SERVER;
-        } else if (strcmp(failure_domain_arg, "ost") == 0) {
-            failure_domain = RAWSTOR_OBJ_DOMAIN_OST;
-        } else {
-            fprintf(
-                stderr, "Invalid failure-domain value: %s\n", failure_domain_arg
-            );
-            return EX_USAGE;
-        }
-    }
-
-    uint64_t stripe_width = 0;
-    if (stripe_width_arg != NULL) {
-        char* endptr = NULL;
-        errno = 0;
-        unsigned long long parsed_stripe_width =
-            strtoull(stripe_width_arg, &endptr, 10);
-        if (errno != 0 || endptr == stripe_width_arg || *endptr != '\0') {
-            fprintf(
-                stderr, "Invalid stripe-width value: %s\n", stripe_width_arg
-            );
-            return EX_USAGE;
-        }
-        stripe_width = (uint64_t)parsed_stripe_width;
+    unsigned int failure_domain;
+    uint64_t stripe_width;
+    int policy = parse_policy(
+        mirrors_arg, failure_domain_arg, stripe_width_arg, &mirrors,
+        &failure_domain, &stripe_width
+    );
+    if (policy != 0) {
+        return policy;
     }
 
     if (target_arg != NULL) {
@@ -521,6 +560,446 @@ static int command_create(int argc, char** argv) {
             stripe_width, &output_arg
         );
     }
+}
+
+static void command_export_usage(enum TargetType type) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] %s export TARGET FILE\n"
+        "\n"
+        "Writes %s to FILE (created or truncated). A regular file is "
+        "written\n"
+        "sparse: blocks that read as zero become holes. A block device "
+        "gets every\n"
+        "block.\n"
+        "\n"
+        "Nothing coordinates with other users of the object: the live "
+        "version of\n"
+        "an object some client has open is read as the storage holds it. "
+        "Export a\n"
+        "version (`rawstor version export`) for a consistent point.\n"
+        "\n"
+        "  TARGET                %s\n"
+        "  FILE                  Destination file.\n"
+        "\n"
+        "command options:\n"
+        "  -h, --help            Show this help message and exit\n",
+        type == TARGET_VERSION ? "version" : "object",
+        type == TARGET_VERSION ? "a version of an object" : "an object",
+        type == TARGET_VERSION ? "A target naming a bound version, "
+                                 "TARGET/VERSION_ID."
+                               : "The object."
+    );
+}
+
+static int command_export(int argc, char** argv, enum TargetType type) {
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {},
+    };
+
+    optind = 0;
+    while (1) {
+        int c = getopt_long(argc, argv, "h", longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+            command_export_usage(type);
+            return EXIT_SUCCESS;
+
+        default:
+            return EX_USAGE;
+        }
+    }
+
+    char* target = NULL;
+    if (optind < argc) {
+        int tres = take_target(argc, argv, &target);
+        if (tres != 0) {
+            return tres;
+        }
+    }
+    if (target == NULL) {
+        fprintf(stderr, "target required\n");
+        return EX_USAGE;
+    }
+    if (optind >= argc) {
+        fprintf(stderr, "file required\n");
+        return EX_USAGE;
+    }
+    const char* path = argv[optind++];
+    if (optind < argc) {
+        fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+        return EX_USAGE;
+    }
+
+    int checked = check_target_type(target, type);
+    if (checked != 0) {
+        return checked;
+    }
+
+    return rawstor_cli_export(target, path);
+}
+
+/* `object import TARGET FILE` and `object copy SOURCE TARGET` create an
+ * object from a file or from another object (version); they share every
+ * option. */
+enum ImageSourceType {
+    IMAGE_FROM_FILE,
+    IMAGE_FROM_OBJECT,
+};
+
+/* How `object import` and `object copy` name the object they create: the same
+ * ways as `object create`. */
+#define NEW_OBJECT_USAGE                                                       \
+    "create the new object by location (optional UUID):\n"                     \
+    "  LOCATION              Comma-separated list of rawstor backend "         \
+    "locations.\n"                                                             \
+    "                        If omitted, falls back to the RAWSTOR_LOCATION "  \
+    "environment variable.\n"                                                  \
+    "                        If -u is omitted, a random UUIDv7 is "            \
+    "generated.\n"                                                             \
+    "  -u, --uuid UUID       Explicit UUID for the object (only valid when "   \
+    "creating by location).\n"                                                 \
+    "\n"                                                                       \
+    "create the new object by target (pre-formatted, with embedded UUID):\n"   \
+    "  -t, --target TARGET   Comma-separated list of rawstor backend "         \
+    "targets,\n"                                                               \
+    "                        each including the UUID, e.g. ost://host/uuid.\n" \
+    "\n"
+
+static void command_image_create_usage(enum ImageSourceType type) {
+    if (type == IMAGE_FROM_FILE) {
+        fprintf(
+            stdout,
+            "Rawstor CLI " PACKAGE_VERSION "\n"
+            "\n"
+            "usage: rawstor [options] object import [LOCATION] FILE [-u "
+            "UUID] -m N [command_options]\n"
+            "       rawstor [options] object import -t TARGET FILE -m N "
+            "[command_options]\n"
+            "\n"
+            "Creates a new object and fills it from a file. If anything "
+            "fails once the\n"
+            "object exists, it is removed again.\n"
+            "\n"
+            "  FILE                  Source: a regular file or a block "
+            "device.\n"
+            "\n" NEW_OBJECT_USAGE
+        );
+    } else {
+        fprintf(
+            stdout,
+            "Rawstor CLI " PACKAGE_VERSION "\n"
+            "\n"
+            "usage: rawstor [options] object copy(cp) SOURCE [LOCATION] "
+            "[-u UUID] -m N [command_options]\n"
+            "       rawstor [options] object copy(cp) SOURCE -t TARGET -m N "
+            "[command_options]\n"
+            "\n"
+            "Creates a new object as a copy of another object or of one of "
+            "its versions.\n"
+            "If anything fails once the new object exists, it is removed "
+            "again.\n"
+            "\n"
+            "  SOURCE                An object, or a version of one "
+            "(TARGET/VERSION_ID). It may\n"
+            "                        live on another location or backend. "
+            "Copy a version for a\n"
+            "                        consistent point of an object in use: "
+            "the live version is\n"
+            "                        read as the storage holds it, and "
+            "nothing coordinates with\n"
+            "                        clients that have it open.\n"
+            "SOURCE is spelled as a target, as `LOCATION UUID`, or as a "
+            "bare UUID under\n"
+            "RAWSTOR_LOCATION.\n"
+            "\n" NEW_OBJECT_USAGE
+        );
+    }
+    fprintf(
+        stdout,
+        "command options:\n"
+        "  -h, --help            Show this help message and exit\n"
+        "  -m, --mirrors N       Number of mirrors (copies per chunk, "
+        "0 < N <= 255).\n"
+        "                        Required; nothing is inherited from the "
+        "source.\n"
+        "  -s, --size SIZE       Object size in bytes, or with a unit "
+        "suffix (K, M, G,\n"
+        "                        T, P, E). Default: the size of the "
+        "source. A larger\n"
+        "                        size pads with zeros; a smaller one is an "
+        "error.\n"
+        "  --chunk-size SIZE     Chunk size like --size, power of two. "
+        "Required for\n"
+        "                        mds://, whose objects are whole chunks: "
+        "a size left to\n"
+        "                        the source is rounded up to it (zeros), an "
+        "explicit --size\n"
+        "                        must be a multiple of it.\n"
+        "\n"
+        "chunk placement (mds:// only -- docs/mds.md; an error otherwise):\n"
+        "  --failure-domain LEVEL  dc, row, rack, server (default), ost.\n"
+        "  --stripe-width K      0 = spread across the cluster (default), "
+        "1 = object-local,\n"
+        "                        K = spread across K OSTs.\n"
+        "\n"
+        "output (stdout; progress goes to stderr):\n" RAWSTOR_CLI_OUTPUT_USAGE
+    );
+}
+
+static int
+command_image_create(int argc, char** argv, enum ImageSourceType type) {
+    const char* optstring = "hm:s:t:u:";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {"mirrors", required_argument, NULL, 'm'},
+        {"size", required_argument, NULL, 's'},
+        {"target", required_argument, NULL, 't'},
+        {"uuid", required_argument, NULL, 'u'},
+        {"chunk-size", required_argument, NULL, 'C'},
+        {"failure-domain", required_argument, NULL, 'F'},
+        {"stripe-width", required_argument, NULL, 'K'},
+        {"format", required_argument, NULL, RAWSTOR_CLI_OPT_FORMAT},
+        {"column", required_argument, NULL, RAWSTOR_CLI_OPT_COLUMN},
+        {},
+    };
+
+    const char* mirrors_arg = NULL;
+    const char* size_arg = NULL;
+    const char* target_arg = NULL;
+    const char* uuid_arg = NULL;
+    const char* chunk_size_arg = NULL;
+    const char* failure_domain_arg = NULL;
+    const char* stripe_width_arg = NULL;
+    RawstorCliOutput output_arg = {.unit = global_unit};
+    optind = 0;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+            command_image_create_usage(type);
+            return EXIT_SUCCESS;
+
+        case 't':
+            target_arg = optarg;
+            break;
+
+        case 'u':
+            uuid_arg = optarg;
+            break;
+
+        case 'm':
+            mirrors_arg = optarg;
+            break;
+
+        case 's':
+            size_arg = optarg;
+            break;
+
+        case 'C':
+            chunk_size_arg = optarg;
+            break;
+
+        case 'F':
+            failure_domain_arg = optarg;
+            break;
+
+        case 'K':
+            stripe_width_arg = optarg;
+            break;
+
+        case RAWSTOR_CLI_OPT_FORMAT:
+            if (rawstor_cli_output_set_format(&output_arg, optarg) != 0) {
+                fprintf(
+                    stderr, "Unknown format: %s (table, json or value)\n",
+                    optarg
+                );
+                return EX_USAGE;
+            }
+            break;
+
+        case RAWSTOR_CLI_OPT_COLUMN:
+            output_arg.columns = optarg;
+            break;
+
+        default:
+            return EX_USAGE;
+        }
+    }
+
+    /* import: [TARGET] FILE. copy: SOURCE [TARGET], in the order of cp(1).
+     * Without a TARGET -- or with only a LOCATION -- the new object gets a
+     * generated id, under RAWSTOR_LOCATION when no location is named. */
+    char* source = NULL;
+    char* target = NULL;
+    const char* location = NULL;
+    const char* file = NULL;
+    int ret = EX_USAGE;
+    int end = argc;
+    if (type == IMAGE_FROM_OBJECT) {
+        if (optind >= argc) {
+            fprintf(stderr, "source required\n");
+            return EX_USAGE;
+        }
+        char* resolved = NULL;
+        int tres = take_target(argc, argv, &resolved);
+        if (tres != 0) {
+            return tres;
+        }
+        /* take_target() keeps one resolved target at a time. */
+        source = strdup(resolved);
+        if (source == NULL) {
+            fprintf(stderr, "Out of memory\n");
+            return EXIT_FAILURE;
+        }
+    } else {
+        if (optind >= argc) {
+            fprintf(stderr, "file required\n");
+            return EX_USAGE;
+        }
+        end = argc - 1;
+        file = argv[end];
+    }
+    if (optind < end) {
+        int tres = take_target(end, argv, &target);
+        if (tres != 0) {
+            ret = tres;
+            goto done;
+        }
+    }
+    if (optind < end) {
+        fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
+        goto done;
+    }
+    /* The same ways to name the new object as `object create`: -t TARGET, or
+     * a LOCATION (RAWSTOR_LOCATION when none is given) with an optional
+     * -u UUID; a generated UUID when there is none. A target spelled as a
+     * positional argument works too. */
+    if (target_arg != NULL) {
+        if (target != NULL) {
+            fprintf(stderr, "location and target are mutually exclusive\n");
+            goto done;
+        }
+        if (uuid_arg != NULL) {
+            fprintf(stderr, "Unexpected argument: uuid\n");
+            goto done;
+        }
+        if (!names_object(target_arg)) {
+            fprintf(stderr, "target must include the UUID: %s\n", target_arg);
+            goto done;
+        }
+        target = (char*)target_arg;
+    } else if (target == NULL || !names_object(target)) {
+        /* A location -- the one given, or RAWSTOR_LOCATION -- and an id
+         * generated unless -u names one. */
+        location = target != NULL ? target : getenv("RAWSTOR_LOCATION");
+        if (location == NULL || location[0] == '\0') {
+            fprintf(
+                stderr, "location required (set RAWSTOR_LOCATION or pass "
+                        "LOCATION)\n"
+            );
+            goto done;
+        }
+        target = NULL;
+        if (uuid_arg != NULL) {
+            struct RawstdUUID id;
+            if (rawstd_uuid_from_string(&id, uuid_arg) < 0 ||
+                rawstd_uuid_is_nil(&id)) {
+                fprintf(stderr, "Invalid uuid: %s\n", uuid_arg);
+                goto done;
+            }
+        }
+    } else if (uuid_arg != NULL) {
+        fprintf(stderr, "uuid argument requires location\n");
+        goto done;
+    }
+    if (mirrors_arg == NULL) {
+        fprintf(stderr, "mirrors required\n");
+        goto done;
+    }
+
+    /* The new object is `target`, or one at `location`. */
+    const char* dest = target != NULL ? target : location;
+    if ((failure_domain_arg != NULL || stripe_width_arg != NULL) &&
+        strncmp(dest, "mds://", strlen("mds://")) != 0) {
+        fprintf(
+            stderr, "--failure-domain/--stripe-width are only valid for "
+                    "mds://\n"
+        );
+        goto done;
+    }
+
+    if (target != NULL) {
+        int checked = check_target_type(target, TARGET_OBJECT);
+        if (checked != 0) {
+            ret = checked;
+            goto done;
+        }
+    }
+
+    uint64_t size = 0;
+    if (size_arg != NULL) {
+        int res = rawstd_size_to_bytes(size_arg, &size);
+        if (res < 0) {
+            fprintf(
+                stderr, "Failed to parse units: %s\nError: %s\n", size_arg,
+                strerror(-res)
+            );
+            goto done;
+        }
+    }
+
+    uint64_t chunk_size = 0;
+    if (chunk_size_arg != NULL) {
+        int cres = rawstd_size_to_bytes(chunk_size_arg, &chunk_size);
+        if (cres < 0) {
+            fprintf(
+                stderr, "Failed to parse units: %s\nError: %s\n",
+                chunk_size_arg, strerror(-cres)
+            );
+            goto done;
+        }
+    }
+
+    unsigned int mirrors;
+    unsigned int failure_domain;
+    uint64_t stripe_width;
+    int policy = parse_policy(
+        mirrors_arg, failure_domain_arg, stripe_width_arg, &mirrors,
+        &failure_domain, &stripe_width
+    );
+    if (policy != 0) {
+        ret = policy;
+        goto done;
+    }
+
+    ret = rawstor_cli_import(
+        target, location, uuid_arg, file, source, size, chunk_size, mirrors,
+        failure_domain, stripe_width, &output_arg
+    );
+
+done:
+    free(source);
+    return ret;
+}
+
+static int command_import(int argc, char** argv) {
+    return command_image_create(argc, argv, IMAGE_FROM_FILE);
+}
+
+static int command_copy(int argc, char** argv) {
+    return command_image_create(argc, argv, IMAGE_FROM_OBJECT);
 }
 
 static void command_remove_usage(enum TargetType type) {
@@ -2099,6 +2578,12 @@ static int run_object(int argc, char** argv) {
         return command_chunks(argc, argv);
     } else if (strcmp(sub, "create") == 0) {
         return command_create(argc, argv);
+    } else if (strcmp(sub, "copy") == 0 || strcmp(sub, "cp") == 0) {
+        return command_copy(argc, argv);
+    } else if (strcmp(sub, "export") == 0) {
+        return command_export(argc, argv, TARGET_OBJECT);
+    } else if (strcmp(sub, "import") == 0) {
+        return command_import(argc, argv);
     } else if (strcmp(sub, "list") == 0 || strcmp(sub, "ls") == 0) {
         return command_list(argc, argv);
     } else if (strcmp(sub, "remove") == 0 || strcmp(sub, "rm") == 0) {
@@ -2133,6 +2618,8 @@ static int run_version(int argc, char** argv) {
     argv++;
     if (strcmp(sub, "create") == 0) {
         return command_create_version(argc, argv);
+    } else if (strcmp(sub, "export") == 0) {
+        return command_export(argc, argv, TARGET_VERSION);
     } else if (strcmp(sub, "list") == 0 || strcmp(sub, "ls") == 0) {
         return command_list_versions(argc, argv);
     } else if (strcmp(sub, "remove") == 0 || strcmp(sub, "rm") == 0) {
@@ -2167,6 +2654,8 @@ static int run_command(
         ret = run_object(argc, argv);
     } else if (strcmp(command, "create") == 0) {
         ret = command_create(argc, argv);
+    } else if (strcmp(command, "copy") == 0 || strcmp(command, "cp") == 0) {
+        ret = command_copy(argc, argv);
     } else if (strcmp(command, "list") == 0 || strcmp(command, "ls") == 0) {
         ret = command_list(argc, argv);
     } else if (strcmp(command, "remove") == 0 || strcmp(command, "rm") == 0) {

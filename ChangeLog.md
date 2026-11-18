@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - An object UUID can stand in for a target: `rawstor object show|remove|resize|transfer|chunks|slots|resolve`, `rawstor version ...`, `rawstor-vhost` and `rawstor-vduse` accept `LOCATION UUID`, or a bare `UUID` with the location taken from `RAWSTOR_LOCATION`.
+- Objects and versions export to a file image and new objects are created from a file or from another object or version: `rawstor_target_export()`, `rawstor_target_create_from_file()`, `rawstor_target_create_from_target()` ([concepts](docs/concepts.md#image)); `rawstor_location_create_from_file()` and `rawstor_location_create_from_target()` create the object at a location, as `rawstor_location_create()` does; pyrawstor has `Target.export()`, `Target.create_from_file()`, `Target.create_from()`, `Location.create_from_file()` and `Location.create_from()`; the CLI has `rawstor object export`, `rawstor version export`, `rawstor object import` and `rawstor object copy`(`cp`, also `rawstor copy`); they report progress as a percentage (the callback is called many times, 100 is the last call).
 - Python `rawstor.initialize(insecure=True)` supports running without TLS certificates.
 - All systemd services accept additional command-line arguments through `EXTRA_ARGS` in their configuration files, including `--insecure`.
 - Certificate role `none` denies unlisted objects; explicit object permissions override role defaults, supporting credentials scoped to one vhost object.
@@ -48,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `rawstor object create` by `LOCATION` prints a target with only the account `LOCATION` names, as `object list` does; the owner is in the `account` column.
 - A URI prints without its password: `user:password@host` is shown as `user@host` wherever a URI or target is printed or listed.
 - Incompatible: every connection must begin with `HANDSHAKE`.
 - Incompatible: the CLI groups its commands. `rawstor object create|list|show|remove|resize|chunks|slots|resolve` and `rawstor version create|list|show|remove` replace the top-level commands, `info` moves to `rawstor location info`, `testio` stays; `object remove` and `object show` take only the address of an object, `version remove` and `version show` only that of a version.
@@ -93,6 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Closing a mirrored object with a witness over TLS no longer logs `leave failed: No such file or directory`: a witness connection, which has no object bound, now leaves without an ownership check.
 - Provider admins can initialize mirrored object membership, including MDS witnesses, without data-write permissions.
 - CLI object listings preserve explicitly supplied URI accounts and report the owner separately without adding it to unqualified URIs.
 - PKI renewal and inspection verify the same certificate they read, using only the CA public key for signature checks.

@@ -1,6 +1,7 @@
 import rawstor
 
 import errno
+import os
 import unittest
 import tempfile
 import uuid
@@ -257,6 +258,254 @@ class TestTarget(unittest.TestCase):
             with self.assertRaises(OSError) as cm:
                 target.create_version(str(uuid.uuid4()))
             self.assertEqual(cm.exception.errno, errno.EINVAL)
+
+
+class TestTargetImage(unittest.TestCase):
+    # Not a multiple of the 1 MiB block the library moves data in, with a
+    # zero block in the middle (a hole in a sparse export) and a tail.
+    DATA = (
+        os.urandom(1 << 20) + bytes(1 << 20) + os.urandom((1 << 19) + 123))
+
+    def _write(self, path, data=None):
+        with open(path, "wb") as f:
+            f.write(self.DATA if data is None else data)
+
+    def _read(self, path):
+        with open(path, "rb") as f:
+            return f.read()
+
+    def test_roundtrip_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            src = os.path.join(temp_dir, "src.img")
+            dst = os.path.join(temp_dir, "dst.img")
+            self._write(src)
+            target = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000011")
+
+            target.create_from_file(src, width=1)
+            self.assertEqual(target.spec().size, len(self.DATA))
+            target.export(dst)
+
+            self.assertEqual(self._read(dst), self.DATA)
+            target.remove()
+
+    def test_export_is_sparse(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            src = os.path.join(temp_dir, "src.img")
+            dst = os.path.join(temp_dir, "dst.img")
+            self._write(src, bytes(4 << 20))
+            target = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000012")
+            target.create_from_file(src, width=1)
+
+            target.export(dst)
+
+            st = os.stat(dst)
+            self.assertEqual(st.st_size, 4 << 20)
+            self.assertEqual(st.st_blocks, 0)
+            target.remove()
+
+    def test_export_truncates_existing_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            src = os.path.join(temp_dir, "src.img")
+            dst = os.path.join(temp_dir, "dst.img")
+            self._write(src, b"x" * 1000)
+            self._write(dst, b"y" * 5000)
+            target = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000013")
+            target.create_from_file(src, width=1)
+
+            target.export(dst)
+
+            self.assertEqual(self._read(dst), b"x" * 1000)
+            target.remove()
+
+    def test_create_from_file_larger_size_pads_with_zeros(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            src = os.path.join(temp_dir, "src.img")
+            dst = os.path.join(temp_dir, "dst.img")
+            self._write(src, b"x" * 1000)
+            target = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000014")
+
+            target.create_from_file(src, width=1, size=4096)
+            target.export(dst)
+
+            self.assertEqual(self._read(dst), b"x" * 1000 + bytes(3096))
+            target.remove()
+
+    def test_create_from_file_smaller_size_is_einval(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            src = os.path.join(temp_dir, "src.img")
+            self._write(src, b"x" * 1000)
+            target = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000015")
+
+            with self.assertRaises(OSError) as cm:
+                target.create_from_file(src, width=1, size=100)
+            self.assertEqual(cm.exception.errno, errno.EINVAL)
+            with self.assertRaises(OSError) as cm:
+                target.spec()
+            self.assertEqual(cm.exception.errno, errno.ENOENT)
+
+    def test_create_from_file_missing_source(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000016")
+
+            with self.assertRaises(FileNotFoundError):
+                target.create_from_file(
+                    os.path.join(temp_dir, "missing.img"), width=1)
+            with self.assertRaises(FileNotFoundError):
+                target.spec()
+
+    def test_create_from_file_needs_width(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            src = os.path.join(temp_dir, "src.img")
+            self._write(src, b"x")
+            target = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000017")
+
+            with self.assertRaises(OSError) as cm:
+                target.create_from_file(src, width=0)
+            self.assertEqual(cm.exception.errno, errno.EINVAL)
+
+    def test_export_not_found(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000018")
+
+            with self.assertRaises(FileNotFoundError):
+                target.export(os.path.join(temp_dir, "dst.img"))
+
+    def test_create_from_object_and_version(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            src = os.path.join(temp_dir, "src.img")
+            dst = os.path.join(temp_dir, "dst.img")
+            self._write(src)
+            origin = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000019")
+            origin.create_from_file(src, width=1)
+            version = origin.create_version()
+
+            copy = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-00000000001a")
+            copy.create_from(origin, width=1)
+            copy.export(dst)
+            self.assertEqual(self._read(dst), self.DATA)
+
+            from_version = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-00000000001b")
+            from_version.create_from(version.uri, width=1)
+            from_version.export(dst)
+            self.assertEqual(self._read(dst), self.DATA)
+
+            version.export(dst)
+            self.assertEqual(self._read(dst), self.DATA)
+
+            for t in (from_version, copy, version, origin):
+                t.remove()
+
+    def _assert_progress(self, calls):
+        self.assertGreaterEqual(len(calls), 3)
+        self.assertEqual(calls[0], 0)
+        self.assertEqual(calls[-1], 100)
+        self.assertEqual(calls, sorted(set(calls)))
+        self.assertTrue(all(0 <= c <= 100 for c in calls))
+
+    def test_progress(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            src = os.path.join(temp_dir, "src.img")
+            dst = os.path.join(temp_dir, "dst.img")
+            self._write(src, os.urandom(5 << 20))
+            first = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000021")
+            second = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000022")
+
+            calls = []
+            first.create_from_file(src, width=1, progress=calls.append)
+            self._assert_progress(calls)
+
+            calls = []
+            first.export(dst, progress=calls.append)
+            self._assert_progress(calls)
+
+            calls = []
+            second.create_from(first, width=1, progress=calls.append)
+            self._assert_progress(calls)
+
+            second.remove()
+            first.remove()
+
+    def test_progress_of_empty_source(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            src = os.path.join(temp_dir, "src.img")
+            self._write(src, b"")
+            target = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000023")
+
+            calls = []
+            target.create_from_file(
+                src, width=1, size=4096, progress=calls.append)
+
+            self.assertEqual(calls[-1], 100)
+            self.assertEqual(calls, sorted(set(calls)))
+            target.remove()
+
+    def test_progress_failure_is_not_reported_as_100(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000024")
+
+            calls = []
+            with self.assertRaises(FileNotFoundError):
+                target.export(
+                    os.path.join(temp_dir, "dst.img"), progress=calls.append)
+            self.assertNotIn(100, calls)
+
+    def test_progress_exception_is_raised_after_the_operation(self):
+        class Boom(Exception):
+            pass
+
+        calls = []
+
+        def progress(percent):
+            calls.append(percent)
+            raise Boom()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            src = os.path.join(temp_dir, "src.img")
+            self._write(src, os.urandom(3 << 20))
+            target = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000025")
+
+            with self.assertRaises(Boom):
+                target.create_from_file(src, width=1, progress=progress)
+
+            # No further calls once it raised, but the object was made.
+            self.assertEqual(calls, [0])
+            self.assertEqual(target.spec().size, 3 << 20)
+            target.remove()
+
+    def test_progress_must_be_callable(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-000000000026")
+            with self.assertRaises(TypeError):
+                target.export(os.path.join(temp_dir, "x"), progress=5)
+
+    def test_create_from_missing_object_leaves_nothing(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-00000000001c")
+            target = rawstor.Target(
+                f"file://{temp_dir}/00000000-0000-0000-0000-00000000001d")
+
+            with self.assertRaises(FileNotFoundError):
+                target.create_from(source, width=1)
+            with self.assertRaises(FileNotFoundError):
+                target.spec()
 
 
 class TestTargetAccount(unittest.TestCase):

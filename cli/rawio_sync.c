@@ -13,6 +13,7 @@
 int rawstor_cli_op_init(RawstorCliOp* op) {
     op->result = 0;
     op->done = 0;
+    op->on_progress = NULL;
 
     /* A rawstor_target_*()/rawstor_location_*() call can fan out across
      * several comma-separated backends concurrently, each needing more
@@ -35,6 +36,17 @@ int rawstor_cli_op_cb(ssize_t result, void* data) {
     op->result = result;
     op->done = 1;
     return 0;
+}
+
+int rawstor_cli_op_progress_cb(ssize_t result, void* data) {
+    RawstorCliOp* op = (RawstorCliOp*)data;
+    if (result >= 0 && result < 100) {
+        if (op->on_progress != NULL) {
+            op->on_progress((int)result);
+        }
+        return 0;
+    }
+    return rawstor_cli_op_cb(result, data);
 }
 
 ssize_t rawstor_cli_op_wait(RawstorCliOp* op, int res) {
