@@ -374,12 +374,12 @@ the object through the ordinary `Object` path, so any backend, mirrored or
   on another location, backend or account.
 
 From the CLI: `rawstor object export TARGET FILE`, `rawstor version export
-TARGET/VERSION_ID FILE`, `rawstor object import [TARGET] FILE -m N` and
-`rawstor object copy(cp) SOURCE [TARGET] -m N` (`rawstor copy`/`cp` is the
-shorthand). A TARGET or SOURCE is spelled like any target: in full,
-`LOCATION UUID`, or a bare UUID under `RAWSTOR_LOCATION`. The new object's
-TARGET may be left out, or be only a LOCATION: it then gets a generated UUID,
-under `RAWSTOR_LOCATION` when no location is named.
+TARGET/VERSION_ID FILE`, `rawstor object import FILE -m N` and
+`rawstor object copy(cp) SOURCE -m N` (`rawstor copy`/`cp` is the shorthand).
+A TARGET or SOURCE is spelled like any target: in full, `LOCATION UUID`, or a
+bare UUID under `RAWSTOR_LOCATION`. The new object is named as for `rawstor
+object create`: by `LOCATION` (`RAWSTOR_LOCATION` when none is given) with an
+optional `-u UUID`, a generated one otherwise, or by `-t TARGET`.
 
 The three calls report progress through their one callback, which is called
 many times: `result` is the completion percentage, 0 to 100, each value at
