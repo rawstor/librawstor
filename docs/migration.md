@@ -11,7 +11,7 @@ document's own numbering (see [Implementation stages](#implementation-stages));
 | Weight 0 keeps a location out of every new placement (data and witness) | 0 | ✅ | `mds/src/placement.cpp`; no end-to-end test, not documented for operators |
 | Topology refuses to drop a location that still holds chunks or version members | — | ✅ | `mds/src/store.cpp` |
 | List the slots and version members held by one location | 0 | ❌ | — |
-| `plan_seq`/`plan_gen` in the value; `RELEASE` bounded by epoch; a leftover never adopted | 1 | ❌ | [Idempotency](#idempotency) |
+| `plan_seq`/`plan_gen` in the value; `RELEASE` bounded by `plan_seq`; a leftover never adopted | 1 | ❌ | [Idempotency](#idempotency) |
 | A one-member chunk keeps a register; epoch 0 refused once recorded | 1 | ❌ | [One copy](#a-one-copy-chunk) |
 | Members named in the register value: topology id, `member_role`, voter | 1 | ❌ | [Members in the value](#members-in-the-register-value) |
 | Quorum over voters; joint decision for a change of voters | 1 | ❌ | [The change](#the-change-as-register-decisions) |
@@ -151,10 +151,13 @@ and, for the value as a whole:
 **Size.** Every backend keeps the record in `META_MAX_SIZE` (1024 bytes): the
 `file://` meta file, the LVM tag, the ZFS user property. The present record takes
 about 330 bytes; an `ost_id` in hex takes 32 plus a few for `member_role` and voter. A
-chunk that names its members is therefore limited to 16 of them, counting,
-while a change runs, the members that leave and those being added
-(`RAWSTOR_OBJECT_MAX_MEMBERS`, a new constant; `width` stays at most 255 for
-plain targets). With `prev_voters` (a bitmask), `plan_seq` and `plan_gen` the
+chunk that names its members is limited to 16 of them
+(`RAWSTOR_OBJECT_MAX_MEMBERS`, a new constant), counting the witness and, while
+a change runs, both the members that leave and those being added. At rest it has
+at most 15, so that replacing one member fits: an odd width up to 15, an even
+width up to 14 (plus its witness). A change whose `S ∪ S'` would exceed 16 is
+made in steps of one added member each. `width` stays at most 255 for plain
+targets. With `prev_voters` (a bitmask), `plan_seq` and `plan_gen` the
 record of a 16-member chunk comes to about 930 bytes. The wire
 `RawstorFrameConfig` grows by `16 × 17` bytes for the members and 14 for the
 rest. A compact binary encoding of the record could raise the limit; nothing
@@ -598,25 +601,34 @@ the records hold.
 | `OBJ_RECONFIGURE_BEGIN` | replay; the reply carries the plan, its placement, `plan_seq` and generation, which the caller needs to go on | The chunk has a plan: the caller gets it to claim, never a second placement |
 | `OBJ_RECONFIGURE_CLAIM` | replay | The current owner claiming again gets its own generation back; another owner while the lease holds gets `-EBUSY` |
 | `OBJ_RECONFIGURE_RENEW` | sets the lease again | `-ESTALE` for an older generation |
-| `ALLOCATE` of an added member | `EEXIST`, and the new record names this `plan_seq`: done (as for *resize*) | `EEXIST` with a record of another plan: a leftover of an aborted or finished plan on the same location (the physical name `<id>/<offset>` is the same). It is released (below) and allocated again; a leftover is never adopted as a blank copy |
+| `ALLOCATE` of an added member | `EEXIST`, and the new record names this `plan_seq`: done (as for *resize*) | `EEXIST` with a record of an **older** plan (`plan_seq` below this one): a leftover of an aborted or finished plan on the same location (the physical name `<id>/<offset>` is the same). It is released with the bound `plan_seq − 1` (below) and allocated again; a leftover is never adopted as a blank copy. `EEXIST` with a record of a **newer** plan: this plan is over (a later one exists only once this one is aborted or done), and the caller stops without touching the copy |
 | Version copy | a version whose snapshot `s<version_id>` exists is done; the content written before it is redone | same; versions are immutable, so a snapshot of a version id has its content whoever took it |
 | Add, commit, settle, abort decisions | the register request is idempotent | the table above |
 | Fill | restarts from scratch (F8) | same, under the new resync owner |
 | `OBJ_RECONFIGURE_FINALIZE` | replay | A finalized plan answers success; an aborted one `-EINVAL` |
 | `OBJ_RECONFIGURE_ABORT` | replay | A finalized plan answers `-EINVAL`: the register decided the commit, and the caller has missed it |
 | Version records (finalize) | in the finalize's transaction | adding and removing a member of a version record are set operations |
-| `RELEASE` of a leaving member | `ENOENT`: done | see below |
+| `RELEASE` of a leaving member or a leftover | `ENOENT`: done | see below |
 
-**A release must not destroy a member that came back.** A plan moves a chunk
-from `B` to `C`, `B` waits in `releasing`, and a later plan places the chunk on
-`B` again before the release ran. A late release from the first plan, by its
-`releasing` retry or by an old owner, would destroy the new member. `RELEASE`
-therefore carries a bound in its `val`: the epoch of the commit that made the
-copy a leaving member (0, as every other `RELEASE` sends, means no bound). The
-location removes the copy only if its record's epoch is not above it, under the record lock, and answers `-ESTALE` otherwise; any decision that
-names the copy again raises its epoch past the bound. The MDS also does not
-place a chunk on a location where a release of it is pending, so the case is
-rare, but the bound is what makes it safe.
+**A release must not destroy a copy of a newer plan.** Two cases lead there. A
+plan moves a chunk from `B` to `C`, `B` waits in `releasing`, and a later plan
+places the chunk on `B` again: a late release from the first plan, by its
+`releasing` retry or by an old owner, would destroy the new member. Or an old
+owner of a plan wakes up, retries its `ALLOCATE` on a location where a newer
+plan has just allocated a blank copy, and takes that copy for a leftover. An
+epoch does not separate these, since a blank copy has not yet taken part in any
+decision; the plan does.
+
+So `RELEASE` carries a bound in its `val`: a `plan_seq`, 0 meaning no bound (as
+every `RELEASE` outside a reconfiguration sends: object removal, version
+removal). The location removes the copy only if the `plan_seq` in its record is
+not above the bound, under the record lock, and answers `-ESTALE` otherwise.
+Every copy's record names a plan: the one that allocated it (`ALLOCATE` writes
+it), or a later one whose decision it accepted. A plan `P` releases its leaving
+members with the bound `P`, and a leftover it meets with the bound `P − 1`; a copy
+allocated or named by any later plan is above both. The MDS also does not place
+a chunk on a location where a release of it is pending, so these cases are
+rare, but the bound is what makes them safe.
 
 ## Stuck and repeated runs
 
@@ -675,11 +687,11 @@ know what they break, and test stands know what to rebuild.
 |---|---|---|---|
 | Wire: `RawstorFrameConfig` | Grows by the members (`16 × 17` bytes) and `prev_voters`, `plan_seq`, `plan_gen` (14 bytes): 312 bytes now. It is embedded in `RawstorFrameMetaPayload`, `RawstorFrameSyncProposePayload` and `RawstorFrameSyncReplyPayload`, whose sizes change with it | Every `META`, `SYNC_PREPARE` and `SYNC_ACCEPT` between an old and a new side, plain targets included | A `HANDSHAKE` capability bit (`RAWSTOR_FEATURES_SUPPORTED` is 0 today). A new server requires it and refuses a client without it; no dual layout is kept |
 | Wire: `ALLOCATE` | Carries `plan_seq` (`RawstorFrameAllocatePayload`, 60 bytes now) | Old clients creating copies on new servers | The same bit |
-| Wire: `RELEASE` | `val` is an epoch bound, 0 meaning none | Nothing: every caller sends 0 today | — |
+| Wire: `RELEASE` | `val` is a `plan_seq` bound, 0 meaning none | Nothing: every caller sends 0 today | — |
 | Wire: epoch 0 | Refused by a member whose record names members | A writer that does not stamp its epoch: an old client, a one-member chunk before stage 1 | `reconfigure` refuses chunks without a register; a stage-1 writer records one at its first writable open |
 | Wire: new opcodes | `OBJ_OPERATION_*`, `OBJ_RECONFIGURE_*`, `LOCATE` | Nothing: an old server answers `-ENOSYS` | — |
 | Record on the members | New fields (members, `prev_voters`, `plan_seq`, `plan_gen`), `META_FORMAT_VERSION` 1 → 2, in the `file://` meta file, the LVM tag and the ZFS property alike | An old binary reading a version-2 record refuses it (`meta_decode()` requires the whole record to parse): no downgrade once a chunk is written by stage-1 code | The new code reads version 1 as a record that names no members (positional, as now) and writes version 2 at the first decision |
-| Record size | At most 16 members for a chunk that names its members (`META_MAX_SIZE` is 1024) | Mirrors wider than 16 on `mds://` objects; plain targets keep up to 255 | `mirrors` and create refuse a wider `mds://` width with `-EINVAL` |
+| Record size | At most 16 members for a chunk that names its members (`META_MAX_SIZE` is 1024), at most 15 at rest with the witness | `mds://` objects wider than 15 (odd) or 14 (even, plus the witness); plain targets keep up to 255 | `mirrors` and create refuse a wider `mds://` width with `-EINVAL`; a larger change is made in steps |
 | MDS database | New tables and the per-chunk `plan_seq` counter: `user_version` 1 → 2 | An old MDS refuses the new database (`_check_layout()` accepts only 1): no downgrade | The first schema migration of the MDS: version 1 is upgraded in place at start |
 | C API and ABI (`<rawstor/target.h>`) | `struct RawstorObjectConfig` gains the members, `prev_voters`, `plan_seq`, `plan_gen`, and `RAWSTOR_OBJECT_MAX_MEMBERS`; it is embedded in `RawstorObjectMeta` and passed to `rawstor_target_sync_prepare()` / `_accept()` | Every program built against `librawstor`, and `pyrawstor` (`object_bindings.c` mirrors the config) | A soname bump of `librawstor`; `pyrawstor` updated in the same stage |
 | API semantics: member order | For a chunk that names its members, `rawstor_target_meta()` order and `member_index` follow the value's member list, not the order of the target's URIs; the witness is the member with `member_role` `WITNESS`, not the last URI | Callers of the register API by index; `rawstor object resolve --winner=N`; `rawstor object slots` | The CLI is updated in stage 1; the C API documents the order |
@@ -725,7 +737,8 @@ Each stage is tested at the layer it adds, through existing interfaces:
 - stage 3 also: every step repeated after a lost reply and by a second run; a
   decision of an old owner and of a finished plan refused by the register; a
   release from an old plan of a member placed there again by a newer one
-  (`-ESTALE`, the copy kept); an allocation that meets a leftover;
+  (`-ESTALE`, the copy kept); an allocation that meets a leftover, and an old
+  owner's allocation that meets a newer plan's blank copy (left alone);
   two runs of one command sharing an object, a run stopped
   (`SIGSTOP`) and continued after another took over, `--abort` with chunks on
   both sides of the commit, the attempt limit on a fill that keeps failing;
@@ -739,7 +752,7 @@ Each stage is tested at the layer it adds, through existing interfaces:
    version members by location.
 1. **Membership in the register.** Member ids, `member_role` and voter in the value, the
    record and the wire; `plan_seq`/`plan_gen` and the decisions guarded by
-   them; `ALLOCATE` naming the plan and `RELEASE` bounded by epoch; `N` over voters; derived `width`; the joint commit; a
+   them; `ALLOCATE` naming the plan and `RELEASE` bounded by `plan_seq`; `N` over voters; derived `width`; the joint commit; a
    register for one-member chunks and epoch 0 refused; writers following a
    change (`LOCATE` from a test resolver at this stage); completing a
    partly accepted commit. Upgrade order: `rawstor-ost` and `rawstor-mds`
