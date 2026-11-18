@@ -38,14 +38,15 @@ numbers its stages separately.
 | Version redundancy status surfacing | 2 | ❌ | TODO |
 | vhost/QEMU flush hook for versions | 2 | ❌ | the CLI assumes no concurrent writer |
 | Backend health / `LOCATION_INFO` collector | — | ✅ | `mds/src/monitor.cpp`, `mds/src/opts.cpp` |
-| Protocol version + feature bits in `SET_OBJECT` | — | ❌ | — |
+| `HANDSHAKE`: feature bits, the first request of every connection (no protocol version) | — | ✅ | [Protocol](protocol.md), `src/wire_backend.cpp`, `ost/src/client.cpp`, `mds/src/client.cpp` |
 | Unified response frame `{res, len, hash}` | — | ❌ | — |
 | Witness: metadata-only members and quorum | 3 | ✅ | `src/chunk.cpp`, SQLite witness records |
 | Witness: durable states, voting rules, synchronous barriers, re-attach | 3 | ✅ | `src/chunk.cpp` |
 | MDS replication (primary + log) | v2+ | ❌ | — |
 | EC policy | v2+ | ❌ | — |
 | Stored checksums / scrub, version redundancy repair | v2+ | ❌ | — |
-| Auth / capabilities, shrink, MGS as a service | open | ❌ | — |
+| Authentication and authorization (mTLS, certificate roles) | — | ✅ | [Security](security.md) |
+| Shrink, MGS as a service | open | ❌ | — |
 
 Metadata Storage Target (**MDS/MDT**) design, specialized for the **block
 storage** use case: sparse (thin) allocation and large object chunks (1+ GiB).
@@ -169,11 +170,12 @@ in four places and spent on one addition:
 - The degenerate single-chunk unification (below) is kept as *design* — one
   schema, one code path — not as a migration bridge; there is nothing to
   migrate.
-- **Spent on: a version handshake.** This freedom ends at the first live
-  install, so the mechanism for future breaks is added now, while it costs
-  nothing: protocol version + feature bits in the connection handshake
-  (`SET_OBJECT` is already the mandatory first command). Partially covers the
-  "capabilities negotiation TBD" of `protocol.md`.
+- **Spent on: capability negotiation.** This freedom ends at the first live
+  install, so the mechanism for future breaks exists already: `HANDSHAKE`, the
+  first request of every connection, negotiates feature bits (none is defined
+  yet). There is no protocol version: a wire change goes behind a bit, and a
+  client and a server that do not share it refuse each other instead of
+  misreading a frame ([Protocol](protocol.md)).
 
 ## Decision revalidation (vs the earlier draft)
 
@@ -477,18 +479,19 @@ Same `rstr` magic, same frame heads, one response frame for everything
 reserved ranges per role:
 
 ```
-0x00    session:         SET_OBJECT                    // handshake, every role
+0x00, 0x07  session:     SET_OBJECT, HANDSHAKE         // every role
 0x01..  data:            READ, WRITE, DISCARD, ALLOCATE, RELEASE, FLUSH
 0x40..  object (MDS):    OBJ_CREATE, RESOLVE, OBJ_RESIZE, OBJ_REMOVE,
                          OBJ_COMMIT_VERSION, OBJ_REMOVE_VERSION
 ```
 
-- `SET_OBJECT` is the mandatory first command on **every** connection and
-  uses `RawstorFrameBasicPayload` for the object/chunk/version binding and
-  open flags. Protocol version and feature bits are not implemented.
-  On control connections
-  (object commands only) the binding is null — which is why it sits in its
-  own *session* group, implemented by every role, not in the data group.
+- `HANDSHAKE` is the mandatory first request on **every** connection: the
+  client offers feature bits and the server answers with those it accepts; any
+  other first request is `-EPROTO` and closes the connection.
+- `SET_OBJECT` follows it and uses `RawstorFrameSetObjectPayload` for the
+  object/chunk/version binding and open flags. On control connections (object
+  commands only) the binding is null — which is why both sit in their own
+  *session* group, implemented by every role, not in the data group.
 - A server answers `-ENOSYS` to any opcode outside its role — the existing
   convention; this is also the misconnection guard that the separate magic
   used to provide.
@@ -497,7 +500,7 @@ Role matrix:
 
 | Opcode group | OST | OST as partial MDS | full MDS |
 |---|---|---|---|
-| session (`SET_OBJECT`) | yes | yes | yes |
+| session (`HANDSHAKE`, `SET_OBJECT`) | yes | yes | yes |
 | data (`READ`,`WRITE`,`DISCARD`,`FLUSH`) | yes | yes | no (`-ENOSYS`) |
 | member lifecycle (`ALLOCATE`,`RELEASE`) | yes | yes | witness members only |
 | member metadata (`META`, `SYNC_PREPARE`, `SYNC_ACCEPT`) | yes | yes | witness members only |
@@ -1246,10 +1249,11 @@ of normal opens/closes.
 The authoritative layouts are in `include/rawstor/protocol.h` and
 [Protocol](protocol.md). The current protocol has one `rstr` command space,
 a response head plus `{hash, res}` body (`res` is the following payload's
-length), and a Basic `SET_OBJECT` handshake with object/chunk/version and
-open flags. I/O offsets are local to the chunk bound by that handshake.
+length), a `HANDSHAKE` with feature bits as the first request of every
+connection, and a `SET_OBJECT` binding with object/chunk/version and open
+flags. I/O offsets are local to the chunk bound by `SET_OBJECT`.
 
-Witness metadata uses the existing 360-byte Meta record: `config.roles`
+Witness metadata uses the existing 376-byte Meta record: `config.roles`
 identifies survivors in member order.
 `SYNC_PREPARE`/`SYNC_ACCEPT` atomically persist the ballots and the
 configuration using the SyncPropose request layout. Ordinary `LIST`
@@ -1260,8 +1264,8 @@ their chunk offsets. Logical MDS listings prefer the object when its local
 witness shares the UUID. Native ost:// access lists the witness records. No data
 I/O or CoW operation is issued to a witness.
 
-Protocol version/feature negotiation and an I/O `map_epoch` fence are
-future extensions.
+Wire changes are negotiated by `HANDSHAKE` feature bits; a protocol version
+is not planned. An I/O `map_epoch` fence is a future extension.
 Interprocess mirror coordination remains multiattach stage 2.
 
 ## Implementation stages
@@ -1281,7 +1285,6 @@ Interprocess mirror coordination remains multiattach stage 2.
 
 ## Open questions
 
-- **Auth / capabilities** — TBD at the protocol level (OST and MDS alike).
 - **EC details** — codec, read-repair, partial-stripe writes. Client-side
   mechanics; the slot model and `chunk_meta.redundancy` already reserve the
   room.
