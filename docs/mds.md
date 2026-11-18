@@ -19,7 +19,7 @@ numbers its stages separately.
 | Grow-only resize | 1 | ✅ | `mds/src/store.cpp` (shrink refused) |
 | `map_version` per object | 1 | 🟡 | stored and returned by `OBJ_*`; not sent in IO frames |
 | epoch-fence (`slot.fence` watermark on OSTs) | 1 | ❌ | — |
-| `updatePlacement` / migration / rebalance | 1 | ❌ | — |
+| `updatePlacement` / migration / rebalance | 1 | ❌ | [Migration design](migration.md) |
 | One connection per (OST, object) serving all its chunks | 1 | 🟡 | one connection pool per chunk slot (`SET_OBJECT` with the chunk offset) |
 | `--reconstruct`: rebuild the live map from `LIST` + `META` | 1 | ✅ | `mds/src/main.cpp` |
 | `--reconstruct`: register complete versions, collect garbage | 2 | ❌ | version records are skipped |

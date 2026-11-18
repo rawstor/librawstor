@@ -47,6 +47,7 @@ nav:
       - MDS design: mds.md
       - Accounts: accounts.md
       - Mirroring: mirroring.md
+      - Migration and mirror count: migration.md
       - Security: security.md
       - Multi-attach: multiattach.md
       - CASPaxos: caspaxos.md
