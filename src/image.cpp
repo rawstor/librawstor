@@ -223,9 +223,17 @@ uint64_t file_size(int fd) {
 }
 
 // The size of the new object: the source's own unless the caller asks for
-// a larger one (the tail then reads back as zero).
-uint64_t image_size(const RawstorObjectSpec& sp, uint64_t source_size) {
+// a larger one (the tail then reads back as zero). An mds:// object is made of
+// whole chunks, so a size left to the source is rounded up to the chunk size.
+uint64_t image_size(
+    const RawstorObjectSpec& sp, uint64_t source_size,
+    const rawstor::Target& destination
+) {
     if (sp.size == 0) {
+        if (sp.chunk_size != 0 && source_size % sp.chunk_size != 0 &&
+            destination.uris().front().scheme() == "mds") {
+            return (source_size / sp.chunk_size + 1) * sp.chunk_size;
+        }
         return source_size;
     }
     if (sp.size < source_size) {
@@ -319,7 +327,7 @@ rawstd::Task<void> create_from(
             source_size = source_spec.size;
             source = co_await from.target->open(*queue, RAWSTOR_READONLY);
         }
-        sp.size = image_size(sp, source_size);
+        sp.size = image_size(sp, source_size, destination);
     } catch (...) {
         error = std::current_exception();
     }

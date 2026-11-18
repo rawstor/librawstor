@@ -20,6 +20,7 @@
 #include <rawstd/gcc.h>
 #include <rawstd/target.h>
 #include <rawstd/units.h>
+#include <rawstd/uuid.h>
 
 #include <rawstor.h>
 
@@ -156,6 +157,46 @@ static void version_usage(void) {
         "\n"
         "Run `rawstor version <subcommand> --help` to show its usage.\n"
     );
+}
+
+/* The target of a new object with a generated id: under `location`, or under
+ * RAWSTOR_LOCATION when it is NULL. Returns a malloc()ed string, or NULL after
+ * saying what is wrong. */
+static char* new_object_target(const char* location) {
+    struct RawstdUUID id;
+    int res = rawstd_uuid7_init(&id);
+    if (res < 0) {
+        fprintf(stderr, "Failed to generate an id: %s\n", strerror(-res));
+        return NULL;
+    }
+    RawstdUUIDString text;
+    rawstd_uuid_to_string(&id, &text);
+
+    int consumed = 0;
+    char* target = location != NULL
+                       ? rawstd_target_resolve(location, text, &consumed)
+                       : rawstd_target_resolve(text, NULL, &consumed);
+    if (target == NULL) {
+        if (errno == ENOENT) {
+            fprintf(
+                stderr, "location required (set RAWSTOR_LOCATION or pass "
+                        "LOCATION)\n"
+            );
+        } else {
+            fprintf(stderr, "Failed to build a target: %s\n", strerror(errno));
+        }
+    }
+    return target;
+}
+
+/* Whether `target` names an object, rather than only a location. */
+static int names_object(const char* target) {
+    char uuid[64];
+    char version_id[64];
+    rawstor_cli_target_ids(
+        target, uuid, sizeof(uuid), version_id, sizeof(version_id)
+    );
+    return uuid[0] != '\0';
 }
 
 /* What a command may be given: the address of an object, or of a version of
@@ -649,18 +690,23 @@ static void command_image_create_usage(enum ImageSourceType type) {
             stdout,
             "Rawstor CLI " PACKAGE_VERSION "\n"
             "\n"
-            "usage: rawstor [options] object import TARGET FILE -m N "
+            "usage: rawstor [options] object import [TARGET] FILE -m N "
             "[command_options]\n"
             "\n"
             "Creates a new object and fills it from a file. If anything "
             "fails once the\n"
             "object exists, it is removed again.\n"
             "\n"
-            "  TARGET                The new object, with its UUID, as for "
-            "`object create -t`\n"
-            "                        (e.g. mds://host:port/<uuid>), or "
-            "LOCATION UUID, or a bare\n"
-            "                        UUID under RAWSTOR_LOCATION.\n"
+            "  TARGET                The new object. Without it, or with "
+            "only a LOCATION, the\n"
+            "                        object gets a generated UUID, under "
+            "RAWSTOR_LOCATION when no\n"
+            "                        location is named. Otherwise a target "
+            "with its UUID, as for\n"
+            "                        `object create -t` (e.g. "
+            "mds://host:port/<uuid>), or LOCATION\n"
+            "                        UUID, or a bare UUID under "
+            "RAWSTOR_LOCATION.\n"
             "  FILE                  Source: a regular file or a block "
             "device.\n"
             "\n"
@@ -670,7 +716,7 @@ static void command_image_create_usage(enum ImageSourceType type) {
             stdout,
             "Rawstor CLI " PACKAGE_VERSION "\n"
             "\n"
-            "usage: rawstor [options] object copy(cp) SOURCE TARGET -m N "
+            "usage: rawstor [options] object copy(cp) SOURCE [TARGET] -m N "
             "[command_options]\n"
             "\n"
             "Creates a new object as a copy of another object or of one of "
@@ -687,9 +733,14 @@ static void command_image_create_usage(enum ImageSourceType type) {
             "                        read as the storage holds it, and "
             "nothing coordinates with\n"
             "                        clients that have it open.\n"
-            "  TARGET                The new object, with its UUID, as for "
-            "`object create -t`\n"
-            "                        (e.g. mds://host:port/<uuid>).\n"
+            "  TARGET                The new object. Without it, or with "
+            "only a LOCATION, the\n"
+            "                        object gets a generated UUID, under "
+            "RAWSTOR_LOCATION when no\n"
+            "                        location is named. Otherwise a target "
+            "with its UUID, as for\n"
+            "                        `object create -t` (e.g. "
+            "mds://host:port/<uuid>).\n"
             "\n"
             "SOURCE and TARGET are each spelled as a target, as `LOCATION "
             "UUID`, or as a bare\n"
@@ -713,10 +764,11 @@ static void command_image_create_usage(enum ImageSourceType type) {
         "error.\n"
         "  --chunk-size SIZE     Chunk size like --size, power of two. "
         "Required for\n"
-        "                        mds://, whose objects need a size that is "
-        "a multiple\n"
-        "                        of it -- pass --size for a source of "
-        "another length.\n"
+        "                        mds://, whose objects are whole chunks: "
+        "a size left to\n"
+        "                        the source is rounded up to it (zeros), an "
+        "explicit --size\n"
+        "                        must be a multiple of it.\n"
         "\n"
         "chunk placement (mds:// only -- docs/mds.md; an error otherwise):\n"
         "  --failure-domain LEVEL  dc, row, rack, server (default), ost.\n"
@@ -800,11 +852,15 @@ command_image_create(int argc, char** argv, enum ImageSourceType type) {
         }
     }
 
-    /* import: TARGET FILE. copy: SOURCE TARGET, in the order of cp(1). */
+    /* import: [TARGET] FILE. copy: SOURCE [TARGET], in the order of cp(1).
+     * Without a TARGET -- or with only a LOCATION -- the new object gets a
+     * generated id, under RAWSTOR_LOCATION when no location is named. */
     char* source = NULL;
     char* target = NULL;
+    char* generated = NULL;
     const char* file = NULL;
     int ret = EX_USAGE;
+    int end = argc;
     if (type == IMAGE_FROM_OBJECT) {
         if (optind >= argc) {
             fprintf(stderr, "source required\n");
@@ -821,28 +877,31 @@ command_image_create(int argc, char** argv, enum ImageSourceType type) {
             fprintf(stderr, "Out of memory\n");
             return EXIT_FAILURE;
         }
+    } else {
+        if (optind >= argc) {
+            fprintf(stderr, "file required\n");
+            return EX_USAGE;
+        }
+        end = argc - 1;
+        file = argv[end];
     }
-    if (optind < argc) {
-        int tres = take_target(argc, argv, &target);
+    if (optind < end) {
+        int tres = take_target(end, argv, &target);
         if (tres != 0) {
             ret = tres;
             goto done;
         }
     }
-    if (target == NULL) {
-        fprintf(stderr, "target required\n");
-        goto done;
-    }
-    if (type == IMAGE_FROM_FILE) {
-        if (optind >= argc) {
-            fprintf(stderr, "file required\n");
-            goto done;
-        }
-        file = argv[optind++];
-    }
-    if (optind < argc) {
+    if (optind < end) {
         fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
         goto done;
+    }
+    if (target == NULL || !names_object(target)) {
+        generated = new_object_target(target);
+        if (generated == NULL) {
+            goto done;
+        }
+        target = generated;
     }
     if (mirrors_arg == NULL) {
         fprintf(stderr, "mirrors required\n");
@@ -907,6 +966,7 @@ command_image_create(int argc, char** argv, enum ImageSourceType type) {
 
 done:
     free(source);
+    free(generated);
     return ret;
 }
 

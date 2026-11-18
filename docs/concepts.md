@@ -374,10 +374,12 @@ the object through the ordinary `Object` path, so any backend, mirrored or
   on another location, backend or account.
 
 From the CLI: `rawstor object export TARGET FILE`, `rawstor version export
-TARGET/VERSION_ID FILE`, `rawstor object import TARGET FILE -m N` and
-`rawstor object copy(cp) SOURCE TARGET -m N` (`rawstor copy`/`cp` is the
+TARGET/VERSION_ID FILE`, `rawstor object import [TARGET] FILE -m N` and
+`rawstor object copy(cp) SOURCE [TARGET] -m N` (`rawstor copy`/`cp` is the
 shorthand). A TARGET or SOURCE is spelled like any target: in full,
-`LOCATION UUID`, or a bare UUID under `RAWSTOR_LOCATION`.
+`LOCATION UUID`, or a bare UUID under `RAWSTOR_LOCATION`. The new object's
+TARGET may be left out, or be only a LOCATION: it then gets a generated UUID,
+under `RAWSTOR_LOCATION` when no location is named.
 
 The three calls report progress through their one callback, which is called
 many times: `result` is the completion percentage, 0 to 100, each value at
@@ -388,9 +390,10 @@ callable.
 
 `spec.width` is mandatory, as for `rawstor_target_create()`; nothing is
 inherited from a source. `spec.size` of 0 means the size of the source, a
-larger one pads the object with zeros, a smaller one is `-EINVAL`. A
-backend with a size granularity (an `mds://` object's chunk size) needs a
-size that respects it. If anything fails once the new object exists, it is
+larger one pads the object with zeros, a smaller one is `-EINVAL`. An
+`mds://` object is made of whole chunks: a size left to the source is rounded
+up to the chunk size, the tail reading back as zero, while an explicit size
+must be a multiple of it. If anything fails once the new object exists, it is
 removed again.
 
 Nothing coordinates with other users of the objects involved. The live

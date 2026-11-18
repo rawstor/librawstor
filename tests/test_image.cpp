@@ -326,3 +326,36 @@ TEST(ImageTest, a_failed_copy_removes_the_new_object) {
 
     EXPECT_EQ(target_remove(*queue, source), 0);
 }
+
+// A size left to the source is rounded up to the chunk size: an mds:// object
+// is whole chunks, and a file rarely is.
+TEST(ImageTest, a_size_left_to_the_source_is_rounded_up_to_the_chunk_size) {
+    rawstor::tests::ObjectEnv env(8928, 8929);
+    rawstor::tests::TmpDir dir;
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    std::string data = pattern(chunk_size + chunk_size / 2);
+    write_file(dir.path() / "in.img", data);
+    std::string target =
+        object_target(env, "018f4e2a-4000-7000-8000-000000000009");
+
+    ASSERT_EQ(
+        target_create_from_file(
+            *queue, target, (dir.path() / "in.img").string(), mds_spec(0)
+        ),
+        0
+    );
+    RawstorObjectSpec spec{};
+    ASSERT_EQ(target_spec(*queue, target, &spec), 0);
+    EXPECT_EQ(spec.size, 2 * chunk_size);
+
+    ASSERT_EQ(
+        target_export(*queue, target, (dir.path() / "out.img").string()), 0
+    );
+    EXPECT_EQ(
+        read_file(dir.path() / "out.img"),
+        data + std::string(chunk_size / 2, '\0')
+    );
+
+    EXPECT_EQ(target_remove(*queue, target), 0);
+}

@@ -1132,9 +1132,9 @@ int rawstor_target_export(
  * is created with the shape in @p spec, except that @p spec->size may be 0,
  * meaning the size of the file; a larger size pads the object with zeros,
  * a smaller one fails with @c -EINVAL. @p spec->width is mandatory, as for
- * rawstor_target_create(). A backend with a size granularity (an mds://
- * object's chunk size) needs @p spec->size to respect it -- pass a rounded-up
- * size for a file of another length.
+ * rawstor_target_create(). An mds:// object is made of whole chunks: a size
+ * left to the file (0) is rounded up to @p spec->chunk_size, the tail reading
+ * back as zero, while an explicit @p spec->size must be a multiple of it.
  *
  * If anything fails after the object exists, it is removed again.
  *
