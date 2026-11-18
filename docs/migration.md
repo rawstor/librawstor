@@ -8,17 +8,17 @@ document's own numbering (see [Implementation stages](#implementation-stages));
 
 | Feature | Stage | Status | Where |
 |---|---|---|---|
-| Weight 0 keeps an OST out of every new placement (data and witness) | 0 | ✅ | `mds/src/placement.cpp`; no end-to-end test, not documented for operators |
-| Topology refuses to drop an OST that still holds chunks or version members | — | ✅ | `mds/src/store.cpp` |
-| List the slots and version members held by one OST | 0 | ❌ | — |
+| Weight 0 keeps a location out of every new placement (data and witness) | 0 | ✅ | `mds/src/placement.cpp`; no end-to-end test, not documented for operators |
+| Topology refuses to drop a location that still holds chunks or version members | — | ✅ | `mds/src/store.cpp` |
+| List the slots and version members held by one location | 0 | ❌ | — |
 | A one-member chunk keeps a register; epoch 0 refused once recorded | 1 | ❌ | [One copy](#a-one-copy-chunk) |
-| Members named in the register value: OST id, `member_role`, voter | 1 | ❌ | [Members in the value](#members-in-the-register-value) |
+| Members named in the register value: topology id, `member_role`, voter | 1 | ❌ | [Members in the value](#members-in-the-register-value) |
 | Quorum over voters; joint decision for a change of voters | 1 | ❌ | [The change](#the-change-as-register-decisions) |
 | A running writer follows a member change (`-ESTALE`, locate) | 1 | ❌ | [Following a change](#how-a-writer-follows-a-change) |
 | Placement of added slots next to kept ones | 2 | ❌ | [MDS side](#mds-side) |
-| MDS plan record, `OBJ_RECONFIGURE_*`, `OST_LOCATE` | 2 | ❌ | [MDS side](#mds-side) |
+| MDS plan record, `OBJ_RECONFIGURE_*`, `LOCATE` | 2 | ❌ | [MDS side](#mds-side) |
 | Executor and CLI: `rawstor object migrate`, `rawstor object mirrors` | 3 | ❌ | [Executor](#executor) |
-| `rawstor ost drain`, `rawstor ost status`; replacing a dead OST's slots | 4 | ❌ | [Draining an OST](#draining-an-ost) |
+| `rawstor location drain`, drain status in `rawstor location info`; replacing a dead location's slots | 4 | ❌ | [Draining a location](#draining-a-location) |
 | Versions copied to a new member | 5 | ❌ | [Versions](#versions) |
 | Backend / `chunk_meta` format change by migration | 6 | ❌ | [Changing backend or format](#changing-backend-or-metadata-format) |
 
@@ -27,12 +27,20 @@ Four operations are wanted, and they are one mechanism:
 | Operation | In terms of the mechanism |
 |---|---|
 | Change the number of mirrors of an object | per chunk: add and/or remove members |
-| Migrate one disk (object) off an OST, to a chosen or a placed OST | per chunk: replace the member on that OST |
-| Drain an OST | migrate every slot on it, with the OST closed to new placement |
-| Change the backend of a disk (`zfs://` → `lvm://`), or its metadata format | migrate to an OST that has the other backend or the newer software |
+| Migrate one disk (object) off a location, to a chosen or a placed one | per chunk: replace the member on that location |
+| Drain a location | migrate every slot on it, with the location closed to new placement |
+| Change the backend of a disk (`zfs://` → `lvm://`), or its metadata format | migrate to a location that has the other backend or the newer software |
 
 All four are one primitive, `reconfigure(chunk, voters)`, and the orchestration
 around it.
+
+A **location** here is one entry of the MDS topology (`<uuid> <location>
+<weight> <role> <path>`): the place a member lives, named by its location URI
+or by its topology id (`ost_id` on the wire and in the code). Nothing below
+depends on its scheme: an entry is normally an `ost://` server, may be
+`file://` on a single host, and a witness may live on the MDS's own `ost://`
+endpoint. The operations are therefore `rawstor location` and `rawstor object`
+subcommands, and they act on the topology of the MDS they are given.
 
 See also: [MDS design](mds.md), [Mirroring](mirroring.md),
 [Multi-attach](multiattach.md), [CASPaxos](caspaxos.md).
@@ -51,7 +59,7 @@ See also: [MDS design](mds.md), [Mirroring](mirroring.md),
 - **Resync moves the data.** A *syncing* member receives an online full copy
   from an in-sync member together with the duplicated writes of every writer
   ([Resync across processes](multiattach.md#resync-across-processes)).
-- **OST records are the durable ground truth, the MDS is an index**
+- **Member records are the durable ground truth, the MDS is an index**
   ([MDS principles](mds.md#principles)) and stays off the I/O path.
 
 What the present model fixes, and this design has to make changeable:
@@ -66,27 +74,27 @@ What the present model fixes, and this design has to make changeable:
 
 ## Weight 0 and draining
 
-`weight 0` in `topology.conf` keeps an OST out of **every new placement**:
-`place()` skips zero-weight OSTs before building failure domains, and the
+`weight 0` in `topology.conf` keeps a location out of **every new placement**:
+`place()` skips zero-weight entries before building failure domains, and the
 witness candidate filter and the domain-count checks skip them too
 (`mds/src/placement.cpp`; unit test
 `PlacementTest.zero_weight_ost_never_populates_a_domain`). Existing slots are
 untouched: reads and writes go on, a `SIGHUP` reload accepts the new weight, and
-only *dropping* an OST that still holds chunks or version members is refused.
+only *dropping* a location that still holds chunks or version members is refused.
 
-- Create and grow fail with the usual hard error when the weighted OSTs left
-  cannot satisfy `width` and `failure_domain`; nothing falls back onto the
-  drained OST.
-- With `stripe_width` K=1 the chunks a resize adds land on whichever OSTs the
+- Create and grow fail with the usual hard error when the weighted locations
+  left cannot satisfy `width` and `failure_domain`; nothing falls back onto the
+  drained one.
+- With `stripe_width` K=1 the chunks a resize adds land on whichever locations the
   pinned pool now picks, so they may lose locality with the earlier chunks.
-- Weight 0 moves nothing: that is [Draining an OST](#draining-an-ost).
+- Weight 0 moves nothing: that is [Draining a location](#draining-a-location).
 
 Missing, and stage 0: a test of the whole path (create and resize against a
-topology with a zero-weight OST) and the operator documentation of `0`.
+topology with a zero-weight location) and the operator documentation of `0`.
 
-No separate *decommissioned* mark is needed. An OST that is dead is drained like
-a live one, except that it is not asked and not released
-([Dead OST](#dead-ost)); weight 0 already keeps placement away from it, and
+No separate *decommissioned* mark is needed. A location that is dead is drained
+like a live one, except that it is not asked and not released
+([Dead location](#dead-location)); weight 0 already keeps placement away from it, and
 once no chunk refers to it, removing it from the topology is accepted. The
 migration sequence with a `fence` watermark and a *decommissioned* mark in
 [MDS design](mds.md#migration-updateplacement-sequence) is replaced by this
@@ -98,7 +106,7 @@ The register value (`RawstorObjectConfig`) names its members:
 
 | Field, per member | Meaning |
 |---|---|
-| `ost_id` | the topology id of the OST holding the member (16 bytes) |
+| `ost_id` | the topology id of the location holding the member (16 bytes) |
 | `member_role` | `DATA` or `WITNESS` (`enum RawstorMemberRole`, as in `META`) |
 | `voter` | whether the member counts in `N` and in every majority |
 | `role` | in-sync, syncing, excluded (`enum RawstorObjectMemberRole`, the value's `roles`), as now |
@@ -204,7 +212,7 @@ sequenceDiagram
 
 1. **Begin.** The MDS places the added slots and records the plan
    ([MDS side](#mds-side)); its map is not changed yet.
-2. **Allocate** blank copies on the added OSTs (a witness is a minimum-size
+2. **Allocate** blank copies on the added locations (a witness is a minimum-size
    volume, as today). Versions, if any, are copied now, before the copy takes
    live writes ([Versions](#versions)).
 3. **Add.** A decision of the voters `S` adds the new members to the value as
@@ -293,7 +301,7 @@ stage 1 lands.
 ### How a writer follows a change
 
 - A writer that adopts a value naming an `ost_id` it has no session to asks the
-  MDS for that OST's location (`OST_LOCATE`, a topology lookup), opens a `Slot`
+  MDS for that entry's location (`LOCATE`, a topology lookup), opens a `Slot`
   to it and, for a syncing member, duplicates its writes from then on. It closes
   the sessions of members the value no longer names.
 - Until it has done so it acknowledges nothing, exactly as a writer that has just
@@ -333,12 +341,12 @@ stage 1 lands.
    its new chunks with it.
 2. Every existing chunk is reconfigured, a bounded number at a time:
    - **grow**: the added slots (and a witness, when the new width is even) are
-     placed on OSTs of weight > 0 in failure domains different from every kept
+     placed on locations of weight > 0 in failure domains different from every kept
      member; impossible means that chunk fails and is reported, never placed
      under the policy ([MDS placement](mds.md#placement-function));
-   - **shrink**: the executor chooses who leaves: members on weight-0 OSTs
-     first, then the fullest; never the only in-sync data copy. The operator may
-     name the OSTs.
+   - **shrink**: the executor chooses who leaves: members on weight-0
+     locations first, then the fullest; never the only in-sync data copy. The
+     operator may name the locations.
 
 The witness follows the parity of the width: 2 → 3 replaces the witness by a
 data copy in one change, 3 → 2 does the reverse, 1 → 2 adds a copy and a witness,
@@ -346,40 +354,45 @@ data copy in one change, 3 → 2 does the reverse, 1 → 2 adds a copy and a wit
 
 ### Migrating a disk
 
-`rawstor object migrate TARGET --from OST [--to OST] [--chunk OFFSET]`
-replaces, in every chunk of the object with a slot on `OST`, that slot by one on
-another OST (`S' = S − {A} + {B}`):
+`rawstor object migrate TARGET --from LOCATION [--to LOCATION] [--chunk OFFSET]`
+replaces, in every chunk of the object with a slot on the `--from` location,
+that slot by one on another location (`S' = S − {A} + {B}`). A `LOCATION` is a
+topology entry of the object's MDS, named by its URI or its topology id:
 
 - with `--to`, there; an explicit target that would put two members of a chunk
   into one failure domain is refused unless the operator says so;
 - otherwise placed. With `stripe_width` K < all the destination is chosen
   **once for the object** (HRW keyed by the object id, as the pool itself is),
-  so a K=1 disk moves as a whole to one OST instead of being scattered chunk by
+  so a K=1 disk moves as a whole to one location instead of being scattered chunk by
   chunk; with K = all it is placed per chunk.
 
 The object stays open and writable; the VM is not stopped.
 
-### Draining an OST
+### Draining a location
 
 ```
-1. weight 0 in topology.conf, SIGHUP                        no new placement
-2. rawstor ost drain OST_ID                                  every slot on it migrated,
-                                                               one plan per chunk, bounded parallelism
-3. rawstor ost status OST_ID -> slots, version members left  done at 0 and 0
-4. remove the OST from topology.conf, SIGHUP                 accepted: nothing refers to it
+1. weight 0 in topology.conf, SIGHUP                 no new placement
+2. rawstor location drain MDS LOCATION               every slot on it migrated,
+                                                       one plan per chunk, bounded parallelism
+3. rawstor location info MDS LOCATION                slots and version members left: done at 0 and 0
+4. remove the entry from topology.conf, SIGHUP       accepted: nothing refers to it
 ```
 
-Step 2 walks the MDS index of slots by OST (stage 0). It is resumable, and runs
-while the VMs run. A chunk whose versions are on the OST blocks it until stage 5.
+`MDS` is the `mds://` location whose topology has the entry; `LOCATION` names
+the entry by its URI or its topology id. `rawstor location info mds://…` without
+an entry keeps reporting the aggregate it reports now. Step 2 walks the MDS index
+of slots by location (stage 0). It is resumable, and runs while the VMs run. A
+chunk whose versions are on the location blocks it until stage 5.
 
-### Dead OST
+### Dead location
 
-`rawstor ost drain OST_ID --dead` drains an OST that will not come back: its
+`rawstor location drain MDS LOCATION --dead` drains a location that will not
+come back: its
 members are left out of `S'` without being asked, are never a resync source,
 and are not released. The commit still needs a majority of `S`, which the
 survivors provide when the chunk had more than one voter; that majority also
-fences any writer still reaching the dead OST. A chunk whose survivors are not a
-majority of `S` stays as it is and is reported. A one-copy chunk on a dead OST
+fences any writer still reaching the dead location. A chunk whose survivors are not a
+majority of `S` stays as it is and is reported. A one-copy chunk on a dead location
 has no source: that is a data loss no mechanism repairs.
 
 This is the `updatePlacement` of [the MDS API](mds.md#mds-api), for recovery
@@ -387,19 +400,20 @@ and rebalancing alike.
 
 ### Changing backend or metadata format
 
-The backend of a copy is a property of the OST that serves it: a topology entry
-is an `ost://` server backed by `zfs://`, `lvm://` or `file://` (*one copy per
-server*, [Mirroring](mirroring.md#one-copy-per-server)). A move from a `zfs://`
-OST to an `lvm://` one is an ordinary migration. Members compare the logical
+The backend of a copy is a property of its location: what a `file://`,
+`lvm://` or `zfs://` location stores on directly, or what the `rawstor-ost`
+behind an `ost://` location is backed by (*one copy per server*,
+[Mirroring](mirroring.md#one-copy-per-server)). A move from a location backed by
+`zfs://` to one backed by `lvm://` is an ordinary migration. Members compare the logical
 size from `META`, not the physical allocation, so extent and volblocksize
 rounding do not matter (F11).
 
 The same holds for the `chunk_meta` format: the added member is `ALLOCATE`d on
-an OST running newer software and writes its record in the newer format; the
+a location served by newer software and writes its record in the newer format; the
 register value is carried over by the decisions. There is no in-place
 conversion tool. It needs from elsewhere:
 
-- OSTs upgraded before clients, and members at different format versions in one
+- servers (`rawstor-ost`, `rawstor-mds`) upgraded before clients, and members at different format versions in one
   chunk while a change runs;
 - the protocol version and feature bits of `SET_OBJECT` that
   [MDS design](mds.md#compatibility-stance) reserves, once a live install exists.
@@ -408,7 +422,7 @@ conversion tool. It needs from elsewhere:
 
 A chunk's versions are native snapshots on the members that held it
 ([Versions](mds.md#versions-stage-2)); `versions[version_id].members` names
-those OSTs.
+those locations.
 
 - **Until stage 5: refuse.** A change that removes a member holding a version is
   refused (`-EBUSY`) unless the versions are removed first. Adding a member is
@@ -430,7 +444,7 @@ The copy writes whole versions, not differences, and the live resync after it
 rewrites every block again. On `zfs://` that breaks block sharing between the
 snapshots and the live volume: every version costs its full size on the new
 member. On `lvm://` (classic snapshots, each `-l 100%ORIGIN`) the cost is the
-same as for any version. A native transfer for a move between two OSTs of the
+same as for any version. A native transfer for a move between two locations of the
 same backend (`zfs send -i` between snapshots) avoids it and is an optimization
 for later; it is the one place where a backend-specific mover pays off.
 
@@ -448,11 +462,11 @@ Stage 2 adds to the MDS database and protocol:
   commit); all idempotent ([Idempotent mutations](mds.md#idempotent-mutations)).
   A plan in flight refuses a resize, a version and a removal of its object with
   `-EBUSY`, so these never meet a half-changed chunk on the MDS side;
-- `OST_LOCATE(ost_ids)`: the locations of topology entries, for writers;
+- `LOCATE(ost_ids)`: the location URIs of topology entries, for writers;
 - a placement function for added slots next to `place_chunk()` in
   `mds/src/placement.cpp`: the same hierarchical HRW, with the kept members'
   domains excluded, keyed per object for K < all;
-- a paged query of the slots and version members of one OST, for drain and
+- a paged query of the slots and version members of one location, for drain and
   status.
 
 Resuming a plan is decided by the register, not by the MDS: a commit found in
@@ -467,7 +481,7 @@ that value is garbage.
 The mover is a client process that opens the chunk as one more writer: it needs
 the proposer, the resync engine and the MDS access every writer has, and
 multi-attach stage 2 lets it run beside the VM's own process. It is a set of
-`rawstor` subcommands (`object migrate`, `object mirrors`, `ost drain`); a
+`rawstor` subcommands (`object migrate`, `object mirrors`, `location drain`); a
 balancer daemon over the same code would be a later consumer, not another
 mechanism.
 
@@ -488,9 +502,9 @@ mechanism.
 
 - **Who may do what** ([Accounts](accounts.md)): changing the number of mirrors
   of an object is an operation on the object, allowed to its owner like resize.
-  Migrating a disk and draining an OST choose OSTs and are allowed to the
-  provider administrator only; an account cannot name an OST. `OST_LOCATE`
-  answers a writer of the chunk for the OSTs its value names, no others.
+  Migrating a disk and draining a location choose locations and are allowed to
+  the provider administrator only; an account cannot name a location. `LOCATE`
+  answers a writer of the chunk for the entries its value names, no others.
 - **Capacity.** Adding mirrors multiplies the space an object takes; copied
   versions take their full size on the new member ([Versions](#versions)), and
   a migration holds the space of the added members until the release frees the
@@ -509,30 +523,31 @@ Each stage is tested at the layer it adds, through existing interfaces:
   rejoined stays a non-voter; executor killed at every step; a writer and a
   proposer that missed the commit; the ASAN stress shape used for resync;
 - stage 2: placement of added slots never reuses a kept domain and keeps K=1 on
-  one OST; plan rows, idempotent replay, one plan per chunk, `-EBUSY` for
+  one location; plan rows, idempotent replay, one plan per chunk, `-EBUSY` for
   resize and versions; reconstruct of a chunk mid-change;
 - stage 3: end to end, `migrate` and `mirrors` under vhost-like writes;
-- stage 4: drain of a live and of a dead OST in a multi-OST topology.
+- stage 4: drain of a live and of a dead location in a multi-location topology,
+  `ost://` and `file://` entries alike.
 
 ## Implementation stages
 
 0. **Preparation.** Test and document `weight 0`; the MDS query of slots and
-   version members by OST.
+   version members by location.
 1. **Membership in the register.** Member ids, `member_role` and voter in the value, the
    record and the wire; `N` over voters; derived `width`; the joint commit; a
    register for one-member chunks and epoch 0 refused; writers following a
-   change (`OST_LOCATE` from a test resolver at this stage); completing a
+   change (`LOCATE` from a test resolver at this stage); completing a
    partly accepted commit. Upgrade order: `rawstor-ost` and `rawstor-mds`
    first, since they store and answer the new record and value; clients after.
    A client of an earlier version refuses a record that names members (an
    unknown record field), so it cannot write a chunk that a newer one has
    started to manage; nothing else breaks.
-2. **MDS plans.** Plan table, `OBJ_RECONFIGURE_*`, `OST_LOCATE`, placement of
+2. **MDS plans.** Plan table, `OBJ_RECONFIGURE_*`, `LOCATE`, placement of
    added slots, `-EBUSY` rules, reconstruct from the value.
 3. **Executor and CLI.** `rawstor object migrate`, `rawstor object mirrors`,
    resume, per-chunk progress.
-4. **Drain.** `rawstor ost drain` (with `--dead`) and `status`; removal from the
-   topology.
+4. **Drain.** `rawstor location drain` (with `--dead`) and its status in
+   `rawstor location info`; removal from the topology.
 5. **Versions.** Copy before the commit; drain no longer blocks on them.
 6. **Backend and format.** Verification of migration across zfs, lvm and file;
    mixed format versions in one chunk; the protocol version handshake.
@@ -541,7 +556,7 @@ Stage 1 is the substance; the rest is policy, bookkeeping and tools.
 
 ## Open questions
 
-- **Locations in the value.** The value names OSTs by id and a writer asks the
+- **Locations in the value.** The value names locations by topology id and a writer asks the
   MDS for locations. Putting locations in the value would remove the MDS from
   that path, at the price of a record past its 1024 bytes and of topology moves
   that rewrite every record; rejected for now.
