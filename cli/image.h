@@ -7,9 +7,10 @@ extern "C" {
 
 /* Shows progress on stderr: a line rewritten in place on a terminal, a line
  * per 10% otherwise. rawstor_cli_progress_end() finishes the display (before
- * anything else is printed). */
+ * anything else is printed) with `result`, that of the operation: 100% for
+ * success, the last percentage reached for a failure. */
 void rawstor_cli_progress(int percent);
-void rawstor_cli_progress_end(void);
+void rawstor_cli_progress_end(int result);
 
 /* Writes an object, or a version of it (a target that names one), to the
  * file `path`: rawstor_target_export(). */

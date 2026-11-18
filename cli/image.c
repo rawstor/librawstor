@@ -24,9 +24,13 @@ void rawstor_cli_progress(int percent) {
     progress_last = percent;
 }
 
-void rawstor_cli_progress_end(void) {
+void rawstor_cli_progress_end(int result) {
     if (progress_drawn) {
-        fprintf(stderr, "\r100%%\n");
+        /* Done is 100%; a failure leaves the last percentage reached. */
+        if (result >= 0) {
+            fprintf(stderr, "\r100%%");
+        }
+        fprintf(stderr, "\n");
         progress_drawn = 0;
     }
     progress_last = -1;
@@ -48,7 +52,7 @@ int rawstor_cli_export(const char* target, const char* path) {
     );
     ssize_t result = rawstor_cli_op_wait(&op, sres);
     rawstor_cli_op_destroy(&op);
-    rawstor_cli_progress_end();
+    rawstor_cli_progress_end((int)result);
     if (result < 0) {
         fprintf(
             stderr, "rawstor_target_export() failed: %s\n",

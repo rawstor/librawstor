@@ -283,7 +283,7 @@ int rawstor_cli_import(
     }
     ssize_t result = rawstor_cli_op_wait(&op, sres);
     rawstor_cli_op_destroy(&op);
-    rawstor_cli_progress_end();
+    rawstor_cli_progress_end((int)result);
     if (result < 0) {
         fprintf(stderr, "%s failed: %s\n", call, strerror((int)-result));
         return rawstd_exitcode_for_errno((int)-result);
