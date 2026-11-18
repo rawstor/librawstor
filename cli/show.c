@@ -48,39 +48,56 @@ int rawstor_cli_show(const char* target, const RawstorCliOutput* output) {
         target, object_id, sizeof(object_id), version_id, sizeof(version_id)
     );
     int has_version = version_id[0] != '\0';
-    static const char* const version_columns[] = {"object_id", "version_id",
-                                                  "account",   "target",
-                                                  "location",  "size",
-                                                  "mirrors"};
+    static const char* const version_columns[] = {
+        "object_id",      "version_id",   "account", "target",
+        "location",       "size",         "mirrors", "chunk_size",
+        "failure_domain", "stripe_width",
+    };
     static const enum RawstorCliColumnType version_types[] = {
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_SIZE,
-        RAWSTOR_CLI_COLUMN_NUMBER
+        RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_SIZE,
+        RAWSTOR_CLI_COLUMN_NUMBER, RAWSTOR_CLI_COLUMN_NUMBER,
     };
-    static const char* const live_columns[] = {"object_id", "account",
-                                               "target",    "location",
-                                               "size",      "mirrors"};
+    enum { VERSION_COLUMNS = 10 };
+    /* The live columns are the version ones without version_id. */
+    static const char* const live_columns[] = {
+        "object_id", "account",    "target",         "location",     "size",
+        "mirrors",   "chunk_size", "failure_domain", "stripe_width",
+    };
     static const enum RawstorCliColumnType live_types[] = {
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
         RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
-        RAWSTOR_CLI_COLUMN_SIZE,   RAWSTOR_CLI_COLUMN_NUMBER
+        RAWSTOR_CLI_COLUMN_SIZE,   RAWSTOR_CLI_COLUMN_NUMBER,
+        RAWSTOR_CLI_COLUMN_SIZE,   RAWSTOR_CLI_COLUMN_NUMBER,
+        RAWSTOR_CLI_COLUMN_NUMBER,
     };
 
     RawstorCliTable* table =
         has_version
             ? rawstor_cli_record_create(
-                  "object", version_columns, version_types, 7
+                  "object", version_columns, version_types, VERSION_COLUMNS
               )
-            : rawstor_cli_record_create("object", live_columns, live_types, 6);
+            : rawstor_cli_record_create(
+                  "object", live_columns, live_types, VERSION_COLUMNS - 1
+              );
     if (table == NULL) {
         fprintf(stderr, "Out of memory\n");
         return EXIT_FAILURE;
     }
 
+    /* A policy left at its default is an empty cell, as in `object create`. */
     char mirrors_buf[32];
+    char domain_buf[32];
+    char stripe_buf[32];
     snprintf(mirrors_buf, sizeof(mirrors_buf), "%u", spec.width);
-    RawstorCliCell cells[7];
+    snprintf(domain_buf, sizeof(domain_buf), "%u", spec.failure_domain);
+    snprintf(
+        stripe_buf, sizeof(stripe_buf), "%llu",
+        (unsigned long long)spec.stripe_width
+    );
+    RawstorCliCell cells[VERSION_COLUMNS];
     size_t ncells = 0;
     cells[ncells++] = rawstor_cli_cell_string(object_id);
     if (has_version) {
@@ -93,6 +110,15 @@ int rawstor_cli_show(const char* target, const RawstorCliOutput* output) {
     cells[ncells++] = rawstor_cli_cell_string(location);
     cells[ncells++] = rawstor_cli_cell_size(spec.size);
     cells[ncells++] = rawstor_cli_cell_number(mirrors_buf, spec.width);
+    cells[ncells++] = spec.chunk_size != 0
+                          ? rawstor_cli_cell_size(spec.chunk_size)
+                          : rawstor_cli_cell_number(NULL, 0);
+    cells[ncells++] = rawstor_cli_cell_number(
+        spec.failure_domain != 0 ? domain_buf : NULL, spec.failure_domain
+    );
+    cells[ncells++] = rawstor_cli_cell_number(
+        spec.stripe_width != 0 ? stripe_buf : NULL, spec.stripe_width
+    );
 
     int ret = EXIT_FAILURE;
     if (rawstor_cli_table_add_row(table, cells) < 0) {

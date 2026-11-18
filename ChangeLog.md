@@ -49,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `rawstor object show` and `rawstor version show` print the same specification columns as `create`: `chunk_size`, `failure_domain` and `stripe_width`.
 - `rawstor object create` by `LOCATION` prints a target with only the account `LOCATION` names, as `object list` does; the owner is in the `account` column.
 - A URI prints without its password: `user:password@host` is shown as `user@host` wherever a URI or target is printed or listed.
 - Incompatible: every connection must begin with `HANDSHAKE`.
