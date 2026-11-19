@@ -3282,7 +3282,7 @@ rawstd::Task<void> Chunk::_resync_finish(uint64_t generation) {
     try {
         // What the sweep copied is durable before the member is in sync.
         if (!_members[idx].witness) {
-            co_await _members[idx].slot->flush(0);
+            co_await _members[idx].slot->flush(_epoch());
         }
         co_await _record(true, 1, &joined);
     } catch (const std::system_error&) {

@@ -171,9 +171,8 @@ a chunk makes no difference to its register:
 - a one-member chunk keeps a register like any other: creating it records epoch
   1, the member's role and a `sync_id` (`initialize_members()`), and the writer
   stamps its writes with the epoch;
-- a member whose record has an epoch refuses a write, discard, write-zeroes or
-  resync write that carries epoch 0 with `-ESTALE` (a flush may carry none: it
-  changes nothing); epoch 0 is legal only for a copy with no record;
+- a member whose record has an epoch refuses a request that carries epoch 0
+  with `-ESTALE`; epoch 0 is legal only for a copy with no record;
 - on `-ESTALE` a one-member writer reads the value from its one voter (a
   majority of one) and adopts it, through the same path as a mirrored one.
 

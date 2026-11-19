@@ -1100,8 +1100,7 @@ TEST(OstClientTest, sync_register_promises_and_accepts) {
 
 // A write stamped with an epoch below the copy's accepted configuration is
 // refused with -ESTALE, and so is an unstamped (0) one; one at the current
-// epoch goes through, and so does an unstamped flush (docs/multiattach.md,
-// "Epoch on writes").
+// epoch goes through (docs/multiattach.md, "Epoch on writes").
 TEST(OstClientTest, write_below_the_accepted_epoch_is_stale) {
     rawstor::ostserver::tests::TmpDir dir;
     int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
@@ -1143,7 +1142,7 @@ TEST(OstClientTest, write_below_the_accepted_epoch_is_stale) {
     client.send_write_at_epoch(0, payload.data(), payload.size(), 0);
     expect_response(RAWSTOR_CMD_WRITE, -ESTALE);
     client.send_flush_at_epoch(0);
-    expect_response(RAWSTOR_CMD_FLUSH, 0);
+    expect_response(RAWSTOR_CMD_FLUSH, -ESTALE);
     client.send_flush_at_epoch(5);
     expect_response(RAWSTOR_CMD_FLUSH, 0);
 }
