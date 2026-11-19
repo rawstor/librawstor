@@ -17,6 +17,7 @@ Design:
 - [Accounts](accounts.md) -- namespaces of objects: addressing, wire protocol, storage layout, the MDS registry.
 - [Security](security.md) -- planned authentication, authorization, TLS, accounts and at-rest encryption, in stages.
 - [Mirroring](mirroring.md) -- N-way mirror failure model and recovery.
+- [Migration](migration.md) -- changing a chunk's members: mirror count, moving a disk between locations, draining a location.
 - [CASPaxos](caspaxos.md) -- a replicated register without a leader: acceptors and coroutine-based proposers.
 - [Multi-attach](multiattach.md) -- several writer processes of one mirrored object, in stages.
 

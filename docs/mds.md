@@ -19,7 +19,7 @@ numbers its stages separately.
 | Grow-only resize | 1 | ✅ | `mds/src/store.cpp` (shrink refused) |
 | `map_version` per object | 1 | 🟡 | stored and returned by `OBJ_*`; not sent in IO frames |
 | epoch-fence (`slot.fence` watermark on OSTs) | 1 | ❌ | — |
-| `updatePlacement` / migration / rebalance | 1 | ❌ | — |
+| `updatePlacement` / migration / rebalance | 1 | ❌ | [Migration design](migration.md) |
 | One connection per (OST, object) serving all its chunks | 1 | 🟡 | one connection pool per chunk slot (`SET_OBJECT` with the chunk offset) |
 | `--reconstruct`: rebuild the live map from `LIST` + `META` | 1 | ✅ | `mds/src/main.cpp` |
 | `--reconstruct`: register complete versions, collect garbage | 2 | ❌ | version records are skipped |
@@ -1097,7 +1097,7 @@ With N data members and one witness, a quorum is strictly more than
 (N + 1) / 2 members. Every current voter must match the recorded configuration:
 `epoch`, `sync_id`, history, resync owner and role array, with its own role
 IN_SYNC. CLEAN, DIRTY and LOST follow the same reconciliation rules for both
-member types. A missing, empty, excluded or mismatching member cannot vote;
+member roles. A missing, empty, excluded or mismatching member cannot vote;
 a blank member recreated during this open must first complete its rejoin.
 
 | Data copies | Minimum data copies with a valid witness | Minimum without witness |
@@ -1265,7 +1265,8 @@ witness shares the UUID. Native ost:// access lists the witness records. No data
 I/O or CoW operation is issued to a witness.
 
 Wire changes are negotiated by `HANDSHAKE` feature bits; a protocol version
-is not planned. An I/O `map_version` fence is a future extension.
+is not planned. An I/O `map_version` fence is not planned either: a member
+change is fenced by the register epoch instead ([Migration](migration.md)).
 Interprocess mirror coordination remains multiattach stage 2.
 
 ## Implementation stages
