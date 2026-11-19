@@ -510,7 +510,7 @@ Stage 2 adds to the MDS database and protocol:
   `OBJ_RECONFIGURE_CLAIM` (takes over a plan whose lease ran out, `generation++`),
   `OBJ_RECONFIGURE_RENEW` (extends the lease; answers the operation's state, so
   an executor learns of an abort), `OBJ_RECONFIGURE_FINALIZE` (map := `S'`,
-  leaving members out of the chunk's version records, `map_epoch++`),
+  leaving members out of the chunk's version records, `map_version++`),
   `OBJ_RECONFIGURE_ABORT` (drops a plan whose abort was decided in the
   register). Every request about a plan carries its `generation`; an older one
   is refused `-ESTALE`. All are idempotent
