@@ -301,10 +301,13 @@ The value carries no `state` of the copy itself: `DIRTY`, `CLEAN` and
 
 `WRITE`, `WRITE_ZEROES`, `DISCARD` and `FLUSH` carry the `epoch` of the
 configuration the writer uses (`FLUSH` in Basic's `val`). A copy whose
-accepted `epoch` is higher refuses the request with `-ESTALE`; `0` is never
-refused (an unconfigured chunk or an explicitly unstamped request).
-Ordinary Chunk operations supply their current configuration epoch; OST
-passes the remote writer's epoch directly to its Slot, including zero.
+accepted `epoch` is higher refuses the request with `-ESTALE`. A copy that
+has a record (every copy of a target created through `Target::create`, one
+member included) refuses a `WRITE`, `WRITE_ZEROES`, `DISCARD` or `RESYNC` write
+stamped `0` as well; a `FLUSH` stamped `0` is served, it changes nothing. `0`
+is admitted only by a copy with no record. Ordinary Chunk operations supply
+their current configuration epoch; OST passes the remote writer's epoch
+directly to its Slot, including zero.
 Cost on the hot path: two atomic operations in the member's memory.
 
 `rawstor-ost` admits every request of a session on the `Slot::CopyState` of

@@ -652,7 +652,7 @@ TEST(OstClientTest, list_reports_every_chunk_offset) {
     }));
     EXPECT_EQ(client.recv_response().body.res, 0);
     const std::string data = "chunk";
-    client.send_write(0, data.data(), data.size(), false);
+    client.send_write_at_epoch(0, data.data(), data.size(), 1);
     ASSERT_TRUE(pump_until(queue, [&] {
         return client.bytes_available() >= sizeof(RawstorFrameResponse);
     }));
@@ -676,7 +676,7 @@ TEST(OstClientTest, list_reports_every_chunk_offset) {
             return client.bytes_available() >= sizeof(RawstorFrameResponse);
         }));
         EXPECT_EQ(client.recv_response().body.res, -EINVAL);
-        client.send_write(offset, data.data(), data.size(), false);
+        client.send_write_at_epoch(offset, data.data(), data.size(), 1);
         ASSERT_TRUE(pump_until(queue, [&] {
             return client.bytes_available() >= sizeof(RawstorFrameResponse);
         }));
@@ -1099,8 +1099,9 @@ TEST(OstClientTest, sync_register_promises_and_accepts) {
 }
 
 // A write stamped with an epoch below the copy's accepted configuration is
-// refused with -ESTALE; one at the current epoch, or unstamped (0), goes
-// through (docs/multiattach.md, "Epoch on writes").
+// refused with -ESTALE, and so is an unstamped (0) one; one at the current
+// epoch goes through, and so does an unstamped flush (docs/multiattach.md,
+// "Epoch on writes").
 TEST(OstClientTest, write_below_the_accepted_epoch_is_stale) {
     rawstor::ostserver::tests::TmpDir dir;
     int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
@@ -1140,7 +1141,9 @@ TEST(OstClientTest, write_below_the_accepted_epoch_is_stale) {
     client.send_write_at_epoch(0, payload.data(), payload.size(), 5);
     expect_response(RAWSTOR_CMD_WRITE, static_cast<int32_t>(payload.size()));
     client.send_write_at_epoch(0, payload.data(), payload.size(), 0);
-    expect_response(RAWSTOR_CMD_WRITE, static_cast<int32_t>(payload.size()));
+    expect_response(RAWSTOR_CMD_WRITE, -ESTALE);
+    client.send_flush_at_epoch(0);
+    expect_response(RAWSTOR_CMD_FLUSH, 0);
     client.send_flush_at_epoch(5);
     expect_response(RAWSTOR_CMD_FLUSH, 0);
 }
