@@ -447,9 +447,9 @@ struct RawstorFrameVersionEntry {
 // leaves the byte unused (0). `epoch` (WRITE/DISCARD/WRITE_ZEROES; FLUSH
 // carries it in RawstorFrameBasicPayload::val) is the epoch of the
 // configuration the writer uses: the server refuses the request with
-// -ESTALE when the copy's accepted configuration is newer
-// (docs/multiattach.md, "Epoch on writes"). 0 is never refused; READ
-// leaves it 0.
+// -ESTALE when the copy's accepted configuration is newer, or when the copy
+// has a record and the request carries 0 (docs/multiattach.md, "Epoch on
+// writes"). READ leaves it 0.
 struct RawstorFrameIOPayload {
     uint64_t offset;
     uint64_t hash;
