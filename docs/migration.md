@@ -173,19 +173,20 @@ a chunk makes no difference to its register:
   stamps its writes with the epoch;
 - a member whose record has an epoch refuses a write, discard, write-zeroes or
   resync write that carries epoch 0 with `-ESTALE` (a flush may carry none: it
-  changes nothing); epoch 0 stays legal for a copy with no record, which is a
-  plain target's;
+  changes nothing); epoch 0 is legal only for a copy with no record;
 - on `-ESTALE` a one-member writer reads the value from its one voter (a
   majority of one) and adopts it, through the same path as a mirrored one.
 
 Cost: none on the data path (the epoch is already stamped and checked); one
 record per decision, of which a one-copy chunk has none until it is reconfigured.
 
-A one-member chunk created before its register has no record: its writes carry
-epoch 0 and no member refuses them, so it cannot be fenced. `reconfigure`
-refuses such a chunk (`-EOPNOTSUPP`); it is created again. There are no live
-installations ([Compatibility stance](mds.md#compatibility-stance)); this
-concerns test stands only.
+Every target created through `Target::create`, plain targets included, records
+its register. A copy has none if it was created before the register existed
+(a one-member chunk) or by an `ALLOCATE` outside `Target::create`: its writes
+carry epoch 0 and no member refuses them, so it cannot be fenced.
+`reconfigure` refuses such a chunk (`-EOPNOTSUPP`); it is created again. There
+are no live installations ([Compatibility stance](mds.md#compatibility-stance));
+this concerns test stands only.
 
 ## The change as register decisions
 
