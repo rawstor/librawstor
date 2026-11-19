@@ -10,6 +10,7 @@ document's own numbering (see [Implementation stages](#implementation-stages));
 |---|---|---|---|
 | Weight 0 keeps a location out of every new placement (data and witness) | 0 | ✅ | `mds/src/placement.cpp`; no end-to-end test, not documented for operators |
 | Topology refuses to drop a location that still holds chunks or version members | — | ✅ | `mds/src/store.cpp` |
+| List the locations of an MDS topology | 0 | ✅ | `LIST_LOCATIONS`, `rawstor location list`, `rawstor_location_topology()`, pyrawstor `Location.locations()` |
 | List the slots and version members held by one location | 0 | ❌ | — |
 | `plan_seq`/`plan_gen` in the value; `RELEASE` bounded by `plan_seq`; a leftover never adopted | 1 | ❌ | [Idempotency](#idempotency) |
 | A one-member chunk keeps a register; epoch 0 refused once recorded | 1 | ✅ | [One copy](#a-one-copy-chunk); `src/target.cpp` (`initialize_members()`), `src/slot.cpp` (`Admission::admit()`) |
@@ -418,7 +419,8 @@ The object stays open and writable; the VM is not stopped.
 ```
 
 `MDS` is the `mds://` location whose topology has the entry; `LOCATION` names
-the entry by its URI or its topology id. `rawstor location info mds://…` without
+the entry by its URI or its topology id; `rawstor location list MDS` prints the URIs.
+`rawstor location info mds://…` without
 an entry keeps reporting the aggregate it reports now. Step 2 walks the MDS index
 of slots by location (stage 0). It is resumable, and runs while the VMs run. A
 chunk whose versions are on the location blocks it until stage 5.

@@ -53,6 +53,15 @@ public:
         std::vector<RawstdUUID>& accounts, RawstorPaginationToken& token
     ) const;
 
+    // One page of the location URIs of the topology of the MDS this location
+    // names (exactly one mds:// URI; ENOTSUP otherwise), in ascending order of
+    // their topology ids. `token` resumes the listing like list()'s: empty to
+    // start, and empty again on return once nothing is left.
+    rawstd::Task<void> locations(
+        rawio::Queue& queue, unsigned int limit,
+        std::vector<std::string>& locations, RawstorPaginationToken& token
+    ) const;
+
     // Registers / removes `account` in the MDS this location names (exactly
     // one mds:// URI; ENOTSUP otherwise).
     rawstd::Task<void>

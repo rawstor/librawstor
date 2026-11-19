@@ -1116,6 +1116,59 @@ rawstd::Task<void> Backend::_wire_list_accounts(
     memcpy(token.bytes, entries.back().account_id, sizeof(token.bytes));
 }
 
+// A page of the topology is one response: the token that resumes after it,
+// then a record per location, each followed by the bytes of its location.
+rawstd::Task<void> Backend::_wire_list_locations(
+    unsigned int limit, std::vector<std::string>& locations, RawstdUUID& token
+) {
+    constexpr size_t max_response = 1 << 20;
+    RawstorFrameListLocations request{
+        .head =
+            {.magic = RAWSTOR_MAGIC,
+             .cmd = RAWSTOR_CMD_LIST_LOCATIONS,
+             .cid = 0},
+        .payload = {.token = {}, .limit = limit},
+    };
+    memcpy(request.payload.token, token.bytes, sizeof(token.bytes));
+    locations.clear();
+    token = {};
+
+    std::vector<unsigned char> response;
+    try {
+        response = co_await exchange(
+            &request, sizeof(request), RAWSTOR_CMD_LIST_LOCATIONS, max_response
+        );
+    } catch (const std::system_error&) {
+        throw;
+    } catch (...) {
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+
+    RawstorFrameLocationPage page;
+    if (response.size() < sizeof(page)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
+    memcpy(&page, response.data(), sizeof(page));
+    size_t at = sizeof(page);
+    while (at < response.size()) {
+        RawstorFrameLocationEntry record;
+        if (response.size() - at < sizeof(record)) {
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+        memcpy(&record, response.data() + at, sizeof(record));
+        at += sizeof(record);
+        const size_t length = record.location_len;
+        if (response.size() - at < length) {
+            RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+        }
+        locations.emplace_back(
+            reinterpret_cast<const char*>(response.data() + at), length
+        );
+        at += length;
+    }
+    memcpy(token.bytes, page.token, sizeof(token.bytes));
+}
+
 rawstd::Task<void> Backend::_wire_create(
     const RawstdUUID&, const RawstdUUID& id, uint64_t offset,
     const RawstorObjectSpec& sp, RawstorMemberRole member_role,

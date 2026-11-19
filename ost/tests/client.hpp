@@ -57,6 +57,7 @@ public:
         const RawstdUUID& session_id = {}
     );
     uint16_t send_list_accounts();
+    uint16_t send_list_locations();
     // HANDSHAKE offering `features`; its answer is a payload of 8 bytes.
     uint16_t send_handshake(uint64_t features);
     uint16_t send_meta(const RawstdUUID& id, uint64_t chunk_offset);

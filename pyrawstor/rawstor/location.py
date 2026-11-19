@@ -122,6 +122,19 @@ class Location:
             if token is None:
                 break
 
+    def locations(self) -> Iterator[str]:
+        """Yield the location URIs of the topology of the MDS this location
+        names, in ascending order of their topology ids, a page at a time.
+        Raises OSError (ENOTSUP) for a location that is not an mds:// one:
+        only an MDS has a topology. See rawstor_location_topology(),
+        <rawstor/location.h>."""
+        token = None
+        while True:
+            page, token = librawstor.location_topology(self._uri, 0, token)
+            yield from page
+            if token is None:
+                break
+
     def create_account(self, account: str | None = None) -> str:
         """Register `account`, a UUID string (a random one if None), in the
         MDS this location names, and return it. Raises OSError: EEXIST if

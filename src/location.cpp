@@ -442,6 +442,61 @@ rawstd::DetachedTask launch_accounts_op_coro(
     }
 }
 
+// Location::locations() as a RawstorStringList of location URIs, for
+// rawstor_location_topology(); same launch-a-coroutine shape as
+// launch_accounts_op_coro() above.
+rawstd::DetachedTask launch_topology_op_coro(
+    rawstor::Location loc, rawio::Queue* queue, unsigned int limit,
+    RawstorStringList** locations, RawstorPaginationToken* token,
+    int (*cb)(ssize_t result, void* data), void* data
+) {
+    ssize_t result = 0;
+    RawstorStringList* list = nullptr;
+    try {
+        std::vector<std::string> found;
+        co_await loc.locations(*queue, limit, found, *token);
+
+        list = (RawstorStringList*)rawstd_list_create(sizeof(const char*));
+        if (list == nullptr) {
+            throw std::bad_alloc();
+        }
+        for (const std::string& location : found) {
+            char* str = (char*)malloc(location.size() + 1);
+            if (str == nullptr) {
+                RAWSTD_THROW_ERRNO();
+            }
+            memcpy(str, location.c_str(), location.size() + 1);
+
+            char** it = (char**)rawstd_list_append((RawstdList*)list);
+            if (it == nullptr) {
+                free(str);
+                RAWSTD_THROW_ERRNO();
+            }
+            *it = str;
+        }
+
+        *locations = list;
+    } catch (const std::system_error& e) {
+        rawstor_string_list_delete(list);
+        result = -e.code().value();
+    } catch (const std::bad_alloc&) {
+        rawstor_string_list_delete(list);
+        result = -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        rawstor_string_list_delete(list);
+        result = -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        rawstor_string_list_delete(list);
+        result = -EINVAL;
+    }
+    int res = cb(result, data);
+    if (res < 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(-res);
+    }
+}
+
 // create_account()/remove_account() for rawstor_location_*_account().
 rawstd::DetachedTask launch_account_mutation_coro(
     rawstor::Location loc, rawio::Queue* queue, RawstdUUID account, bool create,
@@ -710,6 +765,35 @@ rawstd::Task<void> account_op(
 
 namespace rawstor {
 
+rawstd::Task<void> Location::locations(
+    rawio::Queue& queue, unsigned int limit,
+    std::vector<std::string>& locations, RawstorPaginationToken& token
+) const {
+    if (_uris.size() != 1 || _uris.front().scheme() != "mds") {
+        RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+    }
+    if (limit == 0) {
+        limit = rawstor_opts_list_limit();
+    } else {
+        limit = std::min(limit, rawstor_opts_list_limit());
+    }
+
+    RawstdUUID token_id = decode_token(token);
+    std::unique_ptr<rawstor::Slot> slot =
+        co_await rawstor::Slot::create(queue, _uris.front());
+    std::exception_ptr error;
+    try {
+        co_await slot->list_locations(limit, locations, token_id);
+    } catch (...) {
+        error = std::current_exception();
+    }
+    co_await slot->close();
+    if (error) {
+        std::rethrow_exception(error);
+    }
+    encode_token(token_id, token);
+}
+
 rawstd::Task<void>
 Location::create_account(rawio::Queue& queue, const RawstdUUID& account) const {
     return account_op(queue, _uris, account, true);
@@ -977,6 +1061,32 @@ int rawstor_location_list(
             std::move(loc), static_cast<rawio::Queue*>(queue), limit, targets,
             token, cb, data
         );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_location_topology(
+    RawIOQueue* queue, const char* location, unsigned int limit,
+    RawstorStringList** locations, RawstorPaginationToken* token,
+    int (*cb)(ssize_t result, void* data), void* data
+) noexcept {
+    try {
+        rawstor::Location loc(rawstd::URI::uriv(location));
+        launch_topology_op_coro(
+            std::move(loc), static_cast<rawio::Queue*>(queue), limit, locations,
+            token, cb, data
+        );
+        rawstd::DetachedTask::rethrow_if_pending();
         return 0;
     } catch (const std::system_error& e) {
         return -e.code().value();

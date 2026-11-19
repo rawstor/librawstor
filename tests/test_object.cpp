@@ -388,6 +388,71 @@ TEST(ObjectListTest, lists_mds_objects) {
     }
 }
 
+// The locations of an MDS's topology, a page at a time: the environment's OST
+// and two more entries, in the order of their topology ids. A location that is
+// not an MDS has no topology.
+TEST(ObjectListTest, lists_the_locations_of_an_mds) {
+    std::vector<rawstor::mdsserver::TopologyOST> extra;
+    for (const char* id :
+         {"018f4e2a-0000-7000-8000-000000000003",
+          "018f4e2a-0000-7000-8000-000000000002"}) {
+        rawstor::mdsserver::TopologyOST ost{};
+        ASSERT_EQ(rawstd_uuid_from_string(&ost.id, id), 0);
+        ost.location = std::string("ost://127.0.0.1:") +
+                       (id[strlen(id) - 1] == '2' ? "9002" : "9003");
+        ost.weight = 100;
+        ost.path[3] = "host2";
+        extra.push_back(ost);
+    }
+    rawstor::tests::ObjectEnv env(8940, 8941, extra);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    // Every page of the topology of `where`, `limit` locations at a time.
+    auto locations_of = [&](const std::string& where, unsigned int limit,
+                            std::vector<std::string>* found,
+                            size_t* pages) -> ssize_t {
+        RawstorPaginationToken token = {};
+        *pages = 0;
+        do {
+            RawstorStringList* page = nullptr;
+            ssize_t res =
+                rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
+                    return rawstor_location_topology(
+                        queue.get(), where.c_str(), limit, &page, &token, cb,
+                        data
+                    );
+                });
+            if (res != 0) {
+                return res;
+            }
+            for (const char** it = rawstor_string_list_iter(page);
+                 it != nullptr; it = rawstor_string_list_next(it)) {
+                found->push_back(*it);
+            }
+            rawstor_string_list_delete(page);
+            ++*pages;
+        } while (!rawstor_pagination_token_empty(&token) && *pages < 10);
+        return 0;
+    };
+
+    const std::vector<std::string> expected = {
+        "ost://127.0.0.1:8941",
+        "ost://127.0.0.1:9002",
+        "ost://127.0.0.1:9003",
+    };
+    for (unsigned int limit : {0u, 1u, 2u}) {
+        std::vector<std::string> found;
+        size_t pages = 0;
+        ASSERT_EQ(locations_of(env.location(), limit, &found, &pages), 0);
+        EXPECT_EQ(found, expected) << "limit " << limit;
+        EXPECT_EQ(pages, limit == 0 ? 1u : (3 + limit - 1) / limit);
+    }
+
+    std::vector<std::string> found;
+    size_t pages = 0;
+    EXPECT_EQ(locations_of("file:///tmp", 0, &found, &pages), -ENOTSUP);
+}
+
 // An mds:// Backend is a control-plane client only: every data-path call
 // is a permanent ENOTSUP, which Slot never retries -- an object's I/O goes
 // to the members its target string expands to.

@@ -83,6 +83,11 @@ Backend::list_accounts(unsigned int, std::vector<RawstdUUID>&, RawstdUUID&) {
 }
 
 rawstd::Task<void>
+Backend::list_locations(unsigned int, std::vector<std::string>&, RawstdUUID&) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+}
+
+rawstd::Task<void>
 Backend::create_account(const RawstdUUID&, const RawstdUUID&) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }

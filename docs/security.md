@@ -357,7 +357,7 @@ MDS commands:
 | `LIST` | default role grants `read`; answers only the certificate account | — | role: any account or all |
 | `OBJ_CREATE`, `OBJ_RESIZE`, `OBJ_REMOVE`, `OBJ_COMMIT_VERSION`, `OBJ_REMOVE_VERSION` | `manager` | — | role |
 | `ALLOCATE`, `RELEASE`, `META`, `SYNC_PREPARE`, `SYNC_ACCEPT` on a witness hosted by the MDS | as the same command on an OST (`SYNC_*`: `write`), by certificate | — | as on an OST |
-| `LOCATION_INFO` | — | — | role |
+| `LOCATION_INFO`, `LIST_LOCATIONS` | — | — | role |
 | `LIST_ACCOUNTS`, `ACCOUNT_CREATE`, `ACCOUNT_REMOVE` | — | — | role |
 | `OBJ_TRANSFER` (changes the owner of an object) | — | — | role |
 

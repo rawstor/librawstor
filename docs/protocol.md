@@ -28,6 +28,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 | Metadata: `META` `LEAVE` `CREATE_VERSION` `LIST_VERSIONS` | ✅ | OST server + `src/wire_backend.cpp` |
 | Write barrier: `FREEZE` `THAW` | ✅ | OST `ost/src/freeze_gate.cpp`, `ost/src/client.cpp` + `src/wire_backend.cpp` |
 | `LIST`, `LOCATION_INFO` | ✅ | OST and MDS servers, both clients |
+| `LIST_LOCATIONS`: the locations of an MDS topology | ✅ | MDS server, `src/wire_backend.cpp`; an OST answers `-ENOSYS` |
 | Object: `OBJ_CREATE` `RESOLVE` `OBJ_RESIZE` `OBJ_REMOVE` | ✅ | MDS server + `src/mds_backend.cpp` |
 | Object versions: `OBJ_COMMIT_VERSION` `OBJ_REMOVE_VERSION` | ✅ | MDS server + `src/mds_backend.cpp` |
 | `idempotency_key` on mutating `OBJ_*` | ✅ | `mds/src/store.cpp` (`applied_mutations`) |
@@ -127,6 +128,7 @@ role), `0x01..0x1f` data (OST), `0x20..0x3f` metadata shared by OST and MDS,
 | `0x13` | `THAW` | OST | Basic (`offset` = chunk offset, `version_id` = the holder's token) | — |
 | `0x14` | `SET_OWNER` | OST / MDS (witness only) | Basic (`offset` = chunk offset, `version_id` = the new owner) | — |
 | `0x20` | `LIST_ACCOUNTS` | MDS | ListAccounts | Account rows |
+| `0x21` | `LIST_LOCATIONS` | MDS | ListLocations | Location rows |
 | `0x40` | `OBJ_CREATE` | MDS | ObjCreate | ObjCreated |
 | `0x41` | `RESOLVE` | MDS | Basic (`version_id`, nil = live) | ObjDescriptor + chunks |
 | `0x42` | `OBJ_RESIZE` | MDS | ObjOp (`val` = new size) | ObjResized |
@@ -351,6 +353,26 @@ limits the listing to the objects that account owns; nil lists every object
      +---------------------------------------------------------------------------------------+
   0  |                                                                                       |
      |                                  uint8_t token_id[16]                                 |
+     |                                                                                       |
+  8  |                                                                                       |
+     |                                                                                       |
+     +-------------------------------------------+-------------------------------------------+
+ 16  |              uint32_t limit               |
+     |                                           |
+     +-------------------------------------------+
+```
+
+### ListLocations — 20 bytes
+
+`limit` locations per page (0 = the server's own cap), resuming at `token`
+(all 0 = from the start). The token means something to the server only: the
+client sends back the one the previous page returned and does not read it.
+
+```text
+     +0         +1         +2         +3         +4         +5         +6         +7
+     +---------------------------------------------------------------------------------------+
+  0  |                                                                                       |
+     |                                    uint8_t token[16]                                  |
      |                                                                                       |
   8  |                                                                                       |
      |                                                                                       |
@@ -586,6 +608,28 @@ already exhausted. An OST answers `-ENOSYS`.
   8  |                                                                                       |
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
+```
+
+### Location page — 16 bytes, then the locations
+
+`LIST_LOCATIONS`' answer starts with the 16-byte `token` that resumes the
+listing after the page, all 0 once nothing is left. A record follows for each
+location of the page: its 2-byte `location_len`, then that many bytes of the
+location, a rawstor location URI such as `ost://host:port`, not
+null-terminated. An OST answers `-ENOSYS`.
+
+```text
+     +0         +1         +2         +3         +4         +5         +6         +7
+     +---------------------------------------------------------------------------------------+
+  0  |                                                                                       |
+     |                                    uint8_t token[16]                                  |
+     |                                                                                       |
+  8  |                                                                                       |
+     |                                                                                       |
+     +-------------------------------------------+-------------------------------------------+
+ 16  |         uint16_t location_len             |
+     |                                           |
+     +-------------------------------------------+
 ```
 
 ### Meta — 376 bytes

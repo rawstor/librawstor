@@ -1238,6 +1238,28 @@ rawstd::Task<void> Slot::remove_account(const RawstdUUID& account) {
     }
 }
 
+rawstd::Task<void> Slot::list_locations(
+    unsigned int limit, std::vector<std::string>& locations, RawstdUUID& token
+) {
+    OperationGuard operation(*this);
+
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        co_await _with_retry(
+            func_name, trace_event, &Backend::list_locations, limit, locations,
+            token
+        );
+        _finish(t_call);
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
 rawstd::Task<void> Slot::list_accounts(
     unsigned int limit, std::vector<RawstdUUID>& accounts, RawstdUUID& token
 ) {

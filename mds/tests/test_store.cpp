@@ -10,6 +10,7 @@
 #include <rawstd/gpp.hpp>
 #include <rawstd/uuid.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -1619,4 +1620,72 @@ TEST_F(
     EXPECT_THROW(
         store.authorize(&peer, RAWSTOR_CMD_SET_OBJECT), std::system_error
     );
+}
+
+// The ids of the topology's entries `store` lists, a page at a time.
+std::vector<RawstdUUID>
+list_locations_of(ObjectStore& store, unsigned int limit) {
+    std::vector<RawstdUUID> ret;
+    RawstdUUID token{};
+    do {
+        for (const auto& ost : store.list_locations(token, limit)) {
+            ret.push_back(ost.id);
+        }
+    } while (!rawstd_uuid_is_nil(&token));
+    return ret;
+}
+
+TEST_F(ObjectStoreTest, list_locations_pages_by_id) {
+    ObjectStore store = make_store();
+    const auto& osts = store.topology()->osts();
+    std::vector<RawstdUUID> expected;
+    for (const auto& ost : osts) {
+        expected.push_back(ost.id);
+    }
+    std::sort(
+        expected.begin(), expected.end(),
+        [](const auto& a, const auto& b) { return rawstd_uuid_cmp(&a, &b) < 0; }
+    );
+
+    for (unsigned int limit : {0u, 1u, 2u, 3u, 10u}) {
+        std::vector<RawstdUUID> got = list_locations_of(store, limit);
+        ASSERT_EQ(got.size(), expected.size()) << "limit " << limit;
+        for (size_t i = 0; i < got.size(); ++i) {
+            EXPECT_EQ(rawstd_uuid_cmp(&got[i], &expected[i]), 0);
+        }
+    }
+
+    // A page that ends before the last entry reports where it ended.
+    RawstdUUID token{};
+    auto page = store.list_locations(token, 2);
+    ASSERT_EQ(page.size(), 2u);
+    EXPECT_EQ(rawstd_uuid_cmp(&token, &page.back().id), 0);
+    // A page that reaches the last entry does not.
+    page = store.list_locations(token, 2);
+    EXPECT_EQ(page.size(), 1u);
+    EXPECT_TRUE(rawstd_uuid_is_nil(&token));
+}
+
+// The topology is the operator's: an admin lists it, an account's client does
+// not.
+TEST_F(ObjectStoreTest, only_an_admin_lists_the_locations) {
+    ObjectStore store = make_store();
+    rawtls::SpiffeId admin("spiffe://cluster.example/admin/operator");
+    EXPECT_NO_THROW(store.authorize(&admin, RAWSTOR_CMD_LIST_LOCATIONS));
+
+    RawstdUUID account = make_id();
+    store.create_account(make_id(), account);
+    RawstdUUIDString account_text;
+    rawstd_uuid_to_string(&account, &account_text);
+    rawtls::SpiffeId client(
+        std::string("spiffe://cluster.example/account/") + account_text +
+        "/client/user"
+    );
+    client.permissions({RAWSTOR_ROLE_MANAGER, {}});
+    try {
+        store.authorize(&client, RAWSTOR_CMD_LIST_LOCATIONS);
+        FAIL() << "expected EACCES";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), EACCES);
+    }
 }

@@ -166,6 +166,13 @@ extern "C" {
 #define RAWSTOR_CMD_LIST_ACCOUNTS 0x20
 
 /*
+ * The locations of an MDS's topology (docs/mds.md), paged like LIST: rides
+ * RawstorFrameListLocations, its response payload is a RawstorFrameLocationPage
+ * and the page's RawstorFrameLocationEntry records. An OST answers -ENOSYS.
+ */
+#define RAWSTOR_CMD_LIST_LOCATIONS 0x21
+
+/*
  * Object (MDS) commands -- docs/mds.md, "Wire protocol": create/resolve/
  * resize/remove a whole, possibly multi-chunk mds:// object. RESOLVE
  * rides RawstorFrameBasicPayload (object_id = id, version_id = the bound
@@ -378,6 +385,37 @@ struct RawstorFrameListAccounts {
  */
 struct RawstorFrameAccountEntry {
     uint8_t account_id[16];
+} RAWSTOR_PACKED;
+
+/*
+ * LIST_LOCATIONS' request: `token` resumes the listing where the page that
+ * returned it ended (all 0 = from the start), `limit` caps the page (0 = the
+ * server's own cap). The token means something to the server only: the client
+ * sends back the one it got and does not read it.
+ */
+struct RawstorFrameListLocationsPayload {
+    uint8_t token[16];
+    uint32_t limit;
+} RAWSTOR_PACKED;
+
+struct RawstorFrameListLocations {
+    struct RawstorFrameHead head;
+    struct RawstorFrameListLocationsPayload payload;
+} RAWSTOR_PACKED;
+
+/*
+ * LIST_LOCATIONS' response: a RawstorFrameLocationPage, then the page's
+ * entries, each a RawstorFrameLocationEntry followed by the `location_len`
+ * bytes of a location, a rawstor location URI (e.g. ost://host:port), not
+ * null-terminated. `token` resumes the listing after this page, all 0 once
+ * nothing is left.
+ */
+struct RawstorFrameLocationPage {
+    uint8_t token[16];
+} RAWSTOR_PACKED;
+
+struct RawstorFrameLocationEntry {
+    uint16_t location_len;
 } RAWSTOR_PACKED;
 
 /* ACCOUNT_CREATE / ACCOUNT_REMOVE request payload. */
@@ -889,6 +927,9 @@ RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListPayload, 36);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListEntry, 48);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameVersionEntry, 16);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameAccountEntry, 16);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListLocationsPayload, 20);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameLocationPage, 16);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameLocationEntry, 2);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameAccountOpPayload, 32);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameIOPayload, 29);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorObjectBallot, 16);

@@ -33,6 +33,7 @@ static PyMethodDef librawstor_methods[] = {
      METH_VARARGS, NULL},
     {"location_info", py_rawstor_location_info, METH_VARARGS, NULL},
     {"account_list", py_rawstor_account_list, METH_VARARGS, NULL},
+    {"location_topology", py_rawstor_location_topology, METH_VARARGS, NULL},
     {"account_create", py_rawstor_account_create, METH_VARARGS, NULL},
     {"account_remove", py_rawstor_account_remove, METH_VARARGS, NULL},
     {"target_account", py_rawstor_target_account, METH_VARARGS, NULL},

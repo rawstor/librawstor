@@ -97,6 +97,7 @@ rawstor location info mds://127.0.0.1:7776   # serving? (with RAWSTOR_TLS_* in t
 # edit /etc/rawstor/mds/${CLUSTER1}.topology, then
 sudo systemctl reload rawstor-mds@${CLUSTER1}
 journalctl -u rawstor-mds@${CLUSTER1} | grep Topology   # applied?
+rawstor location list mds://127.0.0.1:7776   # the locations the MDS serves
 ```
 
 Removing an instance (`systemctl disable --now`, then deleting its config)

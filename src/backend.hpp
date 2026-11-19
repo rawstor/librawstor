@@ -148,6 +148,16 @@ public:
         unsigned int limit, std::vector<RawstdUUID>& accounts, RawstdUUID& token
     );
 
+    // One page of the location URIs of the MDS's topology, in ascending order
+    // of the topology ids of its entries, strictly after `token` (nil = from
+    // the start). `token` comes back as the last id of the page while more
+    // follow, nil on the last page. A `limit` of 0 is the server's own cap.
+    // ENOTSUP elsewhere: only an MDS has a topology.
+    virtual rawstd::Task<void> list_locations(
+        unsigned int limit, std::vector<std::string>& locations,
+        RawstdUUID& token
+    );
+
     // Registers / removes an account (docs/accounts.md); only an MDS keeps a
     // account registry, so the default is ENOTSUP.
     virtual rawstd::Task<void> create_account(

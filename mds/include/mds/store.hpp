@@ -223,6 +223,15 @@ public:
     std::vector<RawstdUUID>
     list_accounts(RawstdUUID& token, unsigned int limit);
 
+    /*
+     * One page of the topology's entries in ascending order of their id,
+     * strictly after `token` (nil = from the start); `token` is the last id of
+     * the page while more follow and nil on the last page. A `limit` of 0 is
+     * no limit.
+     */
+    std::vector<TopologyOST>
+    list_locations(RawstdUUID& token, unsigned int limit);
+
     std::shared_ptr<const Topology> topology();
 
     /* Last successful space samples for the current topology, including

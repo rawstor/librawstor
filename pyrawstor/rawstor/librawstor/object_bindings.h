@@ -37,6 +37,7 @@ PyObject* py_rawstor_object_resize(PyObject* self, PyObject* args);
 PyObject* py_rawstor_object_transfer(PyObject* self, PyObject* args);
 
 PyObject* py_rawstor_account_list(PyObject* self, PyObject* args);
+PyObject* py_rawstor_location_topology(PyObject* self, PyObject* args);
 PyObject* py_rawstor_account_create(PyObject* self, PyObject* args);
 PyObject* py_rawstor_account_remove(PyObject* self, PyObject* args);
 PyObject* py_rawstor_target_account(PyObject* self, PyObject* args);

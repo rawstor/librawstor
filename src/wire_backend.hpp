@@ -140,6 +140,11 @@ protected:
         unsigned int limit, std::vector<RawstdUUID>& accounts, RawstdUUID& token
     );
 
+    rawstd::Task<void> _wire_list_locations(
+        unsigned int limit, std::vector<std::string>& locations,
+        RawstdUUID& token
+    );
+
     rawstd::Task<void> _wire_set_owner(
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& owner
     );
