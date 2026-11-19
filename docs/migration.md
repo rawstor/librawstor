@@ -12,7 +12,7 @@ document's own numbering (see [Implementation stages](#implementation-stages));
 | Topology refuses to drop a location that still holds chunks or version members | — | ✅ | `mds/src/store.cpp` |
 | List the slots and version members held by one location | 0 | ❌ | — |
 | `plan_seq`/`plan_gen` in the value; `RELEASE` bounded by `plan_seq`; a leftover never adopted | 1 | ❌ | [Idempotency](#idempotency) |
-| A one-member chunk keeps a register; epoch 0 refused once recorded | 1 | ❌ | [One copy](#a-one-copy-chunk) |
+| A one-member chunk keeps a register; epoch 0 refused once recorded | 1 | ✅ | [One copy](#a-one-copy-chunk); `src/target.cpp` (`initialize_members()`), `src/slot.cpp` (`Admission::admit()`) |
 | Members named in the register value: topology id, `member_role`, voter | 1 | ❌ | [Members in the value](#members-in-the-register-value) |
 | Quorum over voters; joint decision for a change of voters | 1 | ❌ | [The change](#the-change-as-register-decisions) |
 | A running writer follows a member change (`-ESTALE`, locate) | 1 | ❌ | [Following a change](#how-a-writer-follows-a-change) |
@@ -71,7 +71,6 @@ What the present model fixes, and this design has to make changeable:
 | `N`, the quorum denominator, is the member count, excluded and syncing members included | `Chunk::_below_write_quorum()` |
 | `width` is the copy's persisted spec, compared at open (F11), not part of the register | `RawstorObjectConfig`, `meta_encode()` |
 | The witness is the last location beyond `width` | `src/chunk.cpp` |
-| A one-member chunk has no register: its writes carry epoch 0, which no member refuses | `MirrorControl::initialize_single()`, [Epoch on writes](multiattach.md#epoch-on-writes) |
 
 ## Weight 0 and draining
 
@@ -97,9 +96,9 @@ No separate *decommissioned* mark is needed. A location that is dead is drained
 like a live one, except that it is not asked and not released
 ([Dead location](#dead-location)); weight 0 already keeps placement away from it, and
 once no chunk refers to it, removing it from the topology is accepted. The
-migration sequence with a `fence` watermark and a *decommissioned* mark in
-[MDS design](mds.md#migration-updateplacement-sequence) is replaced by this
-document when stage 1 lands.
+migration sequence with a `fence` watermark and a *decommissioned* mark is not
+used: a member change is fenced by the register epoch of the chunk, and
+`map_version` is not a fence ([MDS design](mds.md#map_version)).
 
 ## Members in the register value
 
@@ -165,29 +164,28 @@ planned needs it.
 
 ### A one-copy chunk
 
-The commonest migration is a one-copy disk (`zfs://` → `lvm://`), and a
-one-member chunk today has no register at all: its writes carry epoch 0, which
-"is never refused", so a running writer could neither be fenced nor learn of a
-new member, and its writes would never reach the copy being filled. So:
+The commonest migration is a one-copy disk (`zfs://` → `lvm://`). A running
+writer of it has to be fenced and has to learn of a new member, so the width of
+a chunk makes no difference to its register:
 
-- a one-member chunk keeps a register like any other: `ALLOCATE` records epoch
-  1 and the member, and the writer stamps its writes with the epoch;
-- a member whose record names its members refuses epoch 0 with `-ESTALE`;
-  epoch 0 stays legal for plain targets only;
+- a one-member chunk keeps a register like any other: creating it records epoch
+  1, the member's role and a `sync_id` (`initialize_members()`), and the writer
+  stamps its writes with the epoch;
+- a member whose record has an epoch refuses a request that carries epoch 0
+  with `-ESTALE`; epoch 0 is legal only for a copy with no record;
 - on `-ESTALE` a one-member writer reads the value from its one voter (a
   majority of one) and adopts it, through the same path as a mirrored one.
 
 Cost: none on the data path (the epoch is already stamped and checked); one
 record per decision, of which a one-copy chunk has none until it is reconfigured.
 
-**Chunks created before stage 1** have no register. A writer of stage 1 records
-one at its first writable open, in the dirty gate it passes anyway (one fsync
-on the one member). `reconfigure` refuses a chunk whose record names no
-members (`-EOPNOTSUPP`): it has, or may have, a writer stamping epoch 0 that
-cannot be fenced. Such a chunk is reopened by a stage-1 writer first, which for
-a VM disk means restarting its `rawstor-vhost` or `rawstor-vduse`. There are no
-live installations ([Compatibility stance](mds.md#compatibility-stance)); this
-concerns test stands only.
+Every target created through `Target::create`, plain targets included, records
+its register. A copy has none if it was created before the register existed
+(a one-member chunk) or by an `ALLOCATE` outside `Target::create`: its writes
+carry epoch 0 and no member refuses them, so it cannot be fenced.
+`reconfigure` refuses such a chunk (`-EOPNOTSUPP`); it is created again. There
+are no live installations ([Compatibility stance](mds.md#compatibility-stance));
+this concerns test stands only.
 
 ## The change as register decisions
 
@@ -688,7 +686,7 @@ know what they break, and test stands know what to rebuild.
 | Wire: `RawstorFrameConfig` | Grows by the members (`16 × 17` bytes) and `prev_voters`, `plan_seq`, `plan_gen` (14 bytes): 312 bytes now. It is embedded in `RawstorFrameMetaPayload`, `RawstorFrameSyncProposePayload` and `RawstorFrameSyncReplyPayload`, whose sizes change with it | Every `META`, `SYNC_PREPARE` and `SYNC_ACCEPT` between an old and a new side, plain targets included | A `HANDSHAKE` capability bit (`RAWSTOR_FEATURES_SUPPORTED` is 0 today). A new server requires it and refuses a client without it; no dual layout is kept |
 | Wire: `ALLOCATE` | Carries `plan_seq` (`RawstorFrameAllocatePayload`, 60 bytes now) | Old clients creating copies on new servers | The same bit |
 | Wire: `RELEASE` | `val` is a `plan_seq` bound, 0 meaning none | Nothing: every caller sends 0 today | — |
-| Wire: epoch 0 | Refused by a member whose record names members | A writer that does not stamp its epoch: an old client, a one-member chunk before stage 1 | `reconfigure` refuses chunks without a register; a stage-1 writer records one at its first writable open |
+| Wire: epoch 0 | Refused by a member whose record names members | A writer that does not stamp its epoch: an old client | `reconfigure` refuses chunks without a register |
 | Wire: new opcodes | `OBJ_OPERATION_*`, `OBJ_RECONFIGURE_*`, `LOCATE` | Nothing: an old server answers `-ENOSYS` | — |
 | Record on the members | New fields (members, `prev_voters`, `plan_seq`, `plan_gen`), `META_FORMAT_VERSION` 1 → 2, in the `file://` meta file, the LVM tag and the ZFS property alike | An old binary reading a version-2 record refuses it (`meta_decode()` requires the whole record to parse): no downgrade once a chunk is written by stage-1 code | The new code reads version 1 as a record that names no members (positional, as now) and writes version 2 at the first decision |
 | Record size | At most 16 members for a chunk that names its members (`META_MAX_SIZE` is 1024), at most 15 at rest with the witness | `mds://` objects wider than 15 (odd) or 14 (even, plus the witness); plain targets keep up to 255 | `mirrors` and create refuse a wider `mds://` width with `-EINVAL`; a larger change is made in steps |
@@ -698,7 +696,7 @@ know what they break, and test stands know what to rebuild.
 | API semantics: `width` | Taken from the value for a chunk that names its members, no longer compared across the copies' spec at open (F11) | Nothing visible: an agreed chunk reports the same width | — |
 | API semantics: `-EBUSY` | Resize, version and removal of an object refused while one of its chunk plans is in flight | Scripts and scheduled snapshots that do not retry | Documented; the CLI retries for a bounded time |
 | Contract: the MDS after open | A writer keeps the MDS location and asks it (`LOCATE`) when a member change names a location it does not know | Deployments that treat the MDS as needed only at open | Writes freeze only while such a change completes without the MDS ([How a writer follows](#how-a-writer-follows-a-change)) |
-| Documentation | The `fence` watermark and the *decommissioned* mark of [MDS design](mds.md#migration-updateplacement-sequence) are replaced by this design | — | `mds.md` is updated when stage 1 lands |
+| Documentation | `mds.md` describes `map_version` as the version of an object's map, not as a fence | — | — |
 
 The wire, record and ABI changes all land in stage 1, together, behind one
 capability bit and one format version: a stand is upgraded servers first, then

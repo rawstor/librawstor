@@ -560,6 +560,8 @@ public:
         _size = meta.spec.size;
         _config = meta.config;
         _valid = true;
+        _proposer.observe({meta.promised.counter, meta.promised.proposer});
+        _proposer.observe({meta.accepted.counter, meta.accepted.proposer});
     }
     void initialize_locked(
         const std::vector<MemberState>& states,
@@ -3280,7 +3282,7 @@ rawstd::Task<void> Chunk::_resync_finish(uint64_t generation) {
     try {
         // What the sweep copied is durable before the member is in sync.
         if (!_members[idx].witness) {
-            co_await _members[idx].slot->flush(0);
+            co_await _members[idx].slot->flush(_epoch());
         }
         co_await _record(true, 1, &joined);
     } catch (const std::system_error&) {

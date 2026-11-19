@@ -277,6 +277,8 @@ struct Slot::CopyState {
     // Admits a write stamped `epoch`: false if it is below the copy's
     // epoch. On success the write counts in `generation` until release().
     bool admit(uint64_t epoch, uint64_t& generation) noexcept;
+    // Whether the copy's record names a configuration: its epoch is above 0.
+    bool recorded() const noexcept { return _epoch.load() != 0; }
     void release(uint64_t generation) noexcept;
 
     // Called with `record` held, before a record with `epoch` is
@@ -564,11 +566,13 @@ public:
     }
 
     // 0, or the errno to refuse the request with: ESTALE if the copy's
-    // configuration is newer than `epoch`, EOPNOTSUPP if a request stamped
-    // with an epoch reaches a server with no copy of its own to fence on.
+    // configuration is newer than `epoch`, or if the copy has a record and
+    // the request carries none (epoch 0 is for a copy with no record only),
+    // EOPNOTSUPP if a request stamped with an epoch reaches a server with no
+    // copy of its own to fence on.
     int admit(const std::shared_ptr<CopyState>& member, uint64_t epoch) {
         if (epoch == 0) {
-            return 0;
+            return member && member->recorded() ? ESTALE : 0;
         }
         if (!member) {
             return EOPNOTSUPP;
@@ -2102,9 +2106,12 @@ rawstd::Task<void> Slot::leave() {
 // backend is not a writer session of this Slot and holds no record lock.
 rawstd::Task<void> Slot::_flush_member(const RawstdUUID& id, uint64_t offset) {
     std::shared_ptr<Backend> be = _get_backend();
+    // The flush carries the epoch the copy's record holds: it is not a
+    // writer's, and a copy that has a record refuses a request with none.
     if (!_left && _id && rawstd_uuid_cmp(&*_id, &id) == 0 &&
         _offset == offset && rawstd_uuid_is_nil(&_version_id)) {
-        co_await be->flush(0);
+        uint64_t epoch = (co_await be->meta(id, offset)).front().config.epoch;
+        co_await be->flush(epoch);
         co_return;
     }
     std::shared_ptr<Backend> copy =
@@ -2112,7 +2119,8 @@ rawstd::Task<void> Slot::_flush_member(const RawstdUUID& id, uint64_t offset) {
     std::exception_ptr error;
     try {
         co_await copy->set_object({}, id, offset, 0);
-        co_await copy->flush(0);
+        uint64_t epoch = (co_await copy->meta(id, offset)).front().config.epoch;
+        co_await copy->flush(epoch);
         co_await copy->leave();
     } catch (...) {
         error = std::current_exception();

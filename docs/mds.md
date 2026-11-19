@@ -17,8 +17,7 @@ numbers its stages separately.
 | Static `topology.conf`, `SIGHUP` reload, refusal to drop OSTs in use | 1 | ✅ | `mds/src/topology.cpp`, `mds/src/main.cpp` |
 | Idempotent mutations (`idempotency_key`, `applied_mutations`, 1-day expiry) | 1 | ✅ | `mds/src/store.cpp` |
 | Grow-only resize | 1 | ✅ | `mds/src/store.cpp` (shrink refused) |
-| `map_version` per object | 1 | 🟡 | stored and returned by `OBJ_*`; not sent in IO frames |
-| epoch-fence (`slot.fence` watermark on OSTs) | 1 | ❌ | — |
+| `map_version` per object: the version of its map, not a fence | 1 | ✅ | stored and returned by `OBJ_*`; [map_version](#map_version) |
 | `updatePlacement` / migration / rebalance | 1 | ❌ | [Migration design](migration.md) |
 | One connection per (OST, object) serving all its chunks | 1 | 🟡 | one connection pool per chunk slot (`SET_OBJECT` with the chunk offset) |
 | `--reconstruct`: rebuild the live map from `LIST` + `META` | 1 | ✅ | `mds/src/main.cpp` |
@@ -187,7 +186,7 @@ in four places and spent on one addition:
 | Hand-rolled packed structs, count prefixes, `format_version` | Keep | codebase idiom, no new dependency |
 | Chunk identity rides `RawstorFrameBasicPayload` unchanged | Keep | see *Chunk identity* |
 | Opaque stable `ost_id` (UUID), resolved via topology | Keep | required for HRW stability |
-| epoch-fence (client cache vs per-chunk hard gate) | Keep, **collapsed + renamed** | one counter `map_version` per object; the per-slot fence is a stored *watermark* of it, not a second counter; the mirroring per-copy `mirror_epoch` (already shipped) provably cannot be merged in — see *epoch-fence* |
+| epoch-fence (client cache vs per-chunk hard gate) | **Dropped** | the chunk's register epoch is the hard gate ([Migration](migration.md)); `map_version` per object is only the version of the map, see [map_version](#map_version) |
 | Shard by `id`; primary + replicated log per shard; reads from any replica | **Replaced in v1: single MDS instance** | witness availability does not require MDS replication (a dead witness = one lost vote); the map is rebuildable by scan; replication is v2, the epoch/CAS model below is compatible with primary+log |
 
 ## Chunk identity
@@ -668,83 +667,34 @@ sequenceDiagram
     B-->>C: res
 ```
 
-## epoch-fence
+## map_version
 
-One placement counter per object; the fence is a stored watermark of it, not
-a second counter:
+One counter per object: the version of its map (`object.map_version`). The MDS
+increments it on every change of the map or the descriptor (resize, a version
+committed, a change of members) and returns it in the answer of every `OBJ_*`
+request.
 
-- `object.map_version` — the **only** placement counter. ++ on any map change,
-  rides in every IO frame (advisory freshness hint), and doubles as the CAS
-  token for MDS mutations.
-- `slot.fence` on the OST — a **watermark**: the `map_version` value at which
-  this slot's placement moved away, recorded on the **old** owner
-  (migration/recovery only).
+- It is the **compare-and-set token** of the MDS mutations.
+- It is the **validator of a client's cached map**: a client that sees a higher
+  value than the one it holds knows its map is older.
+- It is **not a fence.** No member stores it, no I/O frame carries it, and a
+  write is never refused for it. A writer under an outdated configuration is
+  refused by the register epoch of the chunk (`-ESTALE`) and adopts the
+  decided value, which names the members ([Migration](migration.md)).
 
-`write: if client_map_version < slot.fence -> STALE -> client re-reads map ->
-retry`. Version creation and resize bump `map_version` but record no watermark on any
-slot, so they *cannot* STALE anything — the "no STALE storm on un-migrated
-chunks" property is structural, not a convention about when to raise a gate.
+The two counters differ in scope and writer. `map_version` is per object, issued
+by the MDS and versions the *placement*. The register epoch is per chunk,
+decided by the writers without the MDS on the I/O path, and versions the
+*membership and its health*; it is part of the durable consistency tuple on
+every member and witness ([Mirroring](mirroring.md), [Multi-attach](multiattach.md)).
+A change of members moves the map once, after the register's commit
+([Migration](migration.md#the-change-as-register-decisions)); a client with the
+old map still reaches a member that holds the newest value.
 
-### Why `mirror_epoch` does not collapse into it
-
-Merging the mirroring per-copy `mirror_epoch` into the map/fence numbering
-fails by counterexample: a degrade bump is written by the client to the
-surviving arms only, with no MDS round-trip (the hot-path requirement). If it
-shared the fence numbering, the surviving client would either fence *itself*
-out (its cached `map_version` is now behind the value it just wrote to the
-survivors) or need the MDS at the failure moment — both unacceptable. The two
-also differ in scope and writer: `map_version` is per-object, MDS-issued, and
-versions *placement*; `mirror_epoch` is per slot-set, client-issued, versions
-*membership health*, and is part of the durable consistency tuple on arms and
-witness. (Within mirroring, `mirror_epoch` vs `sync_id` is likewise left
-alone: ancestry is derivable from `sync_id_history`, but the epoch is the
-cheap total order and the guard against history-window overflow, and it is
-already shipped.)
-
-### Migration / `updatePlacement` sequence
-
-The fence must land on the **old owner** — that is the only OST a stale client
-still talks to:
-
-```
-1. copy the slot to the new OST (resync machinery, source = an IN-SYNC slot)
-2. MDS reserves E' = map_version + 1; record E' as slot.fence on the OLD owner (fsync'd)
-3. MDS: chunk_map[index] slot -> new ost_id, publish map_version = E'
-4. (later) release the old slot
-```
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant M as rawstor-mds
-    participant Old as old OST
-    participant New as new OST
-    participant S as stale client
-    M->>New: copy the slot (resync from an IN-SYNC slot)
-    M->>Old: fence = E' (= map_version + 1), fsync'd
-    S->>Old: WRITE with map_version < E'
-    Old-->>S: STALE
-    S->>M: re-read map (still old until the next step), retry
-    M->>M: chunk_map[index]: slot -> new ost_id, map_version = E'
-    S->>M: re-read map
-    S->>New: WRITE with map_version = E'
-    M->>Old: (later) release the old slot
-```
-
-Counterexample that fixes the order: fence only the *new* OST (or update the
-map first) and a client with a cached map keeps writing to the old OST
-indefinitely — nothing it touches ever says `STALE`, acknowledged writes land
-on a slot the map no longer references, and are lost after step 4. The fence
-must carry the *reserved upcoming* epoch: between steps 2 and 3 a stale
-client's write hits the fence, re-reads a not-yet-updated map and retries — a
-benign transient that resolves at step 3; the reverse order (map before
-fence) instead opens a window of silently lost writes.
-
-If the old owner is unreachable (the usual *reason* for the migration), step 2
-cannot execute; then the slot may be reassigned only when the old OST is
-marked **decommissioned** in the topology. If it ever comes back anyway, its
-copy is stale by mirror metadata (`sync_id` ancestry) and is caught at the
-mirroring layer — defense in depth, not the primary guard.
+If the old owner of a slot is unreachable, which is the usual reason to move
+it, nothing has to be written there: the slot is reassigned by the register's
+decision of the remaining members. If the old copy comes back, it is stale by
+its record (`sync_id` ancestry) and is not a member of the chunk.
 
 ## Versions (stage 2)
 
@@ -1147,7 +1097,7 @@ One `rawstor-mds` process, no replication in v1. Justification: the map is
 rebuildable by scan; witness loss costs one vote (availability), not
 correctness; and a witness for the *data* quorum does not itself need to be
 replicated. Replication (primary + log shipping, reads from any replica with
-the `map_version` fence catching lagging reads) is reserved for v2 — the
+the `map_version` of an answer telling a client its map is lagging) is reserved for v2 — the
 epoch/CAS data model here is already compatible with it.
 
 Within that one process, `-w/--workers N` (default 4) worker threads each
@@ -1272,7 +1222,7 @@ Interprocess mirror coordination remains multiattach stage 2.
 ## Implementation stages
 
 1. **Chunking**: `CMD_OBJ_CREATE/OPEN/RESIZE/REMOVE`, HRW placement + topology config,
-   explicit map in MDS (SQLite), client-side routing, `map_version` + fence watermark,
+   explicit map in MDS (SQLite), client-side routing, `map_version`,
    `LIST` + per-object `META` reconstruct scan.
 2. **Versions**: `CMD_OBJ_COMMIT_VERSION/REMOVE_VERSION/LIST_VERSIONS`, client-generated UUID
    `version`/`version_id` in chunk identity, member-set registry, deletion,
