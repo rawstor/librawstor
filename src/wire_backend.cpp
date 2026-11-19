@@ -954,7 +954,6 @@ rawstd::Task<void> Backend::_wire_list_chunks(
 
     RawstdUUID input_token = token;
     chunks.clear();
-    token = {};
 
     // Filtered by a non-nil `id` (Backend::_wire_list_chunks()'s own doc
     // comment) without a wire command of its own: LIST resumes strictly
@@ -1012,6 +1011,7 @@ rawstd::Task<void> Backend::_wire_list_chunks(
     // real row returned). An empty response (nothing at all, not even a
     // cursor row) means the far end is already exhausted.
     if (entries.empty()) {
+        token = {};
         co_return;
     }
 
@@ -1053,6 +1053,7 @@ rawstd::Task<void> Backend::_wire_list_chunks(
         std::erase_if(chunks, [&id](const ChunkGroup& group) {
             return rawstd_uuid_cmp(&group.id, &id) != 0;
         });
+        token = {};
         co_return;
     }
 
@@ -1070,7 +1071,6 @@ rawstd::Task<void> Backend::_wire_list_accounts(
 
     const RawstdUUID input_token = token;
     accounts.clear();
-    token = {};
 
     rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT('l', "fd = %d\n", fd());
 
@@ -1105,6 +1105,7 @@ rawstd::Task<void> Backend::_wire_list_accounts(
 
     // The last row is the resume cursor; no rows at all means exhausted.
     if (entries.empty()) {
+        token = {};
         co_return;
     }
     accounts.reserve(entries.size() - 1);
@@ -1131,7 +1132,6 @@ rawstd::Task<void> Backend::_wire_list_locations(
     };
     memcpy(request.payload.token, token.bytes, sizeof(token.bytes));
     locations.clear();
-    token = {};
 
     std::vector<unsigned char> response;
     try {

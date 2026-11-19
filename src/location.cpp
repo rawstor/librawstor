@@ -791,6 +791,10 @@ rawstd::Task<void> Location::locations(
     if (error) {
         std::rethrow_exception(error);
     }
+    // As a URI prints, without the password its user information may carry.
+    for (std::string& location : locations) {
+        location = rawstd::URI(location).str();
+    }
     encode_token(token_id, token);
 }
 

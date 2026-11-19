@@ -216,7 +216,6 @@ rawstd::Task<void> Backend::list_chunks(
     bool filtered = !rawstd_uuid_is_nil(&id);
     RawstdUUID input_token = filtered ? RawstdUUID{} : token;
     chunks.clear();
-    token = {};
     try {
         std::string location_path = get_location_path(location());
 
