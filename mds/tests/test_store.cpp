@@ -531,6 +531,102 @@ TEST_F(ObjectStoreTest, list_objects_pages_by_id) {
     EXPECT_EQ(rawstd_uuid_cmp(&page[0].id, &ids[2]), 0);
 }
 
+// The ids of the objects `store` lists on `ost`, a page of `limit` at a time.
+std::vector<RawstdUUID>
+list_on(ObjectStore& store, const RawstdUUID& ost, unsigned int limit) {
+    std::vector<RawstdUUID> ret;
+    RawstdUUID token{};
+    do {
+        auto page = store.list_chunks(RawstdUUID{}, token, limit, ost);
+        for (const auto& entry : page) {
+            EXPECT_EQ(entry.type, RAWSTOR_LIST_ENTRY_OBJECT);
+            EXPECT_EQ(entry.offset, 0u);
+            ret.push_back(entry.id);
+        }
+    } while (!rawstd_uuid_is_nil(&token));
+    return ret;
+}
+
+TEST_F(ObjectStoreTest, list_objects_on_a_location) {
+    ObjectStore store = make_store();
+    std::vector<RawstdUUID> ids;
+    for (int i = 0; i < 8; ++i) {
+        ids.push_back(make_id());
+        store.create(
+            RawstdUUID{}, RawstdUUID{}, ids.back(), chunk_size, chunk_size,
+            make_policy(1)
+        );
+    }
+    std::sort(ids.begin(), ids.end(), [](const auto& a, const auto& b) {
+        return rawstd_uuid_cmp(&a, &b) < 0;
+    });
+
+    // Every object lists on the one location its slot is on, and only there.
+    size_t listed = 0;
+    for (const auto& ost : store.topology()->osts()) {
+        std::vector<RawstdUUID> expected;
+        for (const auto& id : ids) {
+            if (rawstd_uuid_cmp(
+                    &store.open(id, RawstdUUID{}).chunks[0][0].ost_id, &ost.id
+                ) == 0) {
+                expected.push_back(id);
+            }
+        }
+        for (unsigned int limit : {0u, 1u, 2u}) {
+            std::vector<RawstdUUID> got = list_on(store, ost.id, limit);
+            ASSERT_EQ(got.size(), expected.size()) << "limit " << limit;
+            for (size_t i = 0; i < got.size(); ++i) {
+                EXPECT_EQ(rawstd_uuid_cmp(&got[i], &expected[i]), 0);
+            }
+        }
+        listed += expected.size();
+    }
+    EXPECT_EQ(listed, ids.size());
+}
+
+TEST_F(ObjectStoreTest, list_objects_on_a_location_counts_version_members) {
+    ObjectStore store = make_store();
+    RawstdUUID id = make_id();
+    store.create(
+        RawstdUUID{}, RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1)
+    );
+    ObjectMap map = store.open(id, RawstdUUID{});
+    RawstdUUID slot_ost = map.chunks[0][0].ost_id;
+    // A location that holds no slot of the object, but one of its versions.
+    RawstdUUID other{};
+    for (const auto& ost : store.topology()->osts()) {
+        if (rawstd_uuid_cmp(&ost.id, &slot_ost) != 0) {
+            other = ost.id;
+            break;
+        }
+    }
+    ASSERT_FALSE(rawstd_uuid_is_nil(&other));
+    EXPECT_TRUE(list_on(store, other, 0).empty());
+
+    RawstdUUID version_id = make_id();
+    store.commit_version(
+        make_id(), id, version_id, std::vector<VersionMember>{{0, other}}
+    );
+    ASSERT_EQ(list_on(store, other, 0).size(), 1u);
+    EXPECT_EQ(rawstd_uuid_cmp(&list_on(store, other, 0)[0], &id), 0);
+    EXPECT_EQ(list_on(store, slot_ost, 0).size(), 1u);
+
+    // Once the version is gone nothing is held there.
+    store.remove_version(make_id(), id, version_id);
+    EXPECT_TRUE(list_on(store, other, 0).empty());
+}
+
+TEST_F(ObjectStoreTest, list_objects_on_an_unknown_location_is_enoent) {
+    ObjectStore store = make_store();
+    RawstdUUID token{};
+    try {
+        store.list_chunks(RawstdUUID{}, token, 0, make_id());
+        FAIL() << "expected ENOENT";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ENOENT);
+    }
+}
+
 TEST_F(ObjectStoreTest, list_versions_oldest_first) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();

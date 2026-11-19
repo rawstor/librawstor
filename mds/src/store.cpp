@@ -88,6 +88,10 @@ constexpr const char* SCHEMA =
     "  FOREIGN KEY (id, version_id)"
     "    REFERENCES versions(id, version_id) ON DELETE CASCADE"
     ") WITHOUT ROWID;"
+    /* The slots and version members one topology entry holds. */
+    "CREATE INDEX IF NOT EXISTS chunk_map_by_ost ON chunk_map(ost_id, id);"
+    "CREATE INDEX IF NOT EXISTS version_members_by_ost "
+    "ON version_members(ost_id, id);"
     /* Applied mutations by idempotency_key, for replaying a retried request. */
     "CREATE TABLE IF NOT EXISTS applied_mutations ("
     "  idempotency_key BLOB PRIMARY KEY,"
@@ -931,24 +935,42 @@ void ObjectStore::set_witness_owner(
 }
 
 std::vector<ChunkEntry> ObjectStore::list_chunks(
-    const RawstdUUID& account, RawstdUUID& token, unsigned int limit
+    const RawstdUUID& account, RawstdUUID& token, unsigned int limit,
+    const RawstdUUID& ost_id
 ) {
     std::lock_guard<std::recursive_mutex> guard(_mutex);
     /* The objects an account owns; no account lists them all. */
     const bool all = rawstd_uuid_is_nil(&account);
+    /* The objects with a slot or a version member on one topology entry. */
+    const bool held = !rawstd_uuid_is_nil(&ost_id);
+    if (held) {
+        const auto& osts = _topology->osts();
+        if (std::none_of(osts.begin(), osts.end(), [&](const TopologyOST& ost) {
+                return rawstd_uuid_cmp(&ost.id, &ost_id) == 0;
+            })) {
+            RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+        }
+    }
     Stmt stmt(
         _db,
         "WITH entries AS ("
         "SELECT id,chunk_offset,1 AS type,account_id FROM witnesses "
-        "UNION ALL SELECT id,0,2,account_id FROM objects) "
+        "WHERE ?=0 "
+        "UNION ALL SELECT id,0,2,account_id FROM objects "
+        "WHERE ?=0 OR id IN (SELECT id FROM chunk_map WHERE ost_id=?) "
+        "OR id IN (SELECT id FROM version_members WHERE ost_id=?)) "
         "SELECT id,chunk_offset,type,account_id FROM entries WHERE id>? AND "
         "(?=1 OR account_id=?) "
         "ORDER BY id,type DESC,chunk_offset"
     );
     RawstdUUID after = token;
-    stmt.bind_blob(1, after.bytes, sizeof(after.bytes))
-        .bind_int64(2, all ? 1 : 0)
-        .bind_blob(3, account.bytes, sizeof(account.bytes));
+    stmt.bind_int64(1, held ? 1 : 0)
+        .bind_int64(2, held ? 1 : 0)
+        .bind_blob(3, ost_id.bytes, sizeof(ost_id.bytes))
+        .bind_blob(4, ost_id.bytes, sizeof(ost_id.bytes))
+        .bind_blob(5, after.bytes, sizeof(after.bytes))
+        .bind_int64(6, all ? 1 : 0)
+        .bind_blob(7, account.bytes, sizeof(account.bytes));
     std::vector<ChunkEntry> entries;
     RawstdUUID last{};
     unsigned int groups = 0;

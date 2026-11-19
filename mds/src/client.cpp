@@ -619,7 +619,7 @@ rawstd::Task<void> Client::_dispatch(
                 rawstd_uuid_is_nil(&access.account)
                     ? uuid_of(payload.account_id)
                     : access.account,
-                token, limit
+                token, limit, uuid_of(payload.ost_id)
             );
             for (const auto& record : records) {
                 if (client->_transport->peer() &&

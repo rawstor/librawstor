@@ -988,6 +988,12 @@ rawstd::DetachedTask Client::_list(
     std::vector<unsigned char> data;
     int result = 0;
     try {
+        // A topology entry names a location of an MDS, not of an OST.
+        RawstdUUID ost_id;
+        memcpy(ost_id.bytes, payload.ost_id, sizeof(ost_id.bytes));
+        if (!rawstd_uuid_is_nil(&ost_id)) {
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
         co_await with_slot(
             client->_queue, client->_server.locations(),
             [&](rawstor::Slot& slot) -> rawstd::Task<void> {

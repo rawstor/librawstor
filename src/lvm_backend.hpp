@@ -81,7 +81,8 @@ public:
 
     rawstd::Task<void> list_chunks(
         RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-        RawstdUUID& token, RawstdUUID account = {}, RawstdUUID version_id = {}
+        RawstdUUID& token, RawstdUUID account = {}, RawstdUUID version_id = {},
+        RawstdUUID ost_id = {}
     ) override;
 
     rawstd::Task<void> create(

@@ -82,7 +82,9 @@ public:
     uint16_t send_write_zeroes(
         uint64_t offset, uint32_t size, bool unmap, bool sync, uint8_t flags = 0
     );
-    uint16_t send_list(const RawstdUUID& token, uint32_t limit);
+    uint16_t send_list(
+        const RawstdUUID& token, uint32_t limit, const RawstdUUID& ost_id = {}
+    );
     // Sends just a `RawstorFrameHead` with a command code none of the
     // send_*() above use -- the server's own default: case answers this
     // without ever trying to read a payload for it (it can't know the

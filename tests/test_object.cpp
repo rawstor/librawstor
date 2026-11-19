@@ -499,6 +499,93 @@ TEST(ObjectListTest, a_failed_page_keeps_its_token) {
     expect_untouched(mds->list_locations(0, locations, token));
 }
 
+// LIST against the MDS limited to the objects held by one topology entry,
+// through the same Backend as a plain LIST: every object here has its slot on
+// the environment's one OST, and an entry the MDS does not know is ENOENT.
+TEST(ObjectListTest, lists_mds_objects_held_by_a_location) {
+    rawstor::tests::ObjectEnv env(8940, 8941);
+    std::vector<std::string> uuids = {
+        "018f4e2a-3000-7000-8000-000000000070",
+        "018f4e2a-3000-7000-8000-000000000071",
+    };
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstorObjectSpec spec = one_chunk_spec();
+    for (const std::string& uuid : uuids) {
+        ASSERT_EQ(
+            target_create(*queue, object_target(env, uuid.c_str()), spec), 0
+        );
+    }
+
+    std::shared_ptr<rawstor::Backend> backend =
+        run(*queue,
+            rawstor::Backend::create(*queue, rawstd::URI(env.location())));
+
+    RawstdUUID ost_id;
+    ASSERT_EQ(
+        rawstd_uuid_from_string(
+            &ost_id, "018f4e2a-0000-7000-8000-000000000001"
+        ),
+        0
+    );
+    std::vector<rawstor::ChunkGroup> groups;
+    RawstdUUID token{};
+    run(*queue, backend->list_chunks({}, 0, groups, token, {}, {}, ost_id));
+    ASSERT_EQ(groups.size(), uuids.size());
+    for (size_t i = 0; i < uuids.size(); ++i) {
+        RawstdUUID id;
+        ASSERT_EQ(rawstd_uuid_from_string(&id, uuids[i].c_str()), 0);
+        EXPECT_EQ(rawstd_uuid_cmp(&groups[i].id, &id), 0);
+        EXPECT_TRUE(groups[i].offsets.empty());
+    }
+    EXPECT_TRUE(rawstd_uuid_is_nil(&token));
+
+    RawstdUUID unknown;
+    ASSERT_EQ(rawstd_uuid7_init(&unknown), 0);
+    try {
+        run(*queue,
+            backend->list_chunks({}, 0, groups, token, {}, {}, unknown));
+        ADD_FAILURE() << "no error";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ENOENT);
+    }
+
+    // The same through the C API, which names the targets.
+    auto list_held = [&](const std::string& where, const char* entry,
+                         std::vector<std::string>* targets) -> ssize_t {
+        RawstorStringList* page = nullptr;
+        RawstorPaginationToken page_token = {};
+        ssize_t res =
+            rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
+                return rawstor_location_list_held(
+                    queue.get(), where.c_str(), entry, 0, &page, &page_token,
+                    cb, data
+                );
+            });
+        if (res == 0) {
+            for (const char** it = rawstor_string_list_iter(page);
+                 it != nullptr; it = rawstor_string_list_next(it)) {
+                targets->push_back(*it);
+            }
+            rawstor_string_list_delete(page);
+            EXPECT_TRUE(rawstor_pagination_token_empty(&page_token));
+        }
+        return res;
+    };
+    const char* entry = "018f4e2a-0000-7000-8000-000000000001";
+    std::vector<std::string> listed;
+    ASSERT_EQ(list_held(env.location(), entry, &listed), 0);
+    EXPECT_EQ(listed.size(), uuids.size());
+    // An id that is not a UUID, and a location that is not an MDS.
+    EXPECT_EQ(list_held(env.location(), "not-a-uuid", &listed), -EINVAL);
+    EXPECT_EQ(list_held("file:///tmp", entry, &listed), -EINVAL);
+
+    for (const std::string& uuid : uuids) {
+        EXPECT_EQ(target_remove(*queue, object_target(env, uuid.c_str())), 0);
+    }
+}
+
 // An mds:// Backend is a control-plane client only: every data-path call
 // is a permanent ENOTSUP, which Slot never retries -- an object's I/O goes
 // to the members its target string expands to.

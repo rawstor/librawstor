@@ -691,6 +691,28 @@ TEST(OstClientTest, list_reports_every_chunk_offset) {
     EXPECT_EQ(rawstd_uuid_cmp(&row_id, &nil_id), 0);
 }
 
+// A topology entry names a location of an MDS: an OST has none to list by.
+TEST(OstClientTest, list_by_location_is_refused) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+
+    rawstor::ostserver::tests::Queue queue;
+    auto [raw_client, client_fd] = connect_client(server, queue);
+    ClientCleanup server_client(std::move(raw_client), queue);
+    rawstor::ostserver::tests::Client client(client_fd);
+
+    RawstdUUID ost_id;
+    ASSERT_EQ(rawstd_uuid7_init(&ost_id), 0);
+    client.send_list(RawstdUUID{}, 0, ost_id);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
+    }));
+    RawstorFrameResponse response = client.recv_response();
+    EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_LIST);
+    EXPECT_EQ(response.body.res, -EINVAL);
+}
+
 namespace {
 
 RawstorObjectSyncStateValue stored_state(

@@ -317,11 +317,14 @@ stamped or `RESYNC` request with `-EOPNOTSUPP`.
      +-------------------------------------------+----------+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~+
 ```
 
-### List — 36 bytes
+### List — 52 bytes
 
 `limit` ids per page, starting after `token_id` (nil = from the start). `account_id`
 limits the listing to the objects that account owns; nil lists every object
-([Accounts](accounts.md)).
+([Accounts](accounts.md)). `ost_id` limits it to the objects that have a slot or
+a version member on that topology entry; nil is no limit. Only an MDS answers a
+non-nil `ost_id` (`-ENOENT` for an entry it does not know); an OST refuses it with
+`-EINVAL`.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
@@ -333,12 +336,18 @@ limits the listing to the objects that account owns; nil lists every object
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
  16  |                                                                                       |
-     |                                 uint8_t token_id[16]                                  |
+     |                                   uint8_t ost_id[16]                                  |
      |                                                                                       |
  24  |                                                                                       |
      |                                                                                       |
+     +---------------------------------------------------------------------------------------+
+ 32  |                                                                                       |
+     |                                 uint8_t token_id[16]                                  |
+     |                                                                                       |
+ 40  |                                                                                       |
+     |                                                                                       |
      +-------------------------------------------+-------------------------------------------+
- 32  |              uint32_t limit               |
+ 48  |              uint32_t limit               |
      |                                           |
      +-------------------------------------------+
 ```

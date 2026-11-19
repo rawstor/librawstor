@@ -11,7 +11,7 @@ document's own numbering (see [Implementation stages](#implementation-stages));
 | Weight 0 keeps a location out of every new placement (data and witness) | 0 | ✅ | `mds/src/placement.cpp`; no end-to-end test, not documented for operators |
 | Topology refuses to drop a location that still holds chunks or version members | — | ✅ | `mds/src/store.cpp` |
 | List the locations of an MDS topology | 0 | ✅ | `LIST_LOCATIONS`, `rawstor location list`, `rawstor_location_topology()`, pyrawstor `Location.locations()` |
-| List the slots and version members held by one location | 0 | ❌ | — |
+| List the objects with a slot or a version member on one location | 0 | ✅ | `LIST` of an MDS limited by `ost_id`: `mds/src/store.cpp`, `rawstor_location_list_held()`, pyrawstor `Location.objects(ost_id=)`; [MDS side](#mds-side) |
 | `plan_seq`/`plan_gen` in the value; `RELEASE` bounded by `plan_seq`; a leftover never adopted | 1 | ❌ | [Idempotency](#idempotency) |
 | A one-member chunk keeps a register; epoch 0 refused once recorded | 1 | ✅ | [One copy](#a-one-copy-chunk); `src/target.cpp` (`initialize_members()`), `src/slot.cpp` (`Admission::admit()`) |
 | Members named in the register value: topology id, `member_role`, voter | 1 | ❌ | [Members in the value](#members-in-the-register-value) |
@@ -421,8 +421,8 @@ The object stays open and writable; the VM is not stopped.
 `MDS` is the `mds://` location whose topology has the entry; `LOCATION` names
 the entry by its URI or its topology id; `rawstor location list MDS` prints the URIs.
 `rawstor location info mds://…` without
-an entry keeps reporting the aggregate it reports now. Step 2 walks the MDS index
-of slots by location (stage 0). It is resumable, and runs while the VMs run. A
+an entry keeps reporting the aggregate it reports now. Step 2 walks the objects
+that `LIST` of the MDS reports for the entry ([MDS side](#mds-side)). It is resumable, and runs while the VMs run. A
 chunk whose versions are on the location blocks it until stage 5.
 
 ### Dead location
@@ -521,8 +521,12 @@ Stage 2 adds to the MDS database and protocol:
 - a placement function for added slots next to `place_chunk()` in
   `mds/src/placement.cpp`: the same hierarchical HRW, with the kept members'
   domains excluded, keyed per object for K < all;
-- a paged query of the slots and version members of one location, for drain and
-  status.
+- `LIST` limited to one location: the objects that have a slot or a version
+  member on a topology entry, one row per object, paged by id (`ost_id` in the
+  request, `-ENOENT` for an entry the topology does not have). It is what a drain
+  walks; the slots of an object on the entry are then read from its map
+  (`RESOLVE`). The counts of slots and version members `rawstor location info`
+  reports are a query of their own, with the drain status.
 
 Resuming a plan is decided by the register, not by the MDS: a commit found in
 the value means finalize. `--reconstruct` ([Reconstruct](mds.md#reconstruct-dr))

@@ -357,7 +357,7 @@ public:
     BackendOpList(
         const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
         const RawstdUUID& token, unsigned int limit, const RawstdUUID& account,
-        const rawstd::TraceEvent& trace_event
+        const RawstdUUID& ost_id, const rawstd::TraceEvent& trace_event
     ) :
         BackendOp(backend, cid, trace_event, "list", 0, 0),
         _request({
@@ -369,6 +369,7 @@ public:
                 },
             .payload = {
                 .account_id = {},
+                .ost_id = {},
                 .token_id = {},
                 .limit = limit,
             },
@@ -376,6 +377,10 @@ public:
         memcpy(
             _request.payload.account_id, account.bytes,
             sizeof(_request.payload.account_id)
+        );
+        memcpy(
+            _request.payload.ost_id, ost_id.bytes,
+            sizeof(_request.payload.ost_id)
         );
         memcpy(
             _request.payload.token_id, token.bytes,
@@ -941,7 +946,8 @@ rawstd::Task<std::vector<unsigned char>> Backend::exchange(
 
 rawstd::Task<void> Backend::_wire_list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token, RawstdUUID account, RawstdUUID version_id
+    RawstdUUID& token, RawstdUUID account, RawstdUUID version_id,
+    RawstdUUID ost_id
 ) {
     co_await _ensure_large_receive_ring();
 
@@ -963,6 +969,9 @@ rawstd::Task<void> Backend::_wire_list_chunks(
     // end holds it at all -- any other id it returns is dropped below.
     // A nil `id` never gets here, so it always has a predecessor.
     bool filtered = !rawstd_uuid_is_nil(&id);
+    if (filtered && !rawstd_uuid_is_nil(&ost_id)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
     if (filtered) {
         input_token = id;
         for (size_t i = sizeof(input_token.bytes); i-- > 0;) {
@@ -977,7 +986,7 @@ rawstd::Task<void> Backend::_wire_list_chunks(
 
     std::shared_ptr<BackendOpList> op = std::make_shared<BackendOpList>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        input_token, limit, account, trace_event
+        input_token, limit, account, ost_id, trace_event
     );
     _add_op(op);
 

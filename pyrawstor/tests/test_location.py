@@ -79,6 +79,23 @@ class TestLocation(unittest.TestCase):
                 list(location.locations())
             self.assertEqual(cm.exception.errno, errno.ENOTSUP)
 
+    def test_objects_held_by_an_entry_need_an_mds(self):
+        entry = "018f4e2a-0000-7000-8000-000000000001"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            location = rawstor.Location(f"file://{temp_dir}")
+            with self.assertRaises(OSError) as cm:
+                list(location.objects(ost_id=entry))
+            self.assertEqual(cm.exception.errno, errno.EINVAL)
+
+    def test_objects_held_by_an_entry_need_a_uuid(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            location = rawstor.Location(f"file://{temp_dir}")
+            nil = "00000000-0000-0000-0000-000000000000"
+            for ost_id in ("not-a-uuid", nil):
+                with self.assertRaises(OSError) as cm:
+                    list(location.objects(ost_id=ost_id))
+                self.assertEqual(cm.exception.errno, errno.EINVAL)
+
     def test_objects(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             location = rawstor.Location(f"file://{temp_dir}")

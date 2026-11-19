@@ -150,13 +150,25 @@ class Location:
         account (refused before anything is removed)."""
         librawstor.account_remove(self._uri, account)
 
-    def objects(self) -> Iterator[Target]:
+    def objects(self, ost_id: str | None = None) -> Iterator[Target]:
         """Yield the objects of this location, a page at a time. A location
         that names an account yields that account's objects, any other every
-        object (docs/accounts.md)."""
+        object (docs/accounts.md).
+
+        `ost_id`, the topology id of an entry of the MDS this location
+        names, a UUID string, limits them to the objects that have a slot or
+        a version member on that entry: what it still holds before it can
+        leave the topology (docs/migration.md). Raises OSError: ENOENT for an
+        entry the MDS does not know, EINVAL for an `ost_id` that is not a
+        UUID or a location that is not an mds:// one. See
+        rawstor_location_list_held(), <rawstor/location.h>."""
         token = None
         while True:
-            page, token = librawstor.object_list(self._uri, 0, token)
+            if ost_id is None:
+                page, token = librawstor.object_list(self._uri, 0, token)
+            else:
+                page, token = librawstor.object_list_held(
+                    self._uri, ost_id, 0, token)
             for target in page:
                 yield Target(target)
             if token is None:

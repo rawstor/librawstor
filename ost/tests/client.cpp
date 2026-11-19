@@ -291,7 +291,9 @@ uint16_t Client::send_write_zeroes(
     return cid;
 }
 
-uint16_t Client::send_list(const RawstdUUID& token, uint32_t limit) {
+uint16_t Client::send_list(
+    const RawstdUUID& token, uint32_t limit, const RawstdUUID& ost_id
+) {
     uint16_t cid = _next_cid++;
     RawstorFrameList frame = {
         .head =
@@ -300,8 +302,11 @@ uint16_t Client::send_list(const RawstdUUID& token, uint32_t limit) {
                 .cmd = RAWSTOR_CMD_LIST,
                 .cid = cid,
             },
-        .payload = {.account_id = {}, .token_id = {}, .limit = limit},
+        .payload = {
+            .account_id = {}, .ost_id = {}, .token_id = {}, .limit = limit
+        },
     };
+    std::memcpy(frame.payload.ost_id, ost_id.bytes, sizeof(ost_id.bytes));
     std::memcpy(
         frame.payload.account_id, _account.bytes,
         sizeof(frame.payload.account_id)
