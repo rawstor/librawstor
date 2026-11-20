@@ -702,22 +702,31 @@ TEST(OstClientTest, list_by_location_is_refused) {
     ClientCleanup server_client(std::move(raw_client), queue);
     rawstor::ostserver::tests::Client client(client_fd);
 
-    client.send_list(RawstdUUID{}, 0, "ost://127.0.0.1:7777");
-    ASSERT_TRUE(pump_until(queue, [&] {
-        return client.bytes_available() >= sizeof(RawstorFrameResponse);
-    }));
-    RawstorFrameResponse response = client.recv_response();
-    EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_LIST);
-    EXPECT_EQ(response.body.res, -EINVAL);
+    // The answer to a request with a location, and the bytes of its body, so
+    // that the next answer is read from where it starts.
+    auto answer = [&](const std::string& held_by) {
+        client.send_list(RawstdUUID{}, 0, held_by);
+        EXPECT_TRUE(pump_until(queue, [&] {
+            return client.bytes_available() >= sizeof(RawstorFrameResponse);
+        }));
+        RawstorFrameResponse response = client.recv_response();
+        EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_LIST);
+        if (response.body.res > 0) {
+            std::vector<unsigned char> body(response.body.res);
+            EXPECT_TRUE(pump_until(queue, [&] {
+                return client.bytes_available() >= body.size();
+            }));
+            client.recv_payload(body.data(), body.size());
+        }
+        return response.body.res;
+    };
 
+    EXPECT_EQ(answer("ost://127.0.0.1:7777"), -EINVAL);
     // The location was read with the request: the next one is understood.
-    client.send_list(RawstdUUID{}, 0);
-    ASSERT_TRUE(pump_until(queue, [&] {
-        return client.bytes_available() >= sizeof(RawstorFrameResponse);
-    }));
-    response = client.recv_response();
-    EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_LIST);
-    EXPECT_GE(response.body.res, 0);
+    EXPECT_GE(answer(""), 0);
+    // The longest location a request can carry is read whole as well.
+    EXPECT_EQ(answer(std::string(UINT16_MAX, 'a')), -EINVAL);
+    EXPECT_GE(answer(""), 0);
 }
 
 namespace {

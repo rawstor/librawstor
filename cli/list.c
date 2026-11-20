@@ -53,11 +53,14 @@ int rawstor_cli_list(
                          );
         ssize_t result = rawstor_cli_op_wait(&op, sres);
         if (result == -ENOENT && held_by != NULL) {
+            /* What was typed may carry a password. */
+            char shown[1024];
+            rawstor_cli_uri_display(held_by, shown, sizeof(shown));
             fprintf(
                 stderr,
                 "%s is not a location of the topology (`rawstor location list "
                 "MDS` prints them)\n",
-                held_by
+                shown[0] != '\0' ? shown : "the location"
             );
             rawstor_cli_op_destroy(&op);
             rawstor_cli_table_delete(table);

@@ -444,6 +444,17 @@ void rawstor_cli_target_location(
     }
 }
 
+void rawstor_cli_uri_display(const char* uri, char* out, size_t out_size) {
+    out[0] = '\0';
+    try {
+        const std::string shown = rawstd::URI(uri).str();
+        if (shown.size() < out_size) {
+            std::memcpy(out, shown.c_str(), shown.size() + 1);
+        }
+    } catch (...) {
+    }
+}
+
 char* rawstor_cli_list_target(const char* target, const char* location) {
     try {
         const auto sources = rawstd::URI::uriv(location);

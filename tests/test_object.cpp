@@ -558,6 +558,28 @@ TEST(ObjectListTest, lists_mds_objects_held_by_a_location) {
         EXPECT_EQ(e.code().value(), ENOENT);
     }
 
+    // A location as long as a request can carry is a location the topology does
+    // not have; one longer than that is refused before it is sent.
+    try {
+        run(*queue,
+            backend->list_chunks(
+                {}, 0, groups, token, {}, {}, std::string(UINT16_MAX, 'a')
+            ));
+        ADD_FAILURE() << "no error";
+    } catch (const std::system_error& e) {
+        EXPECT_TRUE(e.code().value() == ENOENT || e.code().value() == EINVAL)
+            << e.code().value();
+    }
+    try {
+        run(*queue,
+            backend->list_chunks(
+                {}, 0, groups, token, {}, {}, std::string(UINT16_MAX + 1, 'a')
+            ));
+        ADD_FAILURE() << "no error";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), EINVAL);
+    }
+
     // The same through the C API, which names the targets.
     auto list_held = [&](const std::string& where, const char* location,
                          std::vector<std::string>* targets) -> ssize_t {
