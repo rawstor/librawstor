@@ -7,120 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.0] - Unreleased
 
+Upgrading from 0.2.x: the OST wire protocol, the object layout on every backend and the CLI command structure changed incompatibly; see **Changed**. Objects created by 0.2.x are not visible to this release.
+
 ### Added
 
-- `rawstor location list MDS` lists the locations of an MDS topology, the URIs its objects' chunks can live at (`LIST_LOCATIONS`); `rawstor_location_topology()` does the same for a program, and pyrawstor has `Location.locations()`.
-- `rawstor object list --held-by LOCATION`, `rawstor_location_list_held()` and pyrawstor `Location.objects(held_by=...)` list the objects that have a slot or a version member on one location of an MDS topology, told by its URI as `rawstor location list` prints it; `LIST` carries the location in the body of the request ([migration](docs/migration.md#mds-side)).
-- An object UUID can stand in for a target: `rawstor object show|remove|resize|transfer|chunks|slots|resolve`, `rawstor version ...`, `rawstor-vhost` and `rawstor-vduse` accept `LOCATION UUID`, or a bare `UUID` with the location taken from `RAWSTOR_LOCATION`.
-- Objects and versions export to a file image and new objects are created from a file or from another object or version: `rawstor_target_export()`, `rawstor_target_create_from_file()`, `rawstor_target_create_from_target()` ([concepts](docs/concepts.md#image)); `rawstor_location_create_from_file()` and `rawstor_location_create_from_target()` create the object at a location, as `rawstor_location_create()` does; pyrawstor has `Target.export()`, `Target.create_from_file()`, `Target.create_from()`, `Location.create_from_file()` and `Location.create_from()`; the CLI has `rawstor object export`, `rawstor version export`, `rawstor object import` and `rawstor object copy`(`cp`, also `rawstor copy`); they report progress as a percentage (the callback is called many times, 100 is the last call).
-- Python `rawstor.initialize(insecure=True)` supports running without TLS certificates.
-- All systemd services accept additional command-line arguments through `EXTRA_ARGS` in their configuration files, including `--insecure`.
-- Certificate role `none` denies unlisted objects; explicit object permissions override role defaults, supporting credentials scoped to one vhost object.
-- TLS account authorization with CA-signed roles and object restrictions, independently checked by MDS and OST; PKI CLI/C/Python APIs issue, inspect and renew the signed permissions.
-- Accounts ([design](docs/accounts.md)): an object has an owner account, named in a location as optional user information (`ost://<account>@host:port`); `list` shows the objects an account owns and each one's account, or every object without an account; `create` without an account creates for the default account; an MDS keeps an account registry, and `rawstor account create`/`list`/`remove` manage it, and removing an account removes its objects with their versions; `rawstor object transfer TARGET ACCOUNT` (`rawstor_target_transfer()`) makes another account the owner of an object; pyrawstor has `Location.accounts()`/`create_account()`/`remove_account()`, `Target.transfer()`, `Target.account`, `ObjectMeta.account` and `DEFAULT_ACCOUNT`.
-- TLS 1.3 with mutual authentication between the client library and every service ([design](docs/security.md)), set with `RAWSTOR_TLS_TRUST_DOMAIN`, `RAWSTOR_TLS_CERT`, `RAWSTOR_TLS_KEY` and `RAWSTOR_TLS_CA` ([configuration](docs/configuration.md#tls)); a process without them refuses to start unless it is run with `--insecure` (`RawstorOpts::insecure` in a program; systemd services can pass the flag through `EXTRA_ARGS`), which turns TLS off, and with it every authentication, and refuses to start if it has both: a peer is identified by the SPIFFE ID in its certificate, an OST the MDS resolved must present its own (`RAWSTOR_TLS_MDS_ID` pins the MDS likewise), and the certificate is read again on `SIGHUP`/`SIGUSR1` (`rawstor_tls_request_reload()`). OpenSSL 3.0 or newer is a build dependency.
-- `rawstor pki init`/`issue`/`renew` make a small CA and the certificates TLS needs and `rawstor pki show` reads one, `rawstor_pki_init()`/`rawstor_pki_issue()`/`rawstor_pki_renew()`/`rawstor_pki_show()` do the same for a program, and pyrawstor has `rawstor.pki`; importing `rawstor` no longer starts librawstor until `Target` or `Location` is used.
-- Every connection begins with `HANDSHAKE`, which negotiates optional capabilities as feature bits (no protocol version); a server serves nothing before it, and none is defined yet.
-- Host names work wherever an IPv4 address did: `ost://`/`mds://` locations, topology files and the `rawstor-ost`/`rawstor-mds` listen address are resolved (IPv4 only).
-- `rawstor-vhost` supports QEMU live migration: it logs the guest pages it writes (`VHOST_USER_PROTOCOL_F_LOG_SHMFD`, `VHOST_F_LOG_ALL`) and accepts the migration-time `SET_CONFIG`.
-- `rawstor version create` works on `lvm://` members as a classic (non-thin) read-only snapshot LV whose COW area is sized to the whole origin.
-- `SIGHUP` makes `rawstor-vhost` and `rawstor-vduse` pick up a grown object and tell the guest its disk got bigger (`VHOST_USER_BACKEND_CONFIG_CHANGE_MSG`, VDUSE config interrupt).
-- Python `Target.resize()` grows an `mds://` object.
-- `rawstor version create` works on `file://` members as a fake snapshot: the member's data file is copied into a per-version subdirectory under the write barrier.
-- A write barrier across `rawstor version create`: the OSTs hold new writes to every DATA member of every chunk (`FREEZE`/`THAW`, [design](docs/mds.md#the-write-barrier)), drain and flush the admitted ones, and release them once the version is registered, so a version is one consistent point in time even with a live writer; a lease releases them by itself if the caller dies.
-- `rawstor create`, `list`(`ls`), `remove`(`rm`), `show` and `info` are shorthands for `rawstor object create|list|remove|show` and `rawstor location info`.
-- `ls` and `rm` are aliases for `list` and `remove` in `rawstor object`, `rawstor version` and `rawstor account`; usage shows them as `list(ls)` and `remove(rm)`.
-- `rawstor object list|show|chunks|slots|create|resolve`, `rawstor version list|create|show`, `rawstor account create|list` and `rawstor location info` take `--format table|json|value` (default `table`, a bordered table wrapped to the terminal width) and `--column COL[,COL...]` to choose and order the columns.
-- New MDS chunks with an even DATA width automatically place one witness in an unused failure domain; topology requires a `role` column (`data`, `witness` or both), with MDS witnesses addressed through `ost://`.
-- `rawstor_target_slots()` and Python `Target.slots()` enumerate physical member URIs, also shown per member by `rawstor object slots`.
-- Metadata-only witness members on OST, MDS and local backends, with synchronous membership barriers and witness-assisted quorum for even numbers of data copies.
-- `rawstor-vhost` supports `VHOST_USER_PROTOCOL_F_INFLIGHT_SHMFD`, and `rawstor-vduse` keeps an equivalent in-flight log in `/dev/shm`, so requests in flight when the backend crashes are resubmitted after it restarts instead of never completing.
-- `rawstor-ost@<uuid>.service` systemd template (one instance per OST, configured by `/etc/rawstor/ost/<uuid>.conf`, serving `/var/lib/rawstor/ost/<uuid>` by default), so a host runs several OSTs; installing the package starts nothing and an upgrade restarts the running instances, of `rawstor-mds@` too.
-- `rawstor location info mds://` reads cached backend space statistics from MDS, with configurable periodic health probes and placement restricted to available backends; creating, growing and removing an object probes the OSTs holding its slots again after `RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY` (default 5 s) instead of waiting for their regular slot.
-- N-way mirroring ([design](docs/mirroring.md)): quorum-gated open, degrade-and-continue writes, read failover and repair, and online resync of a stale, reconnected or missing member (a copy lost from one member is recreated at open while the remaining copies are still a majority), with each copy's own consistency state persisted by its backend (a `meta` file next to `file://`'s data, an LVM tag, a ZFS user property).
-- A mirrored object may be open for writing several times within one process (every virtqueue of a multiqueue `rawstor-vhost`/`rawstor-vduse` device), all opens sharing its mirror state; several writer processes (multi-attach) are not supported.
-- `rawstor object create -m`/`--mirrors N` and the matching `RawstorObjectSpec.width`/pyrawstor `width` (both required); a width of 0 is `-EINVAL`, and witnesses are excluded from the data-copy count.
-- `rawstor object chunks` (a row per chunk) and `rawstor object slots` (a row per member slot of every chunk, with every copy's own consistency state and role), and `rawstor object resolve TARGET --winner=N[,N...] [--offset OFFSET]` for manual split-brain recovery, backed by the new `rawstor_target_meta()`/`rawstor_target_chunks()`/`rawstor_target_sync_prepare()`/`rawstor_target_sync_accept()` API (pyrawstor `Target.meta()`/`Target.sync_accept()`).
-- Each copy of a mirrored chunk keeps its own `DIRTY`/`CLEAN` state from the sessions writing it, and goes `LOST` when one that wrote vanished without a clean close; `rawstor_object_abandon()` closes without one ([design](docs/mirroring.md#dirty-clean-and-lost)).
-- Multi-chunk objects: `RawstorObjectSpec.chunk_size`/`rawstor object create --chunk-size` splits an object into equal chunks (its size must be a multiple of it) addressed by offset, one target routing I/O across all of them; `rawstor_location_create()` lays them out itself and `rawstor_location_list()` returns each such object as a single target.
-- `rawstor-mds` metadata server ([design](docs/mds.md); own deb/rpm package with the `rawstor-mds@<uuid>.service` template, one instance per cluster configured by `/etc/rawstor/mds/<uuid>.conf`, `--without-sqlite3` to skip it) with `-w`/`--workers N` threads (default `4`), and `mds://host:port/<id>` objects (`--chunk-size` required), whose chunks it places across a static OST topology, usable anywhere a target is and listed by `rawstor object list mds://host:port`; plus `rawstor object create --failure-domain`/`--stripe-width`, grow-only `rawstor object resize` by whole chunks (`rawstor_target_resize()`), topology reload on `SIGHUP` (refused if it drops an OST still holding chunks, as is such a topology at startup) and `rawstor-mds --reconstruct` to rebuild a lost chunk map from the OSTs.
-- Native CoW versions (`zfs://` only, `-ENOTSUP` elsewhere; across every chunk of an `mds://` object): `rawstor version create TARGET [-u UUID]` (`rawstor_target_create_version()`, pyrawstor `Target.create_version()`) returns a `TARGET/VERSION_ID` target that opens only `RAWSTOR_READONLY` and is removed with `rawstor version remove`; `rawstor_target_version_id()` reads the version back.
-- pyrawstor `Location.create()`/`Target.create()` take `failure_domain` (an `OBJ_DOMAIN_*` value or its `--failure-domain` name) and `stripe_width` (also on `ObjectSpec`); `ObjectMeta` gains `chunk_size`/`stripe_width`/`failure_domain`/`member_role`/`role`/`writers`, and the `OBJ_DOMAIN_*`/`READONLY`/`FORCE`/`OBJECT_SYNC_STATE_*`/`OBJECT_MEMBER_*`/`MEMBER_*`/`CONFIG_*` constants are available as `rawstor.*`.
-- `rawstor version list TARGET` (`rawstor_target_versions()`, pyrawstor `Target.versions()`) lists an object's versions, oldest first; pyrawstor also gains `Target.chunks()`.
-- `--readonly` for `rawstor-vhost`, `rawstor-vhost-qemu` and `rawstor-vduse`: advertises `VIRTIO_BLK_F_RO` and opens the target `RAWSTOR_READONLY`, which is also how a version is exported; `--force` with it opens without a mirror write quorum (`RAWSTOR_FORCE`).
+- `rawstor-mds` metadata server ([design](docs/mds.md); own deb/rpm package with the `rawstor-mds@<uuid>.service` template): `mds://host:port/<id>` objects whose chunks it places across a static OST topology, usable anywhere a target is; grow-only `rawstor object resize`, `--failure-domain`/`--stripe-width` on create, topology reload on `SIGHUP`, `rawstor-mds --reconstruct` to rebuild a lost chunk map from the OSTs, `rawstor location info mds://` with cached space statistics and health probes, and `rawstor location list` for the locations of a topology.
+- Multi-chunk objects: `rawstor object create --chunk-size` (`RawstorObjectSpec.chunk_size`) splits an object into equal chunks, and one target routes I/O across all of them.
+- N-way mirroring ([design](docs/mirroring.md)): `rawstor object create --mirrors N` (`RawstorObjectSpec.width`, pyrawstor `width`), quorum-gated open, degrade-and-continue writes, read failover and online resync of a stale, reconnected or missing member; `rawstor object chunks`, `slots` and `resolve` inspect a mirror and recover it by hand after a split brain.
+- Witness members: metadata-only chunk members that break ties for an even number of data copies; MDS places one automatically for an even width, and the topology needs a `role` column.
+- Native CoW versions (`zfs://`, plus snapshot-like versions on `lvm://` and `file://`): `rawstor version create|list|show|remove`, consistent even with a live writer thanks to a write barrier across the object's chunks ([design](docs/mds.md#the-write-barrier)); a version opens only `RAWSTOR_READONLY`.
+- Export and import: `rawstor object export|import|copy` and `rawstor version export` move an object or version to and from a file image or another object, with progress reporting; also in the C API (`rawstor_target_export()`, `rawstor_target_create_from_file()`, ...) and pyrawstor.
+- Accounts ([design](docs/accounts.md)): an object belongs to an account named in the location (`ost://<account>@host:port`); `rawstor account create|list|remove` and `rawstor object transfer`; `list` shows each object's account.
+- TLS 1.3 with mutual authentication between the client library and every service ([design](docs/security.md), [configuration](docs/configuration.md#tls)), and role- and object-level authorization from CA-signed certificates. A process without certificates refuses to start unless run with `--insecure`. `rawstor pki init|issue|renew|show` (and `rawstor_pki_*()`, `rawstor.pki`) manage a small CA. OpenSSL 3.0 or newer is a build dependency.
+- An object UUID can stand in for a target: commands accept `LOCATION UUID`, or a bare `UUID` with the location taken from `RAWSTOR_LOCATION`.
+- `rawstor object list --held-by LOCATION` lists the objects that have a member on one location of an MDS topology.
+- `rawstor object|version|account|location` list and show commands take `--format table|json|value` and `--column`; `rawstor create|list|show|remove|info` are shorthands, and `ls`/`rm` alias `list`/`remove`.
+- `--readonly` for `rawstor-vhost`, `rawstor-vhost-qemu` and `rawstor-vduse` (`--force` with it skips the mirror write quorum).
+- `rawstor-vhost` supports QEMU live migration; `SIGHUP` makes `rawstor-vhost` and `rawstor-vduse` pick up a grown object and tell the guest.
+- Requests in flight when `rawstor-vhost` or `rawstor-vduse` crashes are resubmitted after it restarts instead of never completing.
+- `rawstor-ost@<uuid>.service` systemd template, so a host runs several OSTs; all systemd services take extra arguments through `EXTRA_ARGS`.
+- Host names work wherever an IPv4 address did in `ost://`/`mds://` locations, topology files and listen addresses (IPv4 only).
+- Every connection begins with `HANDSHAKE`, which negotiates optional capabilities.
+- pyrawstor: `rawstor.initialize(insecure=True)`, `Target.resize()` for `mds://` objects, and bindings for all of the above (`Target.slots()`, `chunks()`, `versions()`, `meta()`, `Location.accounts()`, ...).
 
 ### Changed
 
-- `rawstor object show` and `rawstor version show` print the same specification columns as `create`: `chunk_size`, `failure_domain` and `stripe_width`.
-- `rawstor object create` by `LOCATION` prints a target with only the account `LOCATION` names, as `object list` does; the owner is in the `account` column.
-- A URI prints without its password: `user:password@host` is shown as `user@host` wherever a URI or target is printed or listed.
-- Incompatible: every connection must begin with `HANDSHAKE`.
-- Incompatible: the CLI groups its commands. `rawstor object create|list|show|remove|resize|chunks|slots|resolve` and `rawstor version create|list|show|remove` replace the top-level commands, `info` moves to `rawstor location info`, `testio` stays; `object remove` and `object show` take only the address of an object, `version remove` and `version show` only that of a version.
-- Incompatible: `ALLOCATE`, `OBJ_CREATE`, `LIST` and `META` carry an account, chunk metadata records the owner, and an MDS database from before accounts is refused at start; there is no migration.
-- The service reference moved out of `README.md` into `docs/` (`rawstor-ost`, `rawstor-mds`, `rawstor-vhost`, `rawstor-vduse`, configuration, witness members, troubleshooting, building from source), a quick start from packages and a new page of known limitations; the README keeps the key ideas and an index, and the source tarball, the `librawstor` deb and rpm ship `docs/` next to it (under `/usr/share/doc/librawstor/`).
-- An open `mds://` object talks to its OSTs directly: the MDS is read once at open, and I/O errors no longer re-resolve the map or reopen the object.
-- `rawstor object create|resolve|list|show`, `rawstor version create|list` and `rawstor location info` print a table by default instead of plain lines; scripts that read a target from stdout use `--format value --column target`. `rawstor object show -v` is gone: `rawstor object chunks` and `rawstor object slots` list the chunks and the member slots.
-- Table headers are lowercase, as `--column` takes them, and `list`, `show`, `chunks` and `slots` add the `location`, `chunk_location` and `slot_location` columns.
-- Sizes are bytes without a unit suffix: a bare number is accepted wherever a size is parsed (`--size`, `--chunk-size`, `--block-size`, `RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY`; `B` is still accepted), and bytes are printed without a `B`.
-- The size unit options `-b`/`-k`/`-m`/`-g`/`-t`/`-p`/`-e` (`--bytes`, `--kib`, ...) moved from `rawstor location info` to before the command (`rawstor -g location info LOCATION`), and apply to every command's `--format table` and `value` output.
-- `ost://` and `mds://` URIs, and the `--bind` address of `rawstor-ost` and `rawstor-mds`, default to port 7777 and 7776 respectively when no port is given.
-- `rawstor object slots` prints ancestor and current sync ids on one line, oldest first.
-- Native witnesses on MDS use `ost://` URIs; `mds://` URIs resolve logical objects and chunks.
-- `rawstor object chunks` and `rawstor object slots` print each chunk's target and each member's physical URI for recovery commands.
-- `rawstor_target_chunks()` returns `mds://host:port/UUID/OFFSET` for the chunks of an `mds://` object instead of resolving them to their members (one MDS request instead of one per chunk); `rawstor_target_slots()` gives the members.
-- Chunk metadata and recovery APIs address chunks by URI instead of a separate offset; chunk listing returns target strings, and MDS routing no longer probes for witness records.
-- A mirrored writable open heals copies a vanished writer may have left different from the first clean (else first) copy in the background while writes go on, and clears their `LOST` mark once they are equal. While other writers go on, a copy a vanished writer left `LOST` is excluded and resynced, one at a time, with the same effect.
-- All members share configuration, state and rejoin rules; writable mirrors require a strict majority even with two data copies and no witness.
-- BLK metadata stores logical size for DATA and WITNESS members independently of physical allocation.
-- OST serves exactly one backend Slot and rejects multiple locations at startup.
-- Member configuration updates take an optional typed state separately from flags.
-- `mirror_resync_lease` (`RAWSTOR_OPTS_MIRROR_RESYNC_LEASE`, 30 s): how long a resync that another writer runs may stay silent before the member it brings back is excluded.
-- Data and witness members share the `SYNC_PREPARE`/`SYNC_ACCEPT` requests of the chunk's configuration register for atomic configuration updates.
-- MDS lists objects and witness members through the ordinary `LIST` command.
-- Witness members use ordinary backend URIs and use the last location when there is one more location than the even data width, with their type reported by metadata.
-- Every backend now stores an object per chunk (`file://` `<uuid>/<offset>/data`, LVM `<uuid>-<offset>`, ZFS `<uuid>:<offset>`), with no migration: objects created by 0.2.x are not visible to this release.
-- `rawstor_target_open()` gains an `int flags` argument (`0`, `RAWSTOR_READONLY`: every write fails `-EROFS`, or `RAWSTOR_FORCE | RAWSTOR_READONLY`: also no mirror quorum needed). Breaking C API change.
-- The transitional `rawstor_object_*2()`/`rawio_*2()` functions are gone: their callback-based shapes (including `rawstor_object_pwrite()`/`pwritev()`'s `sync` argument and an `ssize_t` result for every `rawio_*()` callback) now live under the original names. Breaking C API change.
-- `rawstor_object_pread()`/`preadv()`/`pwrite()`/`pwritev()`/`discard()`/`write_zeroes()` take their `offset` as `uint64_t` instead of `off_t`. Breaking C API change.
-- Target strings returned by `rawstor_location_list()`/`_create()` always carry an explicit chunk offset segment (`<uuid>/0`); a target without one still parses as offset 0.
-- `rawstor-vhost`/`rawstor-vhost-qemu`/`rawstor testio`'s `--queue-size` defaults raised from 256 to 4096, matching `rawstor-ost`.
-- `rawstor-vduse`'s `--num-queues` defaults to the host's number of CPUs instead of `16`, and a virtqueue's thread and connection to the target are only started once the driver enables it.
-- The client opens exactly one connection per object chunk and backend (per mirror arm).
-- The OST wire protocol changed incompatibly (`LIST` entries carry a chunk offset, `RELEASE` also removes a version, new `META`/`SYNC_PREPARE`/`SYNC_ACCEPT`/`LEAVE`/`CREATE_VERSION`/`LIST_VERSIONS`/`OBJ_*` commands); `rawstor-ost` and its clients must be upgraded together.
+- Incompatible: the OST wire protocol changed (every connection begins with `HANDSHAKE`; `LIST` entries carry a chunk offset and an account; new commands); `rawstor-ost`, `rawstor-mds` and their clients must be upgraded together.
+- Incompatible: every backend stores an object per chunk (`file://` `<uuid>/<offset>/data`, LVM `<uuid>-<offset>`, ZFS `<uuid>:<offset>`), with no migration.
+- Incompatible: the CLI groups its commands: `rawstor object create|list|show|remove|resize|chunks|slots|resolve`, `rawstor version ...`, `rawstor location info` replace the top-level commands; `testio` stays.
+- `rawstor` prints tables by default; scripts that read a target from stdout use `--format value --column target`.
+- Sizes are plain bytes without a unit suffix (`B` is still accepted), and the size unit options `-b`/`-k`/`-m`/`-g`/... go before the command (`rawstor -g location info LOCATION`).
+- A URI prints without its password.
+- `ost://` and `mds://` URIs and the `--bind` address of `rawstor-ost`/`rawstor-mds` default to port 7777 and 7776.
+- `rawstor-vhost`, `rawstor-vhost-qemu` and `rawstor testio` default `--queue-size` to 4096; `rawstor-vduse` defaults `--num-queues` to the number of CPUs.
+- The client opens exactly one connection per chunk and backend, and an open `mds://` object talks to its OSTs directly.
+- `rawstor-ost` serves exactly one backend location.
+- Breaking C API changes: `rawstor_target_open()` takes an `int flags` argument (`RAWSTOR_READONLY`, `RAWSTOR_FORCE`); the `rawstor_object_*2()`/`rawio_*2()` functions are gone and their callback-based shapes live under the original names; `rawstor_object_pread()`/`pwrite()`/... take `offset` as `uint64_t`; target strings from `rawstor_location_list()`/`_create()` carry the chunk offset (`<uuid>/0`).
+- The README's service reference moved into `docs/`, which the source tarball and the `librawstor` deb/rpm now ship.
 
 ### Removed
-- Python `Location.__iter__`: iterate `Location.objects()` instead, a generator.
-- The deprecated synchronous `rawstor_object_spec()`/`_list()`/`_create()`/`_create_at()`/`_remove()`/`_open()`/`_id()`/`_location()`, in favor of the async `rawstor_target_*()`/`rawstor_location_*()` API.
-- The deprecated `-l`/`--location` and `-t`/`--target` flags (`rawstor object` subcommands, `rawstor testio`, `rawstor-ost`, `rawstor-vhost`) in favor of the positional `LOCATION`/`TARGET` argument (`rawstor object create -t TARGET` is unaffected), and the `rawstor-cli` compat symlink from the deb/rpm packages.
-- The `RAWSTOR_OPTS_SESSIONS` environment variable, `rawstor --sessions` and `RawstorOpts.sessions`. Breaking C API change.
-- The `SPEC` OST wire command (added in 0.2.3), superseded by `META`; a `rawstor-ost` from this release rejects it with `-ENOSYS`.
-- `rawstor-vhost`'s `--num-queues`: it now serves as many virtqueues as the front-end sets up (QEMU's own `num-queues=`), so QEMU no longer fails to start a guest with more vCPUs than `--num-queues` (default `4`).
+
+- The deprecated synchronous `rawstor_object_spec()`/`_list()`/`_create()`/`_create_at()`/`_remove()`/`_open()`/`_id()`/`_location()` in favor of `rawstor_target_*()`/`rawstor_location_*()`.
+- The deprecated `-l`/`--location` and `-t`/`--target` flags and the `rawstor-cli` symlink in favor of the positional `LOCATION`/`TARGET`.
+- `RAWSTOR_OPTS_SESSIONS`, `rawstor --sessions` (`RawstorOpts.sessions`: breaking C API change) and the `SPEC` OST command (superseded by `META`).
+- `rawstor-vhost`'s `--num-queues`: it serves as many virtqueues as QEMU sets up.
+- Python `Location.__iter__`: iterate `Location.objects()` instead.
 
 ### Fixed
 
-- Closing a mirrored object with a witness over TLS no longer logs `leave failed: No such file or directory`: a witness connection, which has no object bound, now leaves without an ownership check.
-- Provider admins can initialize mirrored object membership, including MDS witnesses, without data-write permissions.
-- CLI object listings preserve explicitly supplied URI accounts and report the owner separately without adding it to unqualified URIs.
-- PKI renewal and inspection verify the same certificate they read, using only the CA public key for signature checks.
-- PKI publication failures restore the previous key and allow incomplete CA initialization to be retried.
-- A mirror member that rejoins after an earlier resync of it was aborted, or its writer died, no longer serves stale data: the new resync copies every range the earlier one had recorded as written, instead of skipping it, which left old data in the member after the rejoin.
-- `rawstor-vhost` and `rawstor-vduse` no longer freeze or crash when an OST that was down for longer than the retries last comes back: a replaced member connection is now closed only after every call on it has finished, its metadata and register calls included.
-- `rawstor-vhost` and `rawstor-vduse` no longer crash (use after free) when a mirror member comes back while writes to it are still in flight: the broken connection it replaces is now closed after those writes finish instead of being freed under them.
-- A failing operation no longer retries its reconnect inside its own retries: reconnects share the one `io_attempts` budget, instead of up to its square with a backoff each.
-- A mirror member that reconnects after its OST restarted is no longer left `LOST` and resynced a second time: the new connection takes over the session of the one it replaces.
-- A mirrored object's writes no longer hang forever when starting a resync of a member fails unexpectedly: the chunk's transition lock was left held, and every write that got `ESTALE` waited for it.
-- `rawstor-ost` on ZFS and LVM no longer fails with `ENOMEM` on a host with little memory: the `zfs` and `lvm` commands are started with `posix_spawn()` instead of `fork()`, which could not account for a copy of the server's address space.
-- A copy no longer goes `LOST` (and is no longer resynced) when `rawstor-ost` drops a writer's connection first, as after a short write: it waits two seconds for the writer's replacement connection.
-- Unsupported operations fail without retries on macOS.
-- OST shutdown terminates incomplete network requests before draining storage operations.
-- With the `poll()` backend (`--without-liburing`, always on macOS), the next request after one that had exhausted its retries hung forever instead of reconnecting.
-- A restarted `rawstor-vduse` now resumes serving a device the driver is already using instead of leaving its I/O hanging, and starts each virtqueue from the driver-set ring state, so a guest that resets the device and sets it up again no longer hangs either.
-- `rawstor-vhost`/`rawstor-vduse` now let in-flight requests complete on `SIGINT`/`SIGTERM` instead of dropping them, so a planned restart is invisible to the guest.
-- `rawstor-vhost` killed outright left its socket file behind, and every restart then failed with "Address already in use"; a socket nothing listens on any more is now removed at startup, and a second instance started on the same socket now fails right away instead.
-- `rawstor-ost` now answers `-ENOSYS` for a command it doesn't recognize instead of just dropping the connection, so a newer client can tell "unsupported" apart from a transport failure.
-- The `rawstor-vduse` deb package (present since 0.2.10) was never actually built or published: CI's packaging job never copied its `.install`/`.postinst`/`.prerm` files into place.
-- With io_uring, a connection could hang forever when the kernel ended its multishot receive on its own (e.g. on a full completion ring); it now fails and reconnects.
-- With the `poll()` backend (`--without-liburing`, always on macOS), a `rawstor-ost`/`rawstor-mds` worker thread that lost the race for an incoming connection blocked inside `accept()`, so it stopped serving its clients and the server could not be stopped with Ctrl-C/SIGTERM.
+- `rawstor-vhost` and `rawstor-vduse` no longer freeze or crash when an OST comes back after being down for longer than the retries last.
+- `rawstor-vhost` and `rawstor-vduse` let in-flight requests complete on `SIGINT`/`SIGTERM`, so a planned restart is invisible to the guest.
+- A restarted `rawstor-vduse` resumes serving a device the driver is already using, and a guest that resets the device no longer hangs it.
+- `rawstor-vhost` killed outright no longer leaves a socket file that blocks every restart.
+- `rawstor-ost` on ZFS and LVM no longer fails with `ENOMEM` on a host with little memory.
+- `rawstor-ost` answers `-ENOSYS` for an unknown command instead of dropping the connection.
+- With io_uring, a connection no longer hangs when the kernel ends its multishot receive on its own.
+- With the `poll()` backend, a `rawstor-ost`/`rawstor-mds` worker no longer blocks in `accept()`, which kept the server from stopping on Ctrl-C/SIGTERM.
 
 ## [0.2.12] - 2026-10-01
 
