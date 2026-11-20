@@ -61,7 +61,7 @@ const char* const lvm_config =
 const char* const rawstor_tag_prefix = "rawstor.meta=";
 
 // Separates a version snapshot LV's chunk name from its version_id:
-// "<uuid>-<offset>-s<version_id>". Never part of a live chunk's name, so
+// "<uuid>-<offset>-s<short version_id>". Never part of a live chunk's name, so
 // list_chunks() already skips a snapshot LV when listing live chunks.
 const char* const version_infix = "-s";
 
@@ -171,8 +171,12 @@ std::string Backend::_lv_name(
     snprintf(offset_str, sizeof(offset_str), "%" PRIx64, offset);
     std::string name = std::string(uuid_str) + "-" + offset_str;
     if (!rawstd_uuid_is_nil(&version_id)) {
-        RawstdUUIDString version_str;
-        rawstd_uuid_to_string(&version_id, &version_str);
+        // The short form of the version id, not its full string: LVM
+        // refuses "<vg>/<lv>" longer than 127 characters ("Internal error:
+        // LV name ... is not supported"), which the full string overflows
+        // for a long VG name or a large chunk offset.
+        RawstdUUIDShortString version_str;
+        rawstd_uuid_to_short_string(&version_id, &version_str);
         name += std::string(version_infix) + version_str;
     }
     return name;
@@ -225,7 +229,7 @@ rawstd::Task<void> Backend::list_chunks(
     // Filtered by a non-nil `id` (Backend::list_chunks()'s own doc
     // comment): every other uuid's own LVs are skipped while grouping,
     // and `token` plays no part. A non-nil `version_id` lists that
-    // version's own snapshot LVs ("<uuid>-<offset>-s<version_id>")
+    // version's own snapshot LVs ("<uuid>-<offset>-s<short version_id>")
     // instead of the live LVs.
     bool filtered = !rawstd_uuid_is_nil(&id);
     bool version = !rawstd_uuid_is_nil(&version_id);
@@ -234,8 +238,8 @@ rawstd::Task<void> Backend::list_chunks(
     }
     std::string version_suffix;
     if (version) {
-        RawstdUUIDString version_str;
-        rawstd_uuid_to_string(&version_id, &version_str);
+        RawstdUUIDShortString version_str;
+        rawstd_uuid_to_short_string(&version_id, &version_str);
         version_suffix = std::string(version_infix) + version_str;
     }
     RawstdUUID input_token = filtered ? RawstdUUID{} : token;
@@ -808,7 +812,7 @@ rawstd::Task<void> Backend::_write_meta(
 }
 
 // Every snapshot LV of this chunk's own LV that this backend itself took
-// ("<uuid>-<offset>-s<version_id>", _lv_name()'s naming); any other
+// ("<uuid>-<offset>-s<short version_id>", _lv_name()'s naming); any other
 // snapshot of it (e.g. one taken by hand) is skipped.
 rawstd::Task<std::vector<RawstdUUID>>
 Backend::list_versions(const RawstdUUID& id, uint64_t offset) {
@@ -850,7 +854,7 @@ Backend::list_versions(const RawstdUUID& id, uint64_t offset) {
                 continue;
             }
             RawstdUUID version_id;
-            if (rawstd_uuid_from_string(
+            if (rawstd_uuid_from_short_string(
                     &version_id, name.c_str() + prefix.size()
                 ) < 0) {
                 continue;
