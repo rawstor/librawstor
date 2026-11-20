@@ -15,6 +15,7 @@
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
@@ -179,6 +180,198 @@ TEST_F(TransportTest, PlainCarriesBytesAsTheyAre) {
     EXPECT_EQ(sent.get(), 5u);
     read.get();
     EXPECT_EQ(received, "hello");
+}
+
+namespace {
+
+// A socket buffer far smaller than what the tests send, so that a send of the
+// socket comes up short.
+void shrink_send_buffer(int fd) {
+    int size = 4096;
+    ASSERT_EQ(setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size)), 0);
+}
+
+// Reads `size` bytes from a plain stream a piece at a time: its ring holds a
+// few entries, far fewer than a large payload.
+rawstd::Task<void>
+read_pieces(rawio::RecvStream& stream, size_t size, std::string& out) {
+    out.clear();
+    while (out.size() < size) {
+        rawio::RecvStream::Item item =
+            co_await stream.next(std::min<size_t>(size - out.size(), 4096));
+        for (unsigned int i = 0; i < item.niov(); ++i) {
+            out.append(
+                static_cast<const char*>(item.iov()[i].iov_base),
+                item.iov()[i].iov_len
+            );
+        }
+    }
+}
+
+std::string random_bytes(size_t size, unsigned int seed) {
+    std::string bytes(size, '\0');
+    std::mt19937 gen(seed);
+    for (char& c : bytes) {
+        c = static_cast<char>(gen());
+    }
+    return bytes;
+}
+
+} // namespace
+
+TEST_F(TransportTest, PlainSendmsgSendsAllOfALargePayload) {
+    shrink_send_buffer(pair.fds[0]);
+    std::unique_ptr<Transport> a = Transport::plain(*queue, pair.fds[0]);
+    std::unique_ptr<Transport> b = Transport::plain(*queue, pair.fds[1]);
+
+    std::vector<std::string> parts = {
+        random_bytes(300 << 10, 1), "", random_bytes(1, 2),
+        random_bytes(700 << 10, 3)
+    };
+    std::string expected = parts[0] + parts[1] + parts[2] + parts[3];
+    std::vector<std::string> before = parts;
+
+    rawio::RecvStream stream = b->recv_multishot(4096, 8, 0, 0);
+    std::string received;
+    rawstd::Task<void> read = read_pieces(stream, expected.size(), received);
+    rawstd::Task<size_t> sent = sendmsg_all(*a, parts);
+    ASSERT_TRUE(pump(*queue, [&]() { return read.done() && sent.done(); }));
+    EXPECT_EQ(sent.get(), expected.size());
+    read.get();
+    EXPECT_TRUE(received == expected);
+    EXPECT_EQ(parts, before);
+}
+
+TEST_F(TransportTest, PlainSendSendsAllOfALargePayload) {
+    shrink_send_buffer(pair.fds[0]);
+    std::unique_ptr<Transport> a = Transport::plain(*queue, pair.fds[0]);
+    std::unique_ptr<Transport> b = Transport::plain(*queue, pair.fds[1]);
+
+    std::string payload = random_bytes(1 << 20, 4);
+    rawio::RecvStream stream = b->recv_multishot(4096, 8, 0, 0);
+    std::string received;
+    rawstd::Task<void> read = read_pieces(stream, payload.size(), received);
+    rawstd::Task<size_t> sent = send_all(*a, payload);
+    ASSERT_TRUE(pump(*queue, [&]() { return read.done() && sent.done(); }));
+    EXPECT_EQ(sent.get(), payload.size());
+    read.get();
+    EXPECT_TRUE(received == payload);
+}
+
+TEST_F(TransportTest, PlainConcurrentSendsAreNotInterleaved) {
+    shrink_send_buffer(pair.fds[0]);
+    std::unique_ptr<Transport> a = Transport::plain(*queue, pair.fds[0]);
+    std::unique_ptr<Transport> b = Transport::plain(*queue, pair.fds[1]);
+
+    std::string one(1 << 20, 'a');
+    std::string two(1 << 20, 'b');
+    std::string three(1 << 20, 'c');
+    rawio::RecvStream stream = b->recv_multishot(4096, 8, 0, 0);
+    std::string received;
+    rawstd::Task<void> read =
+        read_pieces(stream, one.size() + two.size() + three.size(), received);
+    rawstd::Task<size_t> sent_one = send_all(*a, one);
+    rawstd::Task<size_t> sent_two = send_all(*a, two);
+    rawstd::Task<size_t> sent_three = send_all(*a, three);
+    ASSERT_TRUE(pump(*queue, [&]() {
+        return read.done() && sent_one.done() && sent_two.done() &&
+               sent_three.done();
+    }));
+    sent_one.get();
+    sent_two.get();
+    sent_three.get();
+    read.get();
+    EXPECT_TRUE(received == one + two + three);
+}
+
+TEST_F(TransportTest, PlainShortSendmsgPassesAncillaryDataOnce) {
+    shrink_send_buffer(pair.fds[0]);
+    std::unique_ptr<Transport> a = Transport::plain(*queue, pair.fds[0]);
+
+    int pipe_fds[2];
+    ASSERT_EQ(pipe(pipe_fds), 0);
+    union {
+        char buf[CMSG_SPACE(sizeof(int))];
+        cmsghdr align;
+    } control{};
+    std::string payload = random_bytes(1 << 20, 5);
+    iovec iov{payload.data(), payload.size()};
+    msghdr msg{};
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = control.buf;
+    msg.msg_controllen = sizeof(control.buf);
+    cmsghdr* cmsg = CMSG_FIRSTHDR(&msg);
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+    memcpy(CMSG_DATA(cmsg), &pipe_fds[0], sizeof(int));
+
+    // The peer is read directly, to see the descriptors that arrive.
+    std::vector<char> buf(1 << 16);
+    size_t received = 0;
+    unsigned int descriptors = 0;
+    rawstd::Task<size_t> sent = a->sendmsg(&msg, RAWSTD_MSG_NOSIGNAL);
+    ASSERT_TRUE(pump(*queue, [&]() {
+        for (;;) {
+            union {
+                char buf[CMSG_SPACE(16 * sizeof(int))];
+                cmsghdr align;
+            } in{};
+            iovec in_iov{buf.data(), buf.size()};
+            msghdr in_msg{};
+            in_msg.msg_iov = &in_iov;
+            in_msg.msg_iovlen = 1;
+            in_msg.msg_control = in.buf;
+            in_msg.msg_controllen = sizeof(in.buf);
+            ssize_t n = recvmsg(pair.fds[1], &in_msg, MSG_DONTWAIT);
+            if (n <= 0) {
+                break;
+            }
+            received += static_cast<size_t>(n);
+            for (cmsghdr* c = CMSG_FIRSTHDR(&in_msg); c != nullptr;
+                 c = CMSG_NXTHDR(&in_msg, c)) {
+                if (c->cmsg_level == SOL_SOCKET && c->cmsg_type == SCM_RIGHTS) {
+                    size_t count = (c->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+                    for (size_t i = 0; i < count; ++i) {
+                        int fd;
+                        memcpy(&fd, CMSG_DATA(c) + i * sizeof(int), sizeof(fd));
+                        close(fd);
+                        ++descriptors;
+                    }
+                }
+            }
+        }
+        return sent.done() && received == payload.size();
+    }));
+    EXPECT_EQ(sent.get(), payload.size());
+    EXPECT_EQ(descriptors, 1u);
+    close(pipe_fds[0]);
+    close(pipe_fds[1]);
+}
+
+TEST_F(TransportTest, PlainSendFailingMidwayBreaksTheConnection) {
+    shrink_send_buffer(pair.fds[0]);
+    std::unique_ptr<Transport> a = Transport::plain(*queue, pair.fds[0]);
+
+    // Nobody reads: the first send goes out in part and waits for room.
+    rawstd::Task<size_t> first = send_all(*a, std::string(1 << 20, 'a'));
+    pump(*queue, [&]() { return first.done(); }, 100);
+    ASSERT_FALSE(first.done());
+
+    // The peer ends the connection; the send fails with a frame half sent.
+    ASSERT_EQ(shutdown(pair.fds[1], SHUT_RDWR), 0);
+    ASSERT_TRUE(pump(*queue, [&]() { return first.done(); }));
+    EXPECT_THROW(first.get(), std::system_error);
+
+    rawstd::Task<size_t> next = send_all(*a, "b");
+    ASSERT_TRUE(pump(*queue, [&]() { return next.done(); }));
+    try {
+        next.get();
+        FAIL() << "a send after a half-sent frame must fail";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ECONNABORTED);
+    }
 }
 
 TEST_F(TransportTest, HandshakeNamesThePeers) {
