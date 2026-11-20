@@ -583,6 +583,10 @@ TEST(ObjectListTest, lists_mds_objects_held_by_a_location) {
     std::vector<std::string> listed;
     ASSERT_EQ(list_held(env.location(), held_by.c_str(), &listed), 0);
     EXPECT_EQ(listed.size(), uuids.size());
+    // A trailing '/' does not make another location.
+    listed.clear();
+    ASSERT_EQ(list_held(env.location(), (held_by + "/").c_str(), &listed), 0);
+    EXPECT_EQ(listed.size(), uuids.size());
     EXPECT_EQ(list_held(env.location(), "ost://127.0.0.1:1", &listed), -ENOENT);
     // No location, and a location that is not an MDS.
     EXPECT_EQ(list_held(env.location(), "", &listed), -EINVAL);

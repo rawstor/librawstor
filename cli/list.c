@@ -7,6 +7,7 @@
 
 #include <rawstd/exitcode.h>
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,6 +52,17 @@ int rawstor_cli_list(
                              rawstor_cli_op_cb, &op
                          );
         ssize_t result = rawstor_cli_op_wait(&op, sres);
+        if (result == -ENOENT && held_by != NULL) {
+            fprintf(
+                stderr,
+                "%s is not a location of the topology (`rawstor location list "
+                "MDS` prints them)\n",
+                held_by
+            );
+            rawstor_cli_op_destroy(&op);
+            rawstor_cli_table_delete(table);
+            return rawstd_exitcode_for_errno(ENOENT);
+        }
         if (result < 0) {
             fprintf(
                 stderr, "%s() failed: %s\n",

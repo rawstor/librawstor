@@ -198,7 +198,8 @@ public:
      * One page of ids and all their offsets; token is nil on the last page.
      * Only the objects `account` owns, or every object for a nil account.
      * A non-empty `held_by`, the location URI of an entry of the topology
-     * (as a URI prints, without a password), limits the page to the objects
+     * (as a URI prints, without a password or a trailing '/'), limits the
+     * page to the objects
      * that have a slot or a version member on it, one row per object; ENOENT
      * for a location the topology does not have, EINVAL for a string that is
      * not a URI.

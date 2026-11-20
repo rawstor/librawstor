@@ -624,6 +624,8 @@ TEST_F(ObjectStoreTest, list_objects_on_a_location_counts_version_members) {
     ASSERT_EQ(list_on(store, other_location, 0).size(), 1u);
     EXPECT_EQ(rawstd_uuid_cmp(&list_on(store, other_location, 0)[0], &id), 0);
     EXPECT_EQ(list_on(store, slot_location, 0).size(), 1u);
+    // A trailing '/' does not make another location.
+    EXPECT_EQ(list_on(store, slot_location + "/", 0).size(), 1u);
 
     // Once the version is gone nothing is held there.
     store.remove_version(make_id(), id, version_id);
@@ -655,7 +657,7 @@ TEST_F(ObjectStoreTest, list_objects_on_a_location_ignores_a_password) {
     );
     for (const char* location :
          {"ost://user@host1:7777", "ost://user:secret@host1:7777",
-          "ost://user:another@host1:7777"}) {
+          "ost://user:another@host1:7777", "ost://user@host1:7777/"}) {
         EXPECT_EQ(list_on(store, location, 0).size(), 1u) << location;
     }
 }
