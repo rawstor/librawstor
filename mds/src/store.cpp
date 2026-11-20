@@ -935,19 +935,6 @@ void ObjectStore::set_witness_owner(
     tx.commit();
 }
 
-/*
- * A location as the topology and a request tell it apart: as a URI prints,
- * without the password, and without a trailing '/' (ost://host:7777/ is the
- * location ost://host:7777). Throws what a malformed URI throws.
- */
-static std::string canonical_location(const std::string& location) {
-    std::string ret = rawstd::URI(location).str();
-    while (ret.size() > 1 && ret.back() == '/') {
-        ret.pop_back();
-    }
-    return ret;
-}
-
 std::vector<ChunkEntry> ObjectStore::list_chunks(
     const RawstdUUID& account, RawstdUUID& token, unsigned int limit,
     const std::string& held_by
@@ -960,12 +947,12 @@ std::vector<ChunkEntry> ObjectStore::list_chunks(
     if (!held_by.empty()) {
         std::string wanted;
         try {
-            wanted = canonical_location(held_by);
+            wanted = rawstd::URI(held_by).canonical();
         } catch (const std::system_error&) {
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
         for (const TopologyOST& ost : _topology->osts()) {
-            if (canonical_location(ost.location) == wanted) {
+            if (rawstd::URI(ost.location).canonical() == wanted) {
                 holders.push_back(ost.id);
             }
         }
