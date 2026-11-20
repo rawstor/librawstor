@@ -138,4 +138,50 @@ TEST(UUIDTest, from_string_errors) {
     );
 }
 
+TEST(UUIDTest, short_string) {
+    RawstdUUID uuid;
+    RawstdUUID parsed;
+    RawstdUUIDShortString str;
+
+    ASSERT_EQ(
+        rawstd_uuid_from_string(&uuid, "0195e6ef-3ba8-741d-af22-e02bf9c800ec"),
+        0
+    );
+    rawstd_uuid_to_short_string(&uuid, &str);
+    EXPECT_STREQ(str, "AZXm7zuodB2vIuAr-cgA7A");
+    EXPECT_EQ(rawstd_uuid_from_short_string(&parsed, str), 0);
+    EXPECT_EQ(rawstd_uuid_cmp(&uuid, &parsed), 0);
+
+    for (int i = 0; i < 1000; ++i) {
+        ASSERT_EQ(rawstd_uuid7_init(&uuid), 0);
+        rawstd_uuid_to_short_string(&uuid, &str);
+        ASSERT_EQ(strlen(str), (size_t)RAWSTD_UUID_SHORT_STRING_LEN);
+        ASSERT_EQ(rawstd_uuid_from_short_string(&parsed, str), 0);
+        ASSERT_EQ(rawstd_uuid_cmp(&uuid, &parsed), 0);
+    }
+}
+
+TEST(UUIDTest, short_string_invalid) {
+    RawstdUUID uuid;
+
+    EXPECT_EQ(
+        rawstd_uuid_from_short_string(&uuid, "AZXm7zuodB2vIuAr-cgA7A"), 0
+    );
+    // Too short, too long.
+    EXPECT_EQ(
+        rawstd_uuid_from_short_string(&uuid, "AZXm7zuodB2vIuAr-cgA7"), -EINVAL
+    );
+    EXPECT_EQ(
+        rawstd_uuid_from_short_string(&uuid, "AZXm7zuodB2vIuAr-cgA7AA"), -EINVAL
+    );
+    // Outside the alphabet.
+    EXPECT_EQ(
+        rawstd_uuid_from_short_string(&uuid, "AZXm7zuodB2vIuAr+cgA7A"), -EINVAL
+    );
+    // Nonzero padding bits in the last character.
+    EXPECT_EQ(
+        rawstd_uuid_from_short_string(&uuid, "AZXm7zuodB2vIuAr-cgA7B"), -EINVAL
+    );
+}
+
 } // unnamed namespace
