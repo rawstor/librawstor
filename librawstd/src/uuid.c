@@ -211,6 +211,52 @@ void rawstd_uuid_to_string(const struct RawstdUUID* uuid, RawstdUUIDString* s) {
     *p = '\0';
 }
 
+static const char short_alphabet[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+void rawstd_uuid_to_short_string(
+    const struct RawstdUUID* uuid, RawstdUUIDShortString* s
+) {
+    char* p = *s;
+    for (int i = 0; i < 16; i += 3) {
+        int n = 16 - i < 3 ? 16 - i : 3;
+        uint32_t v = 0;
+        for (int j = 0; j < 3; ++j) {
+            v = (v << 8) | (j < n ? uuid->bytes[i + j] : 0);
+        }
+        for (int j = 0; j < n + 1; ++j) {
+            *p++ = short_alphabet[(v >> (18 - 6 * j)) & 0x3f];
+        }
+    }
+    *p = '\0';
+}
+
+int rawstd_uuid_from_short_string(struct RawstdUUID* uuid, const char* s) {
+    uint32_t v = 0;
+    int bits = 0;
+    int pos = 0;
+    for (int i = 0; i < RAWSTD_UUID_SHORT_STRING_LEN; ++i) {
+        const char* p = s[i] == '\0' ? NULL : strchr(short_alphabet, s[i]);
+        if (p == NULL) {
+            return -EINVAL;
+        }
+        v = (v << 6) | (uint32_t)(p - short_alphabet);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            uuid->bytes[pos++] = (uint8_t)((v >> bits) & 0xff);
+        }
+    }
+    if (s[RAWSTD_UUID_SHORT_STRING_LEN] != '\0') {
+        return -EINVAL;
+    }
+    /* The padding bits of the last character must be zero. */
+    if ((v & ((1u << bits) - 1)) != 0) {
+        return -EINVAL;
+    }
+    return 0;
+}
+
 int rawstd_uuid_cmp(
     const struct RawstdUUID* lhs, const struct RawstdUUID* rhs
 ) {
