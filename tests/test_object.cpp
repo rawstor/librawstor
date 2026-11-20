@@ -456,6 +456,19 @@ TEST(ObjectListTest, lists_the_locations_of_an_mds) {
     std::vector<std::string> found;
     size_t pages = 0;
     EXPECT_EQ(locations_of("file:///tmp", 0, &found, &pages), -ENOTSUP);
+
+    // The password is not on the wire: a client that does not go through
+    // Location, as the library does, is told the same.
+    std::shared_ptr<rawstor::Backend> backend =
+        run(*queue,
+            rawstor::Backend::create(*queue, rawstd::URI(env.location())));
+    std::vector<std::string> raw;
+    RawstdUUID token{};
+    run(*queue, backend->list_locations(0, raw, token));
+    EXPECT_EQ(raw, expected);
+    for (const std::string& location : raw) {
+        EXPECT_EQ(location.find("secret"), std::string::npos) << location;
+    }
 }
 
 // A listing page that fails leaves the token where it was: Slot repeats a

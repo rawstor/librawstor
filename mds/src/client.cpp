@@ -8,6 +8,7 @@
 #include <rawstd/iovec.h>
 #include <rawstd/logging.hpp>
 #include <rawstd/socket.h>
+#include <rawstd/uri.hpp>
 
 #include <sys/socket.h>
 
@@ -677,17 +678,20 @@ rawstd::Task<void> Client::_dispatch(
             data.resize(sizeof(header));
             memcpy(data.data(), &header, sizeof(header));
             for (const rawstor::mdsserver::TopologyOST& ost : page) {
-                if (ost.location.size() > UINT16_MAX) {
+                // As a URI prints, without the password its user information
+                // may carry: a list of locations is not a way to a secret.
+                const std::string location = rawstd::URI(ost.location).str();
+                if (location.size() > UINT16_MAX) {
                     RAWSTD_THROW_SYSTEM_ERROR(EOVERFLOW);
                 }
                 RawstorFrameLocationEntry entry{};
-                entry.location_len = static_cast<uint16_t>(ost.location.size());
+                entry.location_len = static_cast<uint16_t>(location.size());
                 const size_t at = data.size();
-                data.resize(at + sizeof(entry) + ost.location.size());
+                data.resize(at + sizeof(entry) + location.size());
                 memcpy(data.data() + at, &entry, sizeof(entry));
                 memcpy(
-                    data.data() + at + sizeof(entry), ost.location.data(),
-                    ost.location.size()
+                    data.data() + at + sizeof(entry), location.data(),
+                    location.size()
                 );
             }
             if (data.size() > INT32_MAX) {
