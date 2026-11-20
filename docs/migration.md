@@ -11,7 +11,7 @@ document's own numbering (see [Implementation stages](#implementation-stages));
 | Weight 0 keeps a location out of every new placement (data and witness) | 0 | ✅ | `mds/src/placement.cpp`; no end-to-end test, not documented for operators |
 | Topology refuses to drop a location that still holds chunks or version members | — | ✅ | `mds/src/store.cpp` |
 | List the locations of an MDS topology | 0 | ✅ | `LIST_LOCATIONS`, `rawstor location list`, `rawstor_location_topology()`, pyrawstor `Location.locations()` |
-| List the objects with a slot or a version member on one location | 0 | ✅ | `LIST` of an MDS limited by a location URI: `mds/src/store.cpp`, `rawstor_location_list_held()`, pyrawstor `Location.objects(ost_id=)`; [MDS side](#mds-side) |
+| List the objects with a slot or a version member on one location | 0 | ✅ | `LIST` of an MDS limited by a location URI: `mds/src/store.cpp`, `rawstor object list --held-by`, `rawstor_location_list_held()`, pyrawstor `Location.objects(ost_id=)`; [MDS side](#mds-side) |
 | `plan_seq`/`plan_gen` in the value; `RELEASE` bounded by `plan_seq`; a leftover never adopted | 1 | ❌ | [Idempotency](#idempotency) |
 | A one-member chunk keeps a register; epoch 0 refused once recorded | 1 | ✅ | [One copy](#a-one-copy-chunk); `src/target.cpp` (`initialize_members()`), `src/slot.cpp` (`Admission::admit()`) |
 | Members named in the register value: topology id, `member_role`, voter | 1 | ❌ | [Members in the value](#members-in-the-register-value) |
