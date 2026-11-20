@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.0] - Unreleased
+## [0.3.0] - 2026-11-20
 
 Upgrading from 0.2.x: the OST wire protocol, the object layout on every backend and the CLI command structure changed incompatibly; see **Changed**. Objects created by 0.2.x are not visible to this release.
 
