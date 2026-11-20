@@ -604,6 +604,10 @@ rawstd::Task<void> Client::_dispatch(
     case RAWSTOR_CMD_LIST: {
         RawstorFrameListPayload payload{};
         co_await recv_all(stream, &payload, sizeof(payload));
+        std::string held_by(payload.held_by_len, '\0');
+        if (!held_by.empty()) {
+            co_await recv_all(stream, held_by.data(), held_by.size());
+        }
         auto token = uuid_of(payload.token_id);
         unsigned int limit = payload.limit == 0 || payload.limit > list_limit
                                  ? list_limit
@@ -619,7 +623,7 @@ rawstd::Task<void> Client::_dispatch(
                 rawstd_uuid_is_nil(&access.account)
                     ? uuid_of(payload.account_id)
                     : access.account,
-                token, limit, uuid_of(payload.ost_id)
+                token, limit, held_by
             );
             for (const auto& record : records) {
                 if (client->_transport->peer() &&

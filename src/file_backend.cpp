@@ -205,13 +205,13 @@ rawstd::Task<int> Backend::_open_version(
 rawstd::Task<void> Backend::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
     RawstdUUID& token, RawstdUUID account, RawstdUUID version_id,
-    RawstdUUID ost_id
+    std::string held_by
 ) {
     if (!rawstd_uuid_is_nil(&version_id)) {
         // A version is described by meta() only; its chunks are not listed.
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     }
-    if (!rawstd_uuid_is_nil(&ost_id)) {
+    if (!held_by.empty()) {
         RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
     }
     // Filtered by a non-nil `id` (Backend::list_chunks()'s own doc

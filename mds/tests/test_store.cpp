@@ -39,7 +39,7 @@ TopologyOST make_ost(const char* id, const char* host) {
     if (rawstd_uuid_from_string(&ost.id, id) < 0) {
         RAWSTD_THROW_ERRNO();
     }
-    ost.location = "ost://127.0.0.1:0";
+    ost.location = std::string("ost://") + host + ":7777";
     ost.weight = 100;
     ost.path[0] = "dc1";
     ost.path[1] = "row1";
@@ -531,13 +531,25 @@ TEST_F(ObjectStoreTest, list_objects_pages_by_id) {
     EXPECT_EQ(rawstd_uuid_cmp(&page[0].id, &ids[2]), 0);
 }
 
-// The ids of the objects `store` lists on `ost`, a page of `limit` at a time.
+// The location URI of the topology entry `id`.
+std::string location_of(ObjectStore& store, const RawstdUUID& id) {
+    for (const auto& ost : store.topology()->osts()) {
+        if (rawstd_uuid_cmp(&ost.id, &id) == 0) {
+            return ost.location;
+        }
+    }
+    ADD_FAILURE() << "no such entry";
+    return {};
+}
+
+// The ids of the objects `store` lists on `location`, a page of `limit` at a
+// time.
 std::vector<RawstdUUID>
-list_on(ObjectStore& store, const RawstdUUID& ost, unsigned int limit) {
+list_on(ObjectStore& store, const std::string& location, unsigned int limit) {
     std::vector<RawstdUUID> ret;
     RawstdUUID token{};
     do {
-        auto page = store.list_chunks(RawstdUUID{}, token, limit, ost);
+        auto page = store.list_chunks(RawstdUUID{}, token, limit, location);
         for (const auto& entry : page) {
             EXPECT_EQ(entry.type, RAWSTOR_LIST_ENTRY_OBJECT);
             EXPECT_EQ(entry.offset, 0u);
@@ -573,7 +585,7 @@ TEST_F(ObjectStoreTest, list_objects_on_a_location) {
             }
         }
         for (unsigned int limit : {0u, 1u, 2u}) {
-            std::vector<RawstdUUID> got = list_on(store, ost.id, limit);
+            std::vector<RawstdUUID> got = list_on(store, ost.location, limit);
             ASSERT_EQ(got.size(), expected.size()) << "limit " << limit;
             for (size_t i = 0; i < got.size(); ++i) {
                 EXPECT_EQ(rawstd_uuid_cmp(&got[i], &expected[i]), 0);
@@ -601,26 +613,58 @@ TEST_F(ObjectStoreTest, list_objects_on_a_location_counts_version_members) {
         }
     }
     ASSERT_FALSE(rawstd_uuid_is_nil(&other));
-    EXPECT_TRUE(list_on(store, other, 0).empty());
+    const std::string slot_location = location_of(store, slot_ost);
+    const std::string other_location = location_of(store, other);
+    EXPECT_TRUE(list_on(store, other_location, 0).empty());
 
     RawstdUUID version_id = make_id();
     store.commit_version(
         make_id(), id, version_id, std::vector<VersionMember>{{0, other}}
     );
-    ASSERT_EQ(list_on(store, other, 0).size(), 1u);
-    EXPECT_EQ(rawstd_uuid_cmp(&list_on(store, other, 0)[0], &id), 0);
-    EXPECT_EQ(list_on(store, slot_ost, 0).size(), 1u);
+    ASSERT_EQ(list_on(store, other_location, 0).size(), 1u);
+    EXPECT_EQ(rawstd_uuid_cmp(&list_on(store, other_location, 0)[0], &id), 0);
+    EXPECT_EQ(list_on(store, slot_location, 0).size(), 1u);
 
     // Once the version is gone nothing is held there.
     store.remove_version(make_id(), id, version_id);
-    EXPECT_TRUE(list_on(store, other, 0).empty());
+    EXPECT_TRUE(list_on(store, other_location, 0).empty());
+}
+
+// A location is told by its URI as a URI prints: the password of its user
+// information is not part of it, in the topology or in the request.
+TEST_F(ObjectStoreTest, list_objects_on_a_location_ignores_a_password) {
+    auto topology = [] {
+        TopologyOST ost =
+            make_ost("00000000-0000-7000-8000-000000000001", "host1");
+        ost.location = "ost://user:secret@host1:7777";
+        Topology ret;
+        ret.add(ost);
+        return ret;
+    };
+    {
+        ObjectStore first(dir.db_path(), topology());
+        RawstorLocationInfo info{};
+        for (const auto& ost : first.topology()->osts()) {
+            first.update_backend(ost, &info);
+        }
+    }
+    ObjectStore store(dir.db_path(), topology());
+    store.create(
+        RawstdUUID{}, RawstdUUID{}, make_id(), chunk_size, chunk_size,
+        make_policy(1)
+    );
+    for (const char* location :
+         {"ost://user@host1:7777", "ost://user:secret@host1:7777",
+          "ost://user:another@host1:7777"}) {
+        EXPECT_EQ(list_on(store, location, 0).size(), 1u) << location;
+    }
 }
 
 TEST_F(ObjectStoreTest, list_objects_on_an_unknown_location_is_enoent) {
     ObjectStore store = make_store();
     RawstdUUID token{};
     try {
-        store.list_chunks(RawstdUUID{}, token, 0, make_id());
+        store.list_chunks(RawstdUUID{}, token, 0, "ost://nowhere:7777");
         FAIL() << "expected ENOENT";
     } catch (const std::system_error& e) {
         EXPECT_EQ(e.code().value(), ENOENT);

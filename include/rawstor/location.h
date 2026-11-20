@@ -326,20 +326,21 @@ int rawstor_location_list(
 
 /**
  * @brief Asynchronously list the objects that have a slot or a version member
- *        on one entry of an MDS topology.
+ *        on one location of an MDS topology.
  *
- * @p location must name exactly one `mds://` URI, and @p ost_id the topology id
- * of one of its entries, a UUID string. @p targets receives the target of each
- * object, as @ref rawstor_location_list does, and the list is paged the same
- * way. It is what an entry still holds: the objects to move before the entry
- * can leave the topology (docs/migration.md). An object appears once, however
- * many of its chunks and versions are on the entry. -ENOENT for an entry the
- * MDS does not know, -EINVAL for a @p ost_id that is not a non-nil UUID or a
+ * @p location must name exactly one `mds://` URI, and @p held_by the location
+ * URI of one entry of its topology, as @ref rawstor_location_topology lists it
+ * (a password in the user information is ignored). @p targets receives the
+ * target of each object, as @ref rawstor_location_list does, and the list is
+ * paged the same way. It is what the location still holds: the objects to move
+ * before it can leave the topology (docs/migration.md). An object appears
+ * once, however many of its chunks and versions are there. -ENOENT for a
+ * location the topology does not have, -EINVAL for an empty @p held_by or a
  * @p location that is not an MDS.
  *
  * @param queue     Queue used to drive the asynchronous listing.
  * @param location  `mds://` location.
- * @param ost_id    Topology id of the entry, a UUID string.
+ * @param held_by   Location URI of the topology entry.
  * @param limit     Most objects to return; 0 for the library's default.
  * @param targets   Receives the list of targets on success.
  * @param token     Pagination cursor, updated to the next page's; empty once
@@ -351,7 +352,7 @@ int rawstor_location_list(
  * @return 0 if @p cb will be invoked, a negative errno on immediate failure.
  */
 int rawstor_location_list_held(
-    RawIOQueue* queue, const char* location, const char* ost_id,
+    RawIOQueue* queue, const char* location, const char* held_by,
     unsigned int limit, RawstorStringList** targets,
     RawstorPaginationToken* token, int (*cb)(ssize_t result, void* data),
     void* data

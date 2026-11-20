@@ -7,6 +7,7 @@
 #include <rawstd/caspaxos.hpp>
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.hpp>
+#include <rawstd/uri.hpp>
 
 #include <sqlite3.h>
 
@@ -936,41 +937,63 @@ void ObjectStore::set_witness_owner(
 
 std::vector<ChunkEntry> ObjectStore::list_chunks(
     const RawstdUUID& account, RawstdUUID& token, unsigned int limit,
-    const RawstdUUID& ost_id
+    const std::string& held_by
 ) {
     std::lock_guard<std::recursive_mutex> guard(_mutex);
     /* The objects an account owns; no account lists them all. */
     const bool all = rawstd_uuid_is_nil(&account);
-    /* The objects with a slot or a version member on one topology entry. */
-    const bool held = !rawstd_uuid_is_nil(&ost_id);
-    if (held) {
-        const auto& osts = _topology->osts();
-        if (std::none_of(osts.begin(), osts.end(), [&](const TopologyOST& ost) {
-                return rawstd_uuid_cmp(&ost.id, &ost_id) == 0;
-            })) {
+    /* The entries of the topology at the location, normally one. */
+    std::vector<RawstdUUID> holders;
+    if (!held_by.empty()) {
+        std::string wanted;
+        try {
+            wanted = rawstd::URI(held_by).str();
+        } catch (const std::system_error&) {
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+        for (const TopologyOST& ost : _topology->osts()) {
+            if (rawstd::URI(ost.location).str() == wanted) {
+                holders.push_back(ost.id);
+            }
+        }
+        if (holders.empty()) {
             RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
         }
     }
-    Stmt stmt(
-        _db,
+    /* The objects with a slot or a version member on one of them. */
+    const bool held = !holders.empty();
+    if (!held) {
+        holders.push_back(RawstdUUID{});
+    }
+    std::string in = "?";
+    for (size_t i = 1; i < holders.size(); ++i) {
+        in += ",?";
+    }
+    const std::string sql =
         "WITH entries AS ("
         "SELECT id,chunk_offset,1 AS type,account_id FROM witnesses "
         "WHERE ?=0 "
         "UNION ALL SELECT id,0,2,account_id FROM objects "
-        "WHERE ?=0 OR id IN (SELECT id FROM chunk_map WHERE ost_id=?) "
-        "OR id IN (SELECT id FROM version_members WHERE ost_id=?)) "
+        "WHERE ?=0 OR id IN (SELECT id FROM chunk_map WHERE ost_id IN (" +
+        in + ")) OR id IN (SELECT id FROM version_members WHERE ost_id IN (" +
+        in +
+        "))) "
         "SELECT id,chunk_offset,type,account_id FROM entries WHERE id>? AND "
         "(?=1 OR account_id=?) "
-        "ORDER BY id,type DESC,chunk_offset"
-    );
+        "ORDER BY id,type DESC,chunk_offset";
+    Stmt stmt(_db, sql.c_str());
+    int position = 1;
+    stmt.bind_int64(position++, held ? 1 : 0);
+    stmt.bind_int64(position++, held ? 1 : 0);
+    for (int pass = 0; pass < 2; ++pass) {
+        for (const RawstdUUID& holder : holders) {
+            stmt.bind_blob(position++, holder.bytes, sizeof(holder.bytes));
+        }
+    }
     RawstdUUID after = token;
-    stmt.bind_int64(1, held ? 1 : 0)
-        .bind_int64(2, held ? 1 : 0)
-        .bind_blob(3, ost_id.bytes, sizeof(ost_id.bytes))
-        .bind_blob(4, ost_id.bytes, sizeof(ost_id.bytes))
-        .bind_blob(5, after.bytes, sizeof(after.bytes))
-        .bind_int64(6, all ? 1 : 0)
-        .bind_blob(7, account.bytes, sizeof(account.bytes));
+    stmt.bind_blob(position++, after.bytes, sizeof(after.bytes));
+    stmt.bind_int64(position++, all ? 1 : 0);
+    stmt.bind_blob(position++, account.bytes, sizeof(account.bytes));
     std::vector<ChunkEntry> entries;
     RawstdUUID last{};
     unsigned int groups = 0;

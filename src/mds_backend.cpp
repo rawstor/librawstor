@@ -510,12 +510,12 @@ rawstd::Task<void> Backend::_connect() {
 rawstd::Task<void> Backend::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
     RawstdUUID& token, RawstdUUID account, RawstdUUID version_id,
-    RawstdUUID ost_id
+    std::string held_by
 ) {
     chunks.clear();
     if (rawstd_uuid_is_nil(&id)) {
         co_await _wire_list_chunks(
-            {}, limit, chunks, token, account, version_id, ost_id
+            {}, limit, chunks, token, account, version_id, held_by
         );
         std::vector<RawstdUUID> objects;
         for (const auto& group : chunks) {
@@ -533,7 +533,7 @@ rawstd::Task<void> Backend::list_chunks(
         });
         co_return;
     }
-    if (!rawstd_uuid_is_nil(&ost_id)) {
+    if (!held_by.empty()) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     token = {};

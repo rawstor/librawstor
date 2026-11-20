@@ -499,9 +499,10 @@ TEST(ObjectListTest, a_failed_page_keeps_its_token) {
     expect_untouched(mds->list_locations(0, locations, token));
 }
 
-// LIST against the MDS limited to the objects held by one topology entry,
-// through the same Backend as a plain LIST: every object here has its slot on
-// the environment's one OST, and an entry the MDS does not know is ENOENT.
+// LIST against the MDS limited to the objects held by one location of its
+// topology, through the same Backend as a plain LIST: every object here has its
+// slot on the environment's one OST, and a location the topology does not have
+// is ENOENT.
 TEST(ObjectListTest, lists_mds_objects_held_by_a_location) {
     rawstor::tests::ObjectEnv env(8940, 8941);
     std::vector<std::string> uuids = {
@@ -522,16 +523,10 @@ TEST(ObjectListTest, lists_mds_objects_held_by_a_location) {
         run(*queue,
             rawstor::Backend::create(*queue, rawstd::URI(env.location())));
 
-    RawstdUUID ost_id;
-    ASSERT_EQ(
-        rawstd_uuid_from_string(
-            &ost_id, "018f4e2a-0000-7000-8000-000000000001"
-        ),
-        0
-    );
+    const std::string held_by = "ost://127.0.0.1:8941";
     std::vector<rawstor::ChunkGroup> groups;
     RawstdUUID token{};
-    run(*queue, backend->list_chunks({}, 0, groups, token, {}, {}, ost_id));
+    run(*queue, backend->list_chunks({}, 0, groups, token, {}, {}, held_by));
     ASSERT_EQ(groups.size(), uuids.size());
     for (size_t i = 0; i < uuids.size(); ++i) {
         RawstdUUID id;
@@ -541,25 +536,24 @@ TEST(ObjectListTest, lists_mds_objects_held_by_a_location) {
     }
     EXPECT_TRUE(rawstd_uuid_is_nil(&token));
 
-    RawstdUUID unknown;
-    ASSERT_EQ(rawstd_uuid7_init(&unknown), 0);
     try {
-        run(*queue,
-            backend->list_chunks({}, 0, groups, token, {}, {}, unknown));
+        run(*queue, backend->list_chunks(
+                        {}, 0, groups, token, {}, {}, "ost://127.0.0.1:1"
+                    ));
         ADD_FAILURE() << "no error";
     } catch (const std::system_error& e) {
         EXPECT_EQ(e.code().value(), ENOENT);
     }
 
     // The same through the C API, which names the targets.
-    auto list_held = [&](const std::string& where, const char* entry,
+    auto list_held = [&](const std::string& where, const char* location,
                          std::vector<std::string>* targets) -> ssize_t {
         RawstorStringList* page = nullptr;
         RawstorPaginationToken page_token = {};
         ssize_t res =
             rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
                 return rawstor_location_list_held(
-                    queue.get(), where.c_str(), entry, 0, &page, &page_token,
+                    queue.get(), where.c_str(), location, 0, &page, &page_token,
                     cb, data
                 );
             });
@@ -573,13 +567,13 @@ TEST(ObjectListTest, lists_mds_objects_held_by_a_location) {
         }
         return res;
     };
-    const char* entry = "018f4e2a-0000-7000-8000-000000000001";
     std::vector<std::string> listed;
-    ASSERT_EQ(list_held(env.location(), entry, &listed), 0);
+    ASSERT_EQ(list_held(env.location(), held_by.c_str(), &listed), 0);
     EXPECT_EQ(listed.size(), uuids.size());
-    // An id that is not a UUID, and a location that is not an MDS.
-    EXPECT_EQ(list_held(env.location(), "not-a-uuid", &listed), -EINVAL);
-    EXPECT_EQ(list_held("file:///tmp", entry, &listed), -EINVAL);
+    EXPECT_EQ(list_held(env.location(), "ost://127.0.0.1:1", &listed), -ENOENT);
+    // No location, and a location that is not an MDS.
+    EXPECT_EQ(list_held(env.location(), "", &listed), -EINVAL);
+    EXPECT_EQ(list_held("file:///tmp", held_by.c_str(), &listed), -EINVAL);
 
     for (const std::string& uuid : uuids) {
         EXPECT_EQ(target_remove(*queue, object_target(env, uuid.c_str())), 0);

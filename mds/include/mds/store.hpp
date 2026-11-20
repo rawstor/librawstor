@@ -197,13 +197,15 @@ public:
     /*
      * One page of ids and all their offsets; token is nil on the last page.
      * Only the objects `account` owns, or every object for a nil account.
-     * A non-nil `ost_id` limits the page to the objects that have a slot or
-     * a version member on that topology entry, one row per object; ENOENT
-     * for an entry the topology does not have.
+     * A non-empty `held_by`, the location URI of an entry of the topology
+     * (as a URI prints, without a password), limits the page to the objects
+     * that have a slot or a version member on it, one row per object; ENOENT
+     * for a location the topology does not have, EINVAL for a string that is
+     * not a URI.
      */
     std::vector<ChunkEntry> list_chunks(
         const RawstdUUID& account, RawstdUUID& token, unsigned int limit,
-        const RawstdUUID& ost_id = {}
+        const std::string& held_by = {}
     );
 
     /*

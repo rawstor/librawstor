@@ -59,10 +59,10 @@ rawstd::Task<void> Backend::close() {
 rawstd::Task<void> Backend::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
     RawstdUUID& token, RawstdUUID account, RawstdUUID version_id,
-    RawstdUUID ost_id
+    std::string held_by
 ) {
     return _wire_list_chunks(
-        id, limit, chunks, token, account, version_id, ost_id
+        id, limit, chunks, token, account, version_id, held_by
     );
 }
 

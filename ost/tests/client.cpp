@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include <stdexcept>
+#include <vector>
 
 #include <cstring>
 
@@ -292,7 +293,7 @@ uint16_t Client::send_write_zeroes(
 }
 
 uint16_t Client::send_list(
-    const RawstdUUID& token, uint32_t limit, const RawstdUUID& ost_id
+    const RawstdUUID& token, uint32_t limit, const std::string& held_by
 ) {
     uint16_t cid = _next_cid++;
     RawstorFrameList frame = {
@@ -303,16 +304,21 @@ uint16_t Client::send_list(
                 .cid = cid,
             },
         .payload = {
-            .account_id = {}, .ost_id = {}, .token_id = {}, .limit = limit
+            .account_id = {},
+            .token_id = {},
+            .limit = limit,
+            .held_by_len = static_cast<uint16_t>(held_by.size()),
         },
     };
-    std::memcpy(frame.payload.ost_id, ost_id.bytes, sizeof(ost_id.bytes));
     std::memcpy(
         frame.payload.account_id, _account.bytes,
         sizeof(frame.payload.account_id)
     );
     std::memcpy(frame.payload.token_id, token.bytes, sizeof(token.bytes));
-    send_all(_fd, &frame, sizeof(frame));
+    std::vector<unsigned char> request(sizeof(frame) + held_by.size());
+    std::memcpy(request.data(), &frame, sizeof(frame));
+    std::memcpy(request.data() + sizeof(frame), held_by.data(), held_by.size());
+    send_all(_fd, request.data(), request.size());
     return cid;
 }
 

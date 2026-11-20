@@ -126,14 +126,15 @@ public:
     // that version of `id` has instead of the live ones; ENOTSUP on a
     // backend without versions.
     //
-    // A non-nil `ost_id` (only with a nil `id`) lists the objects that have
-    // a slot or a version member on that topology entry of the MDS, one
-    // group per object with no offsets; ENOENT for an entry it does not
-    // know. Only mds::Backend answers it; every other backend is ENOTSUP.
+    // A non-empty `held_by` (only with a nil `id`) is the location URI of an
+    // entry of an MDS's topology: it lists the objects that have a slot or a
+    // version member on it, one group per object with no offsets; ENOENT for
+    // a location the topology does not have. Only mds::Backend answers it;
+    // every other backend is ENOTSUP.
     virtual rawstd::Task<void> list_chunks(
         RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
         RawstdUUID& token, RawstdUUID account = {}, RawstdUUID version_id = {},
-        RawstdUUID ost_id = {}
+        std::string held_by = {}
     ) = 0;
 
     // Records `owner` as the owner of the copy `id`/`offset` in the copy's own

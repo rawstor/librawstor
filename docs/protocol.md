@@ -317,14 +317,17 @@ stamped or `RESYNC` request with `-EOPNOTSUPP`.
      +-------------------------------------------+----------+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~+
 ```
 
-### List — 52 bytes
+### List — 38 bytes, then the location
 
 `limit` ids per page, starting after `token_id` (nil = from the start). `account_id`
 limits the listing to the objects that account owns; nil lists every object
-([Accounts](accounts.md)). `ost_id` limits it to the objects that have a slot or
-a version member on that topology entry; nil is no limit. Only an MDS answers a
-non-nil `ost_id` (`-ENOENT` for an entry it does not know); an OST refuses it with
-`-EINVAL`.
+([Accounts](accounts.md)). `held_by_len` bytes follow the 38: a location URI of
+the topology of an MDS, not null-terminated, such as `ost://host:port` (the
+password of its user information, if any, is not part of it), which limits the
+listing to the objects that have a slot or a version member on that location;
+0 and no bytes is no limit. Only an MDS answers a limit (`-ENOENT` for a
+location its topology does not have); an OST reads the bytes and refuses it
+with `-EINVAL`.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
@@ -336,20 +339,17 @@ non-nil `ost_id` (`-ENOENT` for an entry it does not know); an OST refuses it wi
      |                                                                                       |
      +---------------------------------------------------------------------------------------+
  16  |                                                                                       |
-     |                                   uint8_t ost_id[16]                                  |
+     |                                 uint8_t token_id[16]                                  |
      |                                                                                       |
  24  |                                                                                       |
      |                                                                                       |
-     +---------------------------------------------------------------------------------------+
- 32  |                                                                                       |
-     |                                 uint8_t token_id[16]                                  |
-     |                                                                                       |
- 40  |                                                                                       |
-     |                                                                                       |
      +-------------------------------------------+-------------------------------------------+
- 48  |              uint32_t limit               |
+ 32  |              uint32_t limit               |
      |                                           |
-     +-------------------------------------------+
+     +--------------------+----------------------+
+ 36  |uint16_t held_by_len|
+     |                    |
+     +--------------------+
 ```
 
 ### ListAccounts — 20 bytes

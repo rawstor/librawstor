@@ -806,12 +806,22 @@ static int list_objects(
 }
 
 static int list_held_objects(
-    RawIOQueue* queue, const char* location, const char* ost_id,
+    RawIOQueue* queue, const char* location, const char* held_by,
     unsigned int limit, RawstorStringList** targets,
     RawstorPaginationToken* token, int (*cb)(ssize_t, void*), void* data
 ) {
     return rawstor_location_list_held(
-        queue, location, ost_id, limit, targets, token, cb, data
+        queue, location, held_by, limit, targets, token, cb, data
+    );
+}
+
+static int list_topology(
+    RawIOQueue* queue, const char* location, const char* Py_UNUSED(arg),
+    unsigned int limit, RawstorStringList** locations,
+    RawstorPaginationToken* token, int (*cb)(ssize_t, void*), void* data
+) {
+    return rawstor_location_topology(
+        queue, location, limit, locations, token, cb, data
     );
 }
 
@@ -939,15 +949,15 @@ PyObject* py_rawstor_object_list(PyObject* Py_UNUSED(self), PyObject* args) {
 PyObject*
 py_rawstor_object_list_held(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* location;
-    const char* ost_id;
+    const char* held_by;
     unsigned int limit;
     PyObject* py_token;
     if (!PyArg_ParseTuple(
-            args, "ssIO", &location, &ost_id, &limit, &py_token
+            args, "ssIO", &location, &held_by, &limit, &py_token
         )) {
         return NULL;
     }
-    return location_page(location, ost_id, limit, py_token, list_held_objects);
+    return location_page(location, held_by, limit, py_token, list_held_objects);
 }
 
 PyObject* py_rawstor_object_create(PyObject* Py_UNUSED(self), PyObject* args) {
@@ -1451,7 +1461,13 @@ PyObject* py_rawstor_account_list(PyObject* Py_UNUSED(self), PyObject* args) {
 
 PyObject*
 py_rawstor_location_topology(PyObject* Py_UNUSED(self), PyObject* args) {
-    return location_page(args, rawstor_location_topology);
+    const char* location;
+    unsigned int limit;
+    PyObject* py_token;
+    if (!PyArg_ParseTuple(args, "sIO", &location, &limit, &py_token)) {
+        return NULL;
+    }
+    return location_page(location, NULL, limit, py_token, list_topology);
 }
 
 static PyObject* account_mutation(

@@ -38,13 +38,14 @@ public:
 
     rawstd::Task<RawstorLocationInfo> info(rawio::Queue& queue) const;
 
-    // The targets name their owners (docs/accounts.md). A non-nil `ost_id`
-    // lists only the objects that have a slot or a version member on that
-    // topology entry of the MDS this location names (ENOENT for an entry it
-    // does not know; EINVAL for a location that is not an MDS).
+    // The targets name their owners (docs/accounts.md). A non-empty `held_by`,
+    // a location URI, lists only the objects that have a slot or a version
+    // member on that location of the topology of the MDS this location names
+    // (ENOENT for a location the topology does not have; EINVAL for a
+    // location that is not an MDS).
     rawstd::Task<void> list(
         rawio::Queue& queue, unsigned int limit, std::list<Target>& targets,
-        RawstorPaginationToken& token, const RawstdUUID& ost_id = {}
+        RawstorPaginationToken& token, const std::string& held_by = {}
     ) const;
 
     // One page of the accounts registered in the MDS this location names

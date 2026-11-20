@@ -11,7 +11,7 @@ document's own numbering (see [Implementation stages](#implementation-stages));
 | Weight 0 keeps a location out of every new placement (data and witness) | 0 | ✅ | `mds/src/placement.cpp`; no end-to-end test, not documented for operators |
 | Topology refuses to drop a location that still holds chunks or version members | — | ✅ | `mds/src/store.cpp` |
 | List the locations of an MDS topology | 0 | ✅ | `LIST_LOCATIONS`, `rawstor location list`, `rawstor_location_topology()`, pyrawstor `Location.locations()` |
-| List the objects with a slot or a version member on one location | 0 | ✅ | `LIST` of an MDS limited by `ost_id`: `mds/src/store.cpp`, `rawstor_location_list_held()`, pyrawstor `Location.objects(ost_id=)`; [MDS side](#mds-side) |
+| List the objects with a slot or a version member on one location | 0 | ✅ | `LIST` of an MDS limited by a location URI: `mds/src/store.cpp`, `rawstor_location_list_held()`, pyrawstor `Location.objects(ost_id=)`; [MDS side](#mds-side) |
 | `plan_seq`/`plan_gen` in the value; `RELEASE` bounded by `plan_seq`; a leftover never adopted | 1 | ❌ | [Idempotency](#idempotency) |
 | A one-member chunk keeps a register; epoch 0 refused once recorded | 1 | ✅ | [One copy](#a-one-copy-chunk); `src/target.cpp` (`initialize_members()`), `src/slot.cpp` (`Admission::admit()`) |
 | Members named in the register value: topology id, `member_role`, voter | 1 | ❌ | [Members in the value](#members-in-the-register-value) |
@@ -522,8 +522,8 @@ Stage 2 adds to the MDS database and protocol:
   `mds/src/placement.cpp`: the same hierarchical HRW, with the kept members'
   domains excluded, keyed per object for K < all;
 - `LIST` limited to one location: the objects that have a slot or a version
-  member on a topology entry, one row per object, paged by id (`ost_id` in the
-  request, `-ENOENT` for an entry the topology does not have). It is what a drain
+  member on a location of the topology, one row per object, paged by id (the location
+  URI in the body of the request, `-ENOENT` for a location the topology does not have). It is what a drain
   walks; the slots of an object on the entry are then read from its map
   (`RESOLVE`). The counts of slots and version members `rawstor location info`
   reports are a query of their own, with the drain status.

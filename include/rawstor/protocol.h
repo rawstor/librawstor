@@ -302,10 +302,12 @@ struct RawstorFrameSetObject {
 
 /*
  * LIST's request: `account_id` limits the listing to the objects that account
- * owns (nil = every object); `ost_id`, an MDS only, limits it to the objects
- * that have a slot or a version member on that topology entry (nil = no
- * limit; an OST refuses a non-nil one with -EINVAL, an unknown entry is
- * -ENOENT); `token_id` resumes strictly after the id it names
+ * owns (nil = every object); `held_by_len` bytes follow the payload: the
+ * location URI of an entry of an MDS's topology, not null-terminated, and the
+ * listing is limited to the objects that have a slot or a version member on it
+ * (none follow, `held_by_len` 0, for no limit; an OST refuses a limit with
+ * -EINVAL, a location the topology does not have is -ENOENT); `token_id`
+ * resumes strictly after the id it names
  * -- every offset a listed id has is always reported together in the same page
  * (rawstor::Backend::list_chunks()'s own contract, src/backend.hpp: one page
  * entry is an id plus every offset it has, never split across pages), so
@@ -319,9 +321,9 @@ struct RawstorFrameSetObject {
  */
 struct RawstorFrameListPayload {
     uint8_t account_id[16];
-    uint8_t ost_id[16];
     uint8_t token_id[16];
     uint32_t limit;
+    uint16_t held_by_len;
 } RAWSTOR_PACKED;
 
 struct RawstorFrameList {
@@ -927,7 +929,7 @@ RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameHead, 8);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameBasicPayload, 48);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSetObjectPayload, 64);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameHandshakePayload, 8);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListPayload, 52);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListPayload, 38);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListEntry, 48);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameVersionEntry, 16);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameAccountEntry, 16);
