@@ -317,11 +317,17 @@ stamped or `RESYNC` request with `-EOPNOTSUPP`.
      +-------------------------------------------+----------+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~+
 ```
 
-### List — 36 bytes
+### List — 38 bytes, then the location
 
 `limit` ids per page, starting after `token_id` (nil = from the start). `account_id`
 limits the listing to the objects that account owns; nil lists every object
-([Accounts](accounts.md)).
+([Accounts](accounts.md)). `held_by_len` bytes follow the 38: a location URI of
+the topology of an MDS, not null-terminated, such as `ost://host:port` (the
+password of its user information, if any, is not part of it), which limits the
+listing to the objects that have a slot or a version member on that location;
+0 and no bytes is no limit. Only an MDS answers a limit (`-ENOENT` for a
+location its topology does not have); an OST reads the bytes and refuses it
+with `-EINVAL`.
 
 ```text
      +0         +1         +2         +3         +4         +5         +6         +7
@@ -337,10 +343,10 @@ limits the listing to the objects that account owns; nil lists every object
      |                                                                                       |
  24  |                                                                                       |
      |                                                                                       |
-     +-------------------------------------------+-------------------------------------------+
- 32  |              uint32_t limit               |
-     |                                           |
-     +-------------------------------------------+
+     +-------------------------------------------+---------------------+---------------------+
+ 32  |              uint32_t limit               |uint16_t held_by_len |
+     |                                           |                     |
+     +-------------------------------------------+---------------------+
 ```
 
 ### ListAccounts — 20 bytes
@@ -626,10 +632,10 @@ null-terminated. An OST answers `-ENOSYS`.
      |                                                                                       |
   8  |                                                                                       |
      |                                                                                       |
-     +-------------------------------------------+-------------------------------------------+
- 16  |         uint16_t location_len             |
-     |                                           |
-     +-------------------------------------------+
+     +---------------------+-----------------------------------------------------------------+
+ 16  |uint16_t location_len|
+     |                     |
+     +---------------------+
 ```
 
 ### Meta — 376 bytes

@@ -350,17 +350,21 @@ public:
 // BackendOpBasic<RawstorFrameListEntry> would have been.
 class BackendOpList final : public BackendOp {
 private:
-    RawstorFrameList _request;
+    // The frame, then the location URI that limits the listing.
+    std::vector<unsigned char> _request;
     std::vector<RawstorFrameListEntry> _response_data;
 
 public:
     BackendOpList(
         const std::shared_ptr<rawstor::wire::Backend>& backend, uint16_t cid,
         const RawstdUUID& token, unsigned int limit, const RawstdUUID& account,
-        const rawstd::TraceEvent& trace_event
+        const std::string& held_by, const rawstd::TraceEvent& trace_event
     ) :
-        BackendOp(backend, cid, trace_event, "list", 0, 0),
-        _request({
+        BackendOp(backend, cid, trace_event, "list", 0, 0) {
+        if (held_by.size() > UINT16_MAX) {
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+        RawstorFrameList request = {
             .head =
                 {
                     .magic = RAWSTOR_MAGIC,
@@ -371,21 +375,27 @@ public:
                 .account_id = {},
                 .token_id = {},
                 .limit = limit,
+                .held_by_len = static_cast<uint16_t>(held_by.size()),
             },
-        }) {
+        };
         memcpy(
-            _request.payload.account_id, account.bytes,
-            sizeof(_request.payload.account_id)
+            request.payload.account_id, account.bytes,
+            sizeof(request.payload.account_id)
         );
         memcpy(
-            _request.payload.token_id, token.bytes,
-            sizeof(_request.payload.token_id)
+            request.payload.token_id, token.bytes,
+            sizeof(request.payload.token_id)
+        );
+        _request.resize(sizeof(request) + held_by.size());
+        memcpy(_request.data(), &request, sizeof(request));
+        memcpy(
+            _request.data() + sizeof(request), held_by.data(), held_by.size()
         );
     }
 
-    const void* request_data() const noexcept { return &_request; }
+    const void* request_data() const noexcept { return _request.data(); }
 
-    size_t request_size() const noexcept override { return sizeof(_request); }
+    size_t request_size() const noexcept override { return _request.size(); }
 
     size_t
     response_head_cb(const RawstorFrameResponse* response, int error) override {
@@ -396,7 +406,7 @@ public:
         }
 
         if (!error) {
-            error = validate_cmd(response->head.cmd, _request.head.cmd);
+            error = validate_cmd(response->head.cmd, RAWSTOR_CMD_LIST);
         }
 
         if (!error && response->body.res > 0) {
@@ -941,7 +951,8 @@ rawstd::Task<std::vector<unsigned char>> Backend::exchange(
 
 rawstd::Task<void> Backend::_wire_list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token, RawstdUUID account, RawstdUUID version_id
+    RawstdUUID& token, RawstdUUID account, RawstdUUID version_id,
+    std::string held_by
 ) {
     co_await _ensure_large_receive_ring();
 
@@ -963,6 +974,9 @@ rawstd::Task<void> Backend::_wire_list_chunks(
     // end holds it at all -- any other id it returns is dropped below.
     // A nil `id` never gets here, so it always has a predecessor.
     bool filtered = !rawstd_uuid_is_nil(&id);
+    if (filtered && !held_by.empty()) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
     if (filtered) {
         input_token = id;
         for (size_t i = sizeof(input_token.bytes); i-- > 0;) {
@@ -977,7 +991,7 @@ rawstd::Task<void> Backend::_wire_list_chunks(
 
     std::shared_ptr<BackendOpList> op = std::make_shared<BackendOpList>(
         std::static_pointer_cast<Backend>(shared_from_this()), _cid_counter++,
-        input_token, limit, account, trace_event
+        input_token, limit, account, held_by, trace_event
     );
     _add_op(op);
 

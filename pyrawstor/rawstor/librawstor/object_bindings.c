@@ -789,21 +789,58 @@ static void free_pagination_token(PyObject* capsule) {
     free(token);
 }
 
+// `arg` is the extra argument of a listing that takes one, NULL for the rest.
 typedef int (*LocationPageFunction)(
-    RawIOQueue*, const char*, unsigned int, RawstorStringList**,
-    RawstorPaginationToken*, int (*)(ssize_t, void*), void*
+    RawIOQueue*, const char*, const char* arg, unsigned int,
+    RawstorStringList**, RawstorPaginationToken*, int (*)(ssize_t, void*), void*
 );
+
+static int list_objects(
+    RawIOQueue* queue, const char* location, const char* Py_UNUSED(arg),
+    unsigned int limit, RawstorStringList** targets,
+    RawstorPaginationToken* token, int (*cb)(ssize_t, void*), void* data
+) {
+    return rawstor_location_list(
+        queue, location, limit, targets, token, cb, data
+    );
+}
+
+static int list_held_objects(
+    RawIOQueue* queue, const char* location, const char* held_by,
+    unsigned int limit, RawstorStringList** targets,
+    RawstorPaginationToken* token, int (*cb)(ssize_t, void*), void* data
+) {
+    return rawstor_location_list_held(
+        queue, location, held_by, limit, targets, token, cb, data
+    );
+}
+
+static int list_topology(
+    RawIOQueue* queue, const char* location, const char* Py_UNUSED(arg),
+    unsigned int limit, RawstorStringList** locations,
+    RawstorPaginationToken* token, int (*cb)(ssize_t, void*), void* data
+) {
+    return rawstor_location_topology(
+        queue, location, limit, locations, token, cb, data
+    );
+}
+
+static int list_accounts(
+    RawIOQueue* queue, const char* location, const char* Py_UNUSED(arg),
+    unsigned int limit, RawstorStringList** accounts,
+    RawstorPaginationToken* token, int (*cb)(ssize_t, void*), void* data
+) {
+    return rawstor_location_accounts(
+        queue, location, limit, accounts, token, cb, data
+    );
+}
 
 // One page of strings and the token that resumes after it (None on the last
 // page), from a paginated rawstor_location_*() listing.
-static PyObject* location_page(PyObject* args, LocationPageFunction enumerate) {
-    const char* location;
-    unsigned int limit;
-    PyObject* py_token;
-    if (!PyArg_ParseTuple(args, "sIO", &location, &limit, &py_token)) {
-        return NULL;
-    }
-
+static PyObject* location_page(
+    const char* location, const char* arg, unsigned int limit,
+    PyObject* py_token, LocationPageFunction enumerate
+) {
     PyObject* py_ret_token = NULL;
     RawstorStringList* list = NULL;
     PyObject* py_list = NULL;
@@ -835,7 +872,7 @@ static PyObject* location_page(PyObject* args, LocationPageFunction enumerate) {
         goto error;
     }
     int sres = enumerate(
-        op.queue, location, limit, &list, &token, rawstor_sync_op_cb, &op
+        op.queue, location, arg, limit, &list, &token, rawstor_sync_op_cb, &op
     );
     ssize_t res = rawstor_sync_op_wait(&op, sres);
     rawstor_sync_op_destroy(&op);
@@ -900,7 +937,27 @@ error:
 }
 
 PyObject* py_rawstor_object_list(PyObject* Py_UNUSED(self), PyObject* args) {
-    return location_page(args, rawstor_location_list);
+    const char* location;
+    unsigned int limit;
+    PyObject* py_token;
+    if (!PyArg_ParseTuple(args, "sIO", &location, &limit, &py_token)) {
+        return NULL;
+    }
+    return location_page(location, NULL, limit, py_token, list_objects);
+}
+
+PyObject*
+py_rawstor_object_list_held(PyObject* Py_UNUSED(self), PyObject* args) {
+    const char* location;
+    const char* held_by;
+    unsigned int limit;
+    PyObject* py_token;
+    if (!PyArg_ParseTuple(
+            args, "ssIO", &location, &held_by, &limit, &py_token
+        )) {
+        return NULL;
+    }
+    return location_page(location, held_by, limit, py_token, list_held_objects);
 }
 
 PyObject* py_rawstor_object_create(PyObject* Py_UNUSED(self), PyObject* args) {
@@ -1393,12 +1450,24 @@ static PyObject* target_list(PyObject* args, TargetListFunction enumerate) {
 }
 
 PyObject* py_rawstor_account_list(PyObject* Py_UNUSED(self), PyObject* args) {
-    return location_page(args, rawstor_location_accounts);
+    const char* location;
+    unsigned int limit;
+    PyObject* py_token;
+    if (!PyArg_ParseTuple(args, "sIO", &location, &limit, &py_token)) {
+        return NULL;
+    }
+    return location_page(location, NULL, limit, py_token, list_accounts);
 }
 
 PyObject*
 py_rawstor_location_topology(PyObject* Py_UNUSED(self), PyObject* args) {
-    return location_page(args, rawstor_location_topology);
+    const char* location;
+    unsigned int limit;
+    PyObject* py_token;
+    if (!PyArg_ParseTuple(args, "sIO", &location, &limit, &py_token)) {
+        return NULL;
+    }
+    return location_page(location, NULL, limit, py_token, list_topology);
 }
 
 static PyObject* account_mutation(

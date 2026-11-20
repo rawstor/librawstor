@@ -691,6 +691,44 @@ TEST(OstClientTest, list_reports_every_chunk_offset) {
     EXPECT_EQ(rawstd_uuid_cmp(&row_id, &nil_id), 0);
 }
 
+// A location of a topology is the MDS's: an OST has none to list by.
+TEST(OstClientTest, list_by_location_is_refused) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+
+    rawstor::ostserver::tests::Queue queue;
+    auto [raw_client, client_fd] = connect_client(server, queue);
+    ClientCleanup server_client(std::move(raw_client), queue);
+    rawstor::ostserver::tests::Client client(client_fd);
+
+    // The answer to a request with a location, and the bytes of its body, so
+    // that the next answer is read from where it starts.
+    auto answer = [&](const std::string& held_by) {
+        client.send_list(RawstdUUID{}, 0, held_by);
+        EXPECT_TRUE(pump_until(queue, [&] {
+            return client.bytes_available() >= sizeof(RawstorFrameResponse);
+        }));
+        RawstorFrameResponse response = client.recv_response();
+        EXPECT_EQ(response.head.cmd, RAWSTOR_CMD_LIST);
+        if (response.body.res > 0) {
+            std::vector<unsigned char> body(response.body.res);
+            EXPECT_TRUE(pump_until(queue, [&] {
+                return client.bytes_available() >= body.size();
+            }));
+            client.recv_payload(body.data(), body.size());
+        }
+        return response.body.res;
+    };
+
+    EXPECT_EQ(answer("ost://127.0.0.1:7777"), -EINVAL);
+    // The location was read with the request: the next one is understood.
+    EXPECT_GE(answer(""), 0);
+    // The longest location a request can carry is read whole as well.
+    EXPECT_EQ(answer(std::string(UINT16_MAX, 'a')), -EINVAL);
+    EXPECT_GE(answer(""), 0);
+}
+
 namespace {
 
 RawstorObjectSyncStateValue stored_state(

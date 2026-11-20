@@ -1504,6 +1504,9 @@ static int command_transfer(int argc, char** argv) {
     return rawstor_cli_transfer(target_arg, args[0]);
 }
 
+/* Getopt code of `object list --held-by`. */
+enum { OPT_HELD_BY = 1100 };
+
 static void command_list_usage(void) {
     fprintf(
         stdout, "Rawstor CLI " PACKAGE_VERSION "\n"
@@ -1525,6 +1528,14 @@ static void command_list_usage(void) {
                 "command options:\n"
                 "  -h, --help            Show this help message and "
                 "exit\n" RAWSTOR_CLI_OUTPUT_USAGE
+                "  --held-by LOCATION    List only the objects that have a "
+                "slot or a version\n"
+                "                        member on LOCATION, a location of "
+                "the topology of the\n"
+                "                        MDS (`rawstor location list MDS` "
+                "prints them): what it\n"
+                "                        still holds. LOCATION names an "
+                "mds://.\n"
     );
 }
 
@@ -1534,10 +1545,12 @@ static int command_list(int argc, char** argv) {
         {"help", no_argument, NULL, 'h'},
         {"format", required_argument, NULL, RAWSTOR_CLI_OPT_FORMAT},
         {"column", required_argument, NULL, RAWSTOR_CLI_OPT_COLUMN},
+        {"held-by", required_argument, NULL, OPT_HELD_BY},
         {},
     };
 
     char* location_arg = NULL;
+    const char* held_by_arg = NULL;
     RawstorCliOutput output_arg = {.unit = global_unit};
     optind = 0;
     while (1) {
@@ -1550,6 +1563,10 @@ static int command_list(int argc, char** argv) {
         case 'h':
             command_list_usage();
             return EXIT_SUCCESS;
+
+        case OPT_HELD_BY:
+            held_by_arg = optarg;
+            break;
 
         case RAWSTOR_CLI_OPT_FORMAT:
             if (rawstor_cli_output_set_format(&output_arg, optarg) != 0) {
@@ -1589,7 +1606,7 @@ static int command_list(int argc, char** argv) {
         return EX_USAGE;
     }
 
-    return rawstor_cli_list(location_arg, &output_arg);
+    return rawstor_cli_list(location_arg, held_by_arg, &output_arg);
 }
 
 static void command_info_usage(void) {

@@ -18,6 +18,7 @@ extern PyTypeObject* PyObjectConfigType;
 int py_rawstor_types_init(PyObject* module);
 
 PyObject* py_rawstor_object_list(PyObject* self, PyObject* args);
+PyObject* py_rawstor_object_list_held(PyObject* self, PyObject* args);
 
 PyObject* py_rawstor_object_create(PyObject* self, PyObject* args);
 

@@ -120,6 +120,36 @@ TEST(URITest, empty_path) {
     EXPECT_EQ(uri.path().filename(), "");
 }
 
+TEST(URITest, canonical_leaves_a_trailing_slash_out) {
+    EXPECT_EQ(
+        rawstd::URI("ost://127.0.0.1:7777/").canonical(),
+        rawstd::URI("ost://127.0.0.1:7777").canonical()
+    );
+    EXPECT_EQ(
+        rawstd::URI("ost://127.0.0.1:7777/").canonical(), "ost://127.0.0.1:7777"
+    );
+    EXPECT_EQ(
+        rawstd::URI("ost://127.0.0.1:7777//").canonical(),
+        "ost://127.0.0.1:7777"
+    );
+    EXPECT_EQ(rawstd::URI("file:///tmp/dir/").canonical(), "file:///tmp/dir");
+    EXPECT_EQ(rawstd::URI("file:///tmp/dir").canonical(), "file:///tmp/dir");
+    // Only the path loses it: the rest is the URI as it prints.
+    EXPECT_EQ(
+        rawstd::URI("ost://user:secret@host:7777/").canonical(),
+        "ost://user@host:7777"
+    );
+    // A different path is a different place.
+    EXPECT_NE(
+        rawstd::URI("file:///tmp/a").canonical(),
+        rawstd::URI("file:///tmp/b").canonical()
+    );
+    // str() is what it was.
+    EXPECT_EQ(
+        rawstd::URI("ost://127.0.0.1:7777/").str(), "ost://127.0.0.1:7777/"
+    );
+}
+
 TEST(URITest, with_uuid) {
     rawstd::URI uri("file:///tmp/objects/uuid");
 

@@ -65,6 +65,12 @@ public:
     // still reads it, for whoever really needs it.
     inline const std::string& str() const noexcept { return _uri; }
 
+    // The URI as two of them are told to be the same place: str(), without a
+    // trailing '/' of the path (`ost://host:7777/` is `ost://host:7777`,
+    // `file:///tmp/dir/` is `file:///tmp/dir`). Not for printing; for
+    // comparing.
+    std::string canonical() const;
+
     inline const std::string& scheme() const noexcept { return _scheme; }
 
     inline const std::string& userinfo() const noexcept { return _userinfo; }

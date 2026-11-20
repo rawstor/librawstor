@@ -226,7 +226,7 @@ info_one(rawio::Queue& queue, const rawstd::URI& location) {
 // be read directly.
 rawstd::Task<std::pair<std::vector<rawstor::ChunkGroup>, RawstdUUID>> list_one(
     rawio::Queue& queue, const rawstd::URI& location, unsigned int limit,
-    RawstdUUID token
+    RawstdUUID token, std::string held_by
 ) {
     std::pair<std::vector<rawstor::ChunkGroup>, RawstdUUID> ret;
     ret.second = token;
@@ -235,7 +235,8 @@ rawstd::Task<std::pair<std::vector<rawstor::ChunkGroup>, RawstdUUID>> list_one(
     std::exception_ptr error;
     try {
         co_await slot->list_chunks(
-            RawstdUUID{}, limit, ret.first, ret.second, account_of(location)
+            RawstdUUID{}, limit, ret.first, ret.second, account_of(location),
+            RawstdUUID{}, held_by
         );
     } catch (...) {
         error = std::current_exception();
@@ -323,14 +324,15 @@ void launch_info_op(
 // run after the now-async co_await instead.
 rawstd::DetachedTask launch_list_op_coro(
     rawstor::Location loc, rawio::Queue* queue, unsigned int limit,
-    RawstorStringList** targets, RawstorPaginationToken* token,
-    int (*cb)(ssize_t result, void* data), void* data
+    std::string held_by, RawstorStringList** targets,
+    RawstorPaginationToken* token, int (*cb)(ssize_t result, void* data),
+    void* data
 ) {
     ssize_t result = 0;
     RawstorStringList* list = nullptr;
     try {
         std::list<rawstor::Target> list_targets;
-        co_await loc.list(*queue, limit, list_targets, *token);
+        co_await loc.list(*queue, limit, list_targets, *token, held_by);
 
         list = (RawstorStringList*)rawstd_list_create(sizeof(const char*));
         if (list == nullptr) {
@@ -377,10 +379,13 @@ rawstd::DetachedTask launch_list_op_coro(
 
 void launch_list_op(
     rawstor::Location loc, rawio::Queue* queue, unsigned int limit,
-    RawstorStringList** targets, RawstorPaginationToken* token,
-    int (*cb)(ssize_t result, void* data), void* data
+    const std::string& held_by, RawstorStringList** targets,
+    RawstorPaginationToken* token, int (*cb)(ssize_t result, void* data),
+    void* data
 ) {
-    launch_list_op_coro(std::move(loc), queue, limit, targets, token, cb, data);
+    launch_list_op_coro(
+        std::move(loc), queue, limit, held_by, targets, token, cb, data
+    );
     rawstd::DetachedTask::rethrow_if_pending();
 }
 
@@ -868,16 +873,22 @@ rawstd::Task<RawstorLocationInfo> Location::info(rawio::Queue& queue) const {
 
 rawstd::Task<void> Location::list(
     rawio::Queue& queue, unsigned int limit, std::list<Target>& targets,
-    RawstorPaginationToken& token
+    RawstorPaginationToken& token, const std::string& held_by
 ) const {
     RawstdUUID token_id = decode_token(token);
+
+    // Only an MDS knows which locations of its topology hold what.
+    if (!held_by.empty() &&
+        !(_uris.size() == 1 && _uris.front().scheme() == "mds")) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
 
     // Every URI's LIST goes out concurrently instead of one at a time;
     // the per-URI groups/token are only merged below, once every URI has
     // answered.
     std::vector<std::pair<std::vector<ChunkGroup>, RawstdUUID>> listings =
         co_await rawstd::gather(_uris.size(), [&](size_t i) {
-            return list_one(queue, _uris[i], limit, token_id);
+            return list_one(queue, _uris[i], limit, token_id, held_by);
         });
 
     // Merged across every URI, by id: each URI's own list_chunks() already
@@ -1062,8 +1073,37 @@ int rawstor_location_list(
     try {
         rawstor::Location loc(rawstd::URI::uriv(location));
         launch_list_op(
-            std::move(loc), static_cast<rawio::Queue*>(queue), limit, targets,
-            token, cb, data
+            std::move(loc), static_cast<rawio::Queue*>(queue), limit,
+            std::string{}, targets, token, cb, data
+        );
+        return 0;
+    } catch (const std::system_error& e) {
+        return -e.code().value();
+    } catch (const std::bad_alloc& e) {
+        return -ENOMEM;
+    } catch (const std::exception& e) {
+        rawstd_error("%s\n", e.what());
+        return -EINVAL;
+    } catch (...) {
+        rawstd_error("Unexpected error\n");
+        return -EINVAL;
+    }
+}
+
+int rawstor_location_list_held(
+    RawIOQueue* queue, const char* location, const char* held_by,
+    unsigned int limit, RawstorStringList** targets,
+    RawstorPaginationToken* token, int (*cb)(ssize_t result, void* data),
+    void* data
+) noexcept {
+    try {
+        if (held_by == nullptr || held_by[0] == '\0') {
+            return -EINVAL;
+        }
+        rawstor::Location loc(rawstd::URI::uriv(location));
+        launch_list_op(
+            std::move(loc), static_cast<rawio::Queue*>(queue), limit,
+            std::string(held_by), targets, token, cb, data
         );
         return 0;
     } catch (const std::system_error& e) {

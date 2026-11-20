@@ -108,6 +108,10 @@ void rawstor_cli_target_location(
     const char* target, char* location, size_t location_size
 );
 
+/* `uri` as a URI prints, without the password of its user information, in
+ * `out`: what is safe to show. Empty when `uri` is not a URI. */
+void rawstor_cli_uri_display(const char* uri, char* out, size_t out_size);
+
 /* Render a listed target with only the account explicitly present in each
  * source location. The caller frees the result; NULL sets errno on failure. */
 char* rawstor_cli_list_target(const char* target, const char* location);

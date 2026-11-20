@@ -9,6 +9,7 @@
 
 static PyMethodDef librawstor_methods[] = {
     {"object_list", py_rawstor_object_list, METH_VARARGS, NULL},
+    {"object_list_held", py_rawstor_object_list_held, METH_VARARGS, NULL},
     {"object_create", py_rawstor_object_create, METH_VARARGS, NULL},
     {"object_create_at", py_rawstor_object_create_at, METH_VARARGS, NULL},
     {"object_create_version", py_rawstor_object_create_version, METH_VARARGS,

@@ -302,7 +302,12 @@ struct RawstorFrameSetObject {
 
 /*
  * LIST's request: `account_id` limits the listing to the objects that account
- * owns (nil = every object); `token_id` resumes strictly after the id it names
+ * owns (nil = every object); `held_by_len` bytes follow the payload: the
+ * location URI of an entry of an MDS's topology, not null-terminated, and the
+ * listing is limited to the objects that have a slot or a version member on it
+ * (none follow, `held_by_len` 0, for no limit; an OST refuses a limit with
+ * -EINVAL, a location the topology does not have is -ENOENT); `token_id`
+ * resumes strictly after the id it names
  * -- every offset a listed id has is always reported together in the same page
  * (rawstor::Backend::list_chunks()'s own contract, src/backend.hpp: one page
  * entry is an id plus every offset it has, never split across pages), so
@@ -318,6 +323,7 @@ struct RawstorFrameListPayload {
     uint8_t account_id[16];
     uint8_t token_id[16];
     uint32_t limit;
+    uint16_t held_by_len;
 } RAWSTOR_PACKED;
 
 struct RawstorFrameList {
@@ -443,9 +449,9 @@ struct RawstorFrameVersionEntry {
 // leaves the byte unused (0). `epoch` (WRITE/DISCARD/WRITE_ZEROES; FLUSH
 // carries it in RawstorFrameBasicPayload::val) is the epoch of the
 // configuration the writer uses: the server refuses the request with
-// -ESTALE when the copy's accepted configuration is newer
-// (docs/multiattach.md, "Epoch on writes"). 0 is never refused; READ
-// leaves it 0.
+// -ESTALE when the copy's accepted configuration is newer, or when the copy
+// has a record and the request carries 0 (docs/multiattach.md, "Epoch on
+// writes"). READ leaves it 0.
 struct RawstorFrameIOPayload {
     uint64_t offset;
     uint64_t hash;
@@ -923,7 +929,7 @@ RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameHead, 8);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameBasicPayload, 48);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameSetObjectPayload, 64);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameHandshakePayload, 8);
-RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListPayload, 36);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListPayload, 38);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListEntry, 48);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameVersionEntry, 16);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameAccountEntry, 16);

@@ -21,6 +21,7 @@ numbers its stages separately.
 | `updatePlacement` / migration / rebalance | 1 | ❌ | [Migration design](migration.md) |
 | One connection per (OST, object) serving all its chunks | 1 | 🟡 | one connection pool per chunk slot (`SET_OBJECT` with the chunk offset) |
 | `--reconstruct`: rebuild the live map from `LIST` + `META` | 1 | ✅ | `mds/src/main.cpp` |
+| `LIST` limited to one location of the topology, told by its URI: the objects with a slot or a version member on it | 1 | ✅ | `mds/src/store.cpp`, `rawstor_location_list_held()`, [Migration](migration.md#mds-side) |
 | `--reconstruct`: register complete versions, collect garbage | 2 | ❌ | version records are skipped |
 | Scrub: full MDS serving the same scan from its own index | — | ❌ | — |
 | `OBJ_COMMIT_VERSION` / `OBJ_REMOVE_VERSION` / `LIST_VERSIONS` | 2 | ✅ | `mds/src/client.cpp`, `src/mds_backend.cpp` |

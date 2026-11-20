@@ -351,6 +351,20 @@ URI& URI::operator=(URI&& other) noexcept {
     return *this;
 }
 
+std::string URI::canonical() const {
+    const std::string& path = _path.str();
+    if (path.size() > _uri.size() ||
+        _uri.compare(_uri.size() - path.size(), path.size(), path) != 0) {
+        return _uri;
+    }
+    std::string ret = _uri;
+    const size_t path_start = ret.size() - path.size();
+    while (ret.size() > path_start && ret.back() == '/') {
+        ret.pop_back();
+    }
+    return ret;
+}
+
 URI URI::parent() const {
     std::ostringstream oss;
     oss << _scheme << "://" << _authority << _path.dirname();

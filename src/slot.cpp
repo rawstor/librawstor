@@ -1152,7 +1152,8 @@ const rawstd::URI* Slot::location() const noexcept {
 
 rawstd::Task<void> Slot::list_chunks(
     RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-    RawstdUUID& token, RawstdUUID account, RawstdUUID version_id
+    RawstdUUID& token, RawstdUUID account, RawstdUUID version_id,
+    std::string held_by
 ) {
     OperationGuard operation(*this);
 
@@ -1164,7 +1165,7 @@ rawstd::Task<void> Slot::list_chunks(
     try {
         co_await _with_retry(
             func_name, trace_event, &Backend::list_chunks, id, limit, chunks,
-            token, account, version_id
+            token, account, version_id, held_by
         );
         _finish(t_call);
     } catch (...) {

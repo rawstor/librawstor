@@ -140,7 +140,8 @@ public:
     // own real chunk offsets, off its own WireMap.
     rawstd::Task<void> list_chunks(
         RawstdUUID id, unsigned int limit, std::vector<ChunkGroup>& chunks,
-        RawstdUUID& token, RawstdUUID account = {}, RawstdUUID version_id = {}
+        RawstdUUID& token, RawstdUUID account = {}, RawstdUUID version_id = {},
+        std::string held_by = {}
     ) override;
 
     // Makes `owner` the owner of the whole object: the MDS first, then every

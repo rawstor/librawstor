@@ -456,6 +456,19 @@ TEST(ObjectListTest, lists_the_locations_of_an_mds) {
     std::vector<std::string> found;
     size_t pages = 0;
     EXPECT_EQ(locations_of("file:///tmp", 0, &found, &pages), -ENOTSUP);
+
+    // The password is not on the wire: a client that does not go through
+    // Location, as the library does, is told the same.
+    std::shared_ptr<rawstor::Backend> backend =
+        run(*queue,
+            rawstor::Backend::create(*queue, rawstd::URI(env.location())));
+    std::vector<std::string> raw;
+    RawstdUUID token{};
+    run(*queue, backend->list_locations(0, raw, token));
+    EXPECT_EQ(raw, expected);
+    for (const std::string& location : raw) {
+        EXPECT_EQ(location.find("secret"), std::string::npos) << location;
+    }
 }
 
 // A listing page that fails leaves the token where it was: Slot repeats a
@@ -497,6 +510,113 @@ TEST(ObjectListTest, a_failed_page_keeps_its_token) {
     expect_untouched(mds->list_accounts(0, accounts, token));
     std::vector<std::string> locations;
     expect_untouched(mds->list_locations(0, locations, token));
+}
+
+// LIST against the MDS limited to the objects held by one location of its
+// topology, through the same Backend as a plain LIST: every object here has its
+// slot on the environment's one OST, and a location the topology does not have
+// is ENOENT.
+TEST(ObjectListTest, lists_mds_objects_held_by_a_location) {
+    rawstor::tests::ObjectEnv env(8940, 8941);
+    std::vector<std::string> uuids = {
+        "018f4e2a-3000-7000-8000-000000000070",
+        "018f4e2a-3000-7000-8000-000000000071",
+    };
+
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstorObjectSpec spec = one_chunk_spec();
+    for (const std::string& uuid : uuids) {
+        ASSERT_EQ(
+            target_create(*queue, object_target(env, uuid.c_str()), spec), 0
+        );
+    }
+
+    std::shared_ptr<rawstor::Backend> backend =
+        run(*queue,
+            rawstor::Backend::create(*queue, rawstd::URI(env.location())));
+
+    const std::string held_by = "ost://127.0.0.1:8941";
+    std::vector<rawstor::ChunkGroup> groups;
+    RawstdUUID token{};
+    run(*queue, backend->list_chunks({}, 0, groups, token, {}, {}, held_by));
+    ASSERT_EQ(groups.size(), uuids.size());
+    for (size_t i = 0; i < uuids.size(); ++i) {
+        RawstdUUID id;
+        ASSERT_EQ(rawstd_uuid_from_string(&id, uuids[i].c_str()), 0);
+        EXPECT_EQ(rawstd_uuid_cmp(&groups[i].id, &id), 0);
+        EXPECT_TRUE(groups[i].offsets.empty());
+    }
+    EXPECT_TRUE(rawstd_uuid_is_nil(&token));
+
+    try {
+        run(*queue, backend->list_chunks(
+                        {}, 0, groups, token, {}, {}, "ost://127.0.0.1:1"
+                    ));
+        ADD_FAILURE() << "no error";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ENOENT);
+    }
+
+    // A location as long as a request can carry is a location the topology does
+    // not have; one longer than that is refused before it is sent.
+    try {
+        run(*queue,
+            backend->list_chunks(
+                {}, 0, groups, token, {}, {}, std::string(UINT16_MAX, 'a')
+            ));
+        ADD_FAILURE() << "no error";
+    } catch (const std::system_error& e) {
+        EXPECT_TRUE(e.code().value() == ENOENT || e.code().value() == EINVAL)
+            << e.code().value();
+    }
+    try {
+        run(*queue,
+            backend->list_chunks(
+                {}, 0, groups, token, {}, {}, std::string(UINT16_MAX + 1, 'a')
+            ));
+        ADD_FAILURE() << "no error";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), EINVAL);
+    }
+
+    // The same through the C API, which names the targets.
+    auto list_held = [&](const std::string& where, const char* location,
+                         std::vector<std::string>* targets) -> ssize_t {
+        RawstorStringList* page = nullptr;
+        RawstorPaginationToken page_token = {};
+        ssize_t res =
+            rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
+                return rawstor_location_list_held(
+                    queue.get(), where.c_str(), location, 0, &page, &page_token,
+                    cb, data
+                );
+            });
+        if (res == 0) {
+            for (const char** it = rawstor_string_list_iter(page);
+                 it != nullptr; it = rawstor_string_list_next(it)) {
+                targets->push_back(*it);
+            }
+            rawstor_string_list_delete(page);
+            EXPECT_TRUE(rawstor_pagination_token_empty(&page_token));
+        }
+        return res;
+    };
+    std::vector<std::string> listed;
+    ASSERT_EQ(list_held(env.location(), held_by.c_str(), &listed), 0);
+    EXPECT_EQ(listed.size(), uuids.size());
+    // A trailing '/' does not make another location.
+    listed.clear();
+    ASSERT_EQ(list_held(env.location(), (held_by + "/").c_str(), &listed), 0);
+    EXPECT_EQ(listed.size(), uuids.size());
+    EXPECT_EQ(list_held(env.location(), "ost://127.0.0.1:1", &listed), -ENOENT);
+    // No location, and a location that is not an MDS.
+    EXPECT_EQ(list_held(env.location(), "", &listed), -EINVAL);
+    EXPECT_EQ(list_held("file:///tmp", held_by.c_str(), &listed), -EINVAL);
+
+    for (const std::string& uuid : uuids) {
+        EXPECT_EQ(target_remove(*queue, object_target(env, uuid.c_str())), 0);
+    }
 }
 
 // An mds:// Backend is a control-plane client only: every data-path call

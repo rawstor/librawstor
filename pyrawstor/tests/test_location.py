@@ -79,6 +79,21 @@ class TestLocation(unittest.TestCase):
                 list(location.locations())
             self.assertEqual(cm.exception.errno, errno.ENOTSUP)
 
+    def test_objects_held_by_a_location_need_an_mds(self):
+        held_by = "ost://127.0.0.1:7777"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            location = rawstor.Location(f"file://{temp_dir}")
+            with self.assertRaises(OSError) as cm:
+                list(location.objects(held_by=held_by))
+            self.assertEqual(cm.exception.errno, errno.EINVAL)
+
+    def test_objects_held_by_a_location_need_a_location(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            location = rawstor.Location(f"file://{temp_dir}")
+            with self.assertRaises(OSError) as cm:
+                list(location.objects(held_by=""))
+            self.assertEqual(cm.exception.errno, errno.EINVAL)
+
     def test_objects(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             location = rawstor.Location(f"file://{temp_dir}")

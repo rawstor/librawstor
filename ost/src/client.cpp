@@ -549,6 +549,15 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                     stream, &list_payload, sizeof(list_payload), fd,
                     "request payload"
                 );
+                // The location that limits a listing is the MDS's: it is read
+                // to keep the stream in step, and refused below.
+                if (list_payload.held_by_len != 0) {
+                    std::vector<char> held_by(list_payload.held_by_len);
+                    co_await recv_frame(
+                        stream, held_by.data(), held_by.size(), fd,
+                        "request payload"
+                    );
+                }
                 client = weak.lock();
                 if (client == nullptr) {
                     co_return;
@@ -988,6 +997,10 @@ rawstd::DetachedTask Client::_list(
     std::vector<unsigned char> data;
     int result = 0;
     try {
+        // A topology entry names a location of an MDS, not of an OST.
+        if (payload.held_by_len != 0) {
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
         co_await with_slot(
             client->_queue, client->_server.locations(),
             [&](rawstor::Slot& slot) -> rawstd::Task<void> {
