@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `lvm://`: creating a version failed with "LV name ... is not supported" once `<vg>/<lv>` of the snapshot passed LVM's 127-character limit (a long VG name or a large chunk offset); a snapshot's name now carries the version id in a 22-character form. Snapshots created by earlier builds are no longer found.
+- Plain (`--insecure`) connections: a request that the socket sent only in part failed with EAGAIN and made the client reconnect and retry every request in flight; the rest of it is now sent.
 
 ## [0.3.0] - 2026-11-20
 

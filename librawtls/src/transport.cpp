@@ -9,6 +9,7 @@
 
 #include <rawstd/coro.hpp>
 #include <rawstd/gpp.hpp>
+#include <rawstd/iovec.h>
 #include <rawstd/logging.h>
 #include <rawstd/socket.h>
 
@@ -68,11 +69,96 @@ void log_errors(const char* what) {
     RAWSTD_THROW_SYSTEM_ERROR(EACCES);
 }
 
-class PlainTransport final : public rawtls::Transport {
+// What every Transport that writes to a socket has in common: one sender at a
+// time, so that what a call sends goes out whole before the next call starts
+// and the frames of the stream keep their boundaries; and a connection that is
+// broken once a failed write has left half a frame in the stream.
+class SerialTransport : public rawtls::Transport {
+private:
+    rawstd::Semaphore _write_mutex{1};
+
+    rawstd::Task<size_t> _serialized(const msghdr* msg, unsigned int flags) {
+        co_await _write_mutex.acquire();
+        Release release(_write_mutex);
+        if (_broken) {
+            RAWSTD_THROW_SYSTEM_ERROR(ECONNABORTED);
+        }
+        co_return co_await _send_locked(msg, flags);
+    }
+
+protected:
+    // Set by a transport whose write failed after a part of its bytes went
+    // out: nothing may follow that half frame, and the sends waiting their
+    // turn fail instead of writing to a socket that is being closed.
+    bool _broken = false;
+
+    // Sends all of `msg` and completes with its size. Called with the write
+    // mutex held and the connection not broken; `msg` stays alive until it
+    // completes.
+    virtual rawstd::Task<size_t>
+    _send_locked(const msghdr* msg, unsigned int flags) = 0;
+
+public:
+    rawstd::Task<size_t>
+    send(const void* buf, size_t size, unsigned int flags) final {
+        iovec iov{const_cast<void*>(buf), size};
+        msghdr msg{};
+        msg.msg_iov = &iov;
+        msg.msg_iovlen = 1;
+        co_return co_await _serialized(&msg, flags);
+    }
+
+    rawstd::Task<size_t> sendmsg(const msghdr* msg, unsigned int flags) final {
+        return _serialized(msg, flags);
+    }
+};
+
+class PlainTransport final : public SerialTransport {
 private:
     rawio::Queue& _queue;
     int _fd;
     rawio::RecvStream::Canceller _recv;
+    // Sends all of `msg` and completes with its size. A short send of the
+    // socket is continued from where it stopped; the vectors of `msg` are
+    // left as they are.
+    rawstd::Task<size_t>
+    _send_locked(const msghdr* msg, unsigned int flags) override {
+        iovec* iov = msg->msg_iov;
+        unsigned int niov = static_cast<unsigned int>(msg->msg_iovlen);
+        const size_t total = rawstd_iovec_size(iov, niov);
+        std::vector<iovec> rest;
+        msghdr part = *msg;
+        size_t sent = 0;
+        try {
+            while (sent < total) {
+                size_t n = co_await _queue.sendmsg(_fd, &part, flags);
+                if (n == 0) {
+                    RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
+                }
+                sent += n;
+                // Ancillary data goes out with the first bytes of a message:
+                // what continues it carries none, or the peer would get it
+                // again.
+                part.msg_control = nullptr;
+                part.msg_controllen = 0;
+                if (sent < total) {
+                    if (rest.empty()) {
+                        rest.assign(iov, iov + niov);
+                        iov = rest.data();
+                    }
+                    rawstd_iovec_discard_front(&iov, &niov, n);
+                    part.msg_iov = iov;
+                    part.msg_iovlen = niov;
+                }
+            }
+        } catch (...) {
+            if (sent > 0) {
+                _broken = true;
+            }
+            throw;
+        }
+        co_return total;
+    }
 
 public:
     PlainTransport(rawio::Queue& queue, int fd) noexcept :
@@ -80,16 +166,6 @@ public:
         _fd(fd) {}
 
     ~PlainTransport() override { cancel_recv_multishot(); }
-
-    rawstd::Task<size_t>
-    send(const void* buf, size_t size, unsigned int flags) override {
-        co_return co_await _queue.send(_fd, buf, size, flags);
-    }
-
-    rawstd::Task<size_t>
-    sendmsg(const msghdr* msg, unsigned int flags) override {
-        co_return co_await _queue.sendmsg(_fd, msg, flags);
-    }
 
     rawio::RecvStream recv_multishot(
         size_t entry_size, unsigned int entries, size_t size, unsigned int flags
@@ -117,7 +193,7 @@ class TlsRecv;
  * need not: the stream outlives it when the code that reads it is still
  * unwinding, and fails with ECANCELED from then on.
  */
-class TlsTransport final : public rawtls::Transport {
+class TlsTransport final : public SerialTransport {
 private:
     friend class TlsRecv;
 
@@ -138,16 +214,9 @@ private:
     bool _verify_failed = false;
     // True once the peer has said it will send no more.
     bool _closed = false;
-    // Orders everything written to the socket: a send takes it from encrypting
-    // until the last byte of its records is out.
-    rawstd::Semaphore _write_mutex{1};
     std::vector<unsigned char> _out;
     // The stream handed out last, the one cancel_recv_multishot() stops.
     std::weak_ptr<TlsRecv> _recv;
-    // Set once a write failed: part of a record may be on the wire, so nothing
-    // can follow it, and the sends waiting their turn fail instead of writing
-    // to a socket that is being closed.
-    bool _broken = false;
     static int _verify(int ok, x509_store_ctx_st* store_ctx) {
         SSL* ssl = static_cast<SSL*>(X509_STORE_CTX_get_ex_data(
             store_ctx, SSL_get_ex_data_X509_STORE_CTX_idx()
@@ -386,7 +455,7 @@ private:
     }
 
     // Sends what the session has to say. The caller must be the only one
-    // writing: holding _write_mutex, or before the Transport is handed out.
+    // writing: inside _send_locked(), or before the Transport is handed out.
     rawstd::Task<void> _flush() {
         if (_broken) {
             RAWSTD_THROW_SYSTEM_ERROR(ECONNABORTED);
@@ -402,11 +471,13 @@ private:
         }
     }
 
-    // Encrypts the `count` buffers of `iov` and sends them, whole and in
-    // order. `iov` must outlive the call.
-    rawstd::Task<size_t> _write(const iovec* iov, size_t count) {
-        co_await _write_mutex.acquire();
-        Release release(_write_mutex);
+    // Encrypts the buffers of `msg` and sends them, whole and in order. A
+    // send takes the write mutex from encrypting until the last byte of its
+    // records is out.
+    rawstd::Task<size_t>
+    _send_locked(const msghdr* msg, unsigned int) override {
+        const iovec* iov = msg->msg_iov;
+        size_t count = static_cast<size_t>(msg->msg_iovlen);
         // Reconnect with the reloaded credentials before sending an expired
         // certificate's command; the server's EACCES is a permanent IO error.
         if (_mode == rawtls::Mode::client &&
@@ -524,16 +595,6 @@ public:
         co_await rawio::with_timeout(
             _queue, timeout_ms * 1000u, _run_handshake()
         );
-    }
-
-    rawstd::Task<size_t>
-    send(const void* buf, size_t size, unsigned int) override {
-        iovec iov{const_cast<void*>(buf), size};
-        co_return co_await _write(&iov, 1);
-    }
-
-    rawstd::Task<size_t> sendmsg(const msghdr* msg, unsigned int) override {
-        return _write(msg->msg_iov, static_cast<size_t>(msg->msg_iovlen));
     }
 
     rawio::RecvStream

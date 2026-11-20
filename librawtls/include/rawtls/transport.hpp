@@ -70,10 +70,10 @@ public:
         std::optional<Role> expected_role = std::nullopt,
         unsigned int handshake_timeout_ms = 10000);
 
-    // Sends `buf` (or `msg`) and completes with the number of its bytes that
-    // went out: a plain connection may send less, like a socket, and a TLS
-    // connection always sends all of it. Sends on a TLS Transport reach the
-    // peer whole and in the order they were started.
+    // Sends `buf` (or `msg`) and completes with its size: all of it went out.
+    // Sends reach the peer whole and in the order they were started; a send
+    // that fails after a part of its bytes went out breaks the connection, and
+    // every send after it fails with ECONNABORTED.
     virtual rawstd::Task<size_t>
     send(const void* buf, size_t size, unsigned int flags) = 0;
     virtual rawstd::Task<size_t>
