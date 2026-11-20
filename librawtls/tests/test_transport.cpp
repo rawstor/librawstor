@@ -284,6 +284,72 @@ TEST_F(TransportTest, PlainConcurrentSendsAreNotInterleaved) {
     EXPECT_TRUE(received == one + two + three);
 }
 
+TEST_F(TransportTest, PlainShortSendmsgPassesAncillaryDataOnce) {
+    shrink_send_buffer(pair.fds[0]);
+    std::unique_ptr<Transport> a = Transport::plain(*queue, pair.fds[0]);
+
+    int pipe_fds[2];
+    ASSERT_EQ(pipe(pipe_fds), 0);
+    union {
+        char buf[CMSG_SPACE(sizeof(int))];
+        cmsghdr align;
+    } control{};
+    std::string payload = random_bytes(1 << 20, 5);
+    iovec iov{payload.data(), payload.size()};
+    msghdr msg{};
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = control.buf;
+    msg.msg_controllen = sizeof(control.buf);
+    cmsghdr* cmsg = CMSG_FIRSTHDR(&msg);
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+    memcpy(CMSG_DATA(cmsg), &pipe_fds[0], sizeof(int));
+
+    // The peer is read directly, to see the descriptors that arrive.
+    std::vector<char> buf(1 << 16);
+    size_t received = 0;
+    unsigned int descriptors = 0;
+    rawstd::Task<size_t> sent = a->sendmsg(&msg, RAWSTD_MSG_NOSIGNAL);
+    ASSERT_TRUE(pump(*queue, [&]() {
+        for (;;) {
+            union {
+                char buf[CMSG_SPACE(16 * sizeof(int))];
+                cmsghdr align;
+            } in{};
+            iovec in_iov{buf.data(), buf.size()};
+            msghdr in_msg{};
+            in_msg.msg_iov = &in_iov;
+            in_msg.msg_iovlen = 1;
+            in_msg.msg_control = in.buf;
+            in_msg.msg_controllen = sizeof(in.buf);
+            ssize_t n = recvmsg(pair.fds[1], &in_msg, MSG_DONTWAIT);
+            if (n <= 0) {
+                break;
+            }
+            received += static_cast<size_t>(n);
+            for (cmsghdr* c = CMSG_FIRSTHDR(&in_msg); c != nullptr;
+                 c = CMSG_NXTHDR(&in_msg, c)) {
+                if (c->cmsg_level == SOL_SOCKET && c->cmsg_type == SCM_RIGHTS) {
+                    size_t count = (c->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+                    for (size_t i = 0; i < count; ++i) {
+                        int fd;
+                        memcpy(&fd, CMSG_DATA(c) + i * sizeof(int), sizeof(fd));
+                        close(fd);
+                        ++descriptors;
+                    }
+                }
+            }
+        }
+        return sent.done() && received == payload.size();
+    }));
+    EXPECT_EQ(sent.get(), payload.size());
+    EXPECT_EQ(descriptors, 1u);
+    close(pipe_fds[0]);
+    close(pipe_fds[1]);
+}
+
 TEST_F(TransportTest, PlainSendFailingMidwayBreaksTheConnection) {
     shrink_send_buffer(pair.fds[0]);
     std::unique_ptr<Transport> a = Transport::plain(*queue, pair.fds[0]);

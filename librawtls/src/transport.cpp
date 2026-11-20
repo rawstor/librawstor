@@ -136,6 +136,11 @@ private:
                     RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
                 }
                 sent += n;
+                // Ancillary data goes out with the first bytes of a message:
+                // what continues it carries none, or the peer would get it
+                // again.
+                part.msg_control = nullptr;
+                part.msg_controllen = 0;
                 if (sent < total) {
                     if (rest.empty()) {
                         rest.assign(iov, iov + niov);
