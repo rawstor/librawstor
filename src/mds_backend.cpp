@@ -560,6 +560,12 @@ rawstd::Task<void> Backend::list_accounts(
     return _wire_list_accounts(limit, accounts, token);
 }
 
+rawstd::Task<void> Backend::list_locations(
+    unsigned int limit, std::vector<std::string>& locations, RawstdUUID& token
+) {
+    return _wire_list_locations(limit, locations, token);
+}
+
 rawstd::Task<void> Backend::create_account(
     const RawstdUUID& idempotency_key, const RawstdUUID& account
 ) {

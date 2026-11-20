@@ -273,10 +273,10 @@ rawstd::Task<void> Backend::_page_owned(
     }
 
     chunks.clear();
-    token = {};
+    RawstdUUID next{};
     for (size_t i = 0; i < found.size(); ++i) {
         if (chunks.size() == limit) {
-            token = chunks.back().id;
+            next = chunks.back().id;
             break;
         }
         ChunkGroup& group = found[i];
@@ -308,6 +308,7 @@ rawstd::Task<void> Backend::_page_owned(
             chunks.push_back(std::move(group));
         }
     }
+    token = next;
 }
 
 std::string Backend::meta_encode(

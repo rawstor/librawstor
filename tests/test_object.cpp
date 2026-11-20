@@ -388,6 +388,117 @@ TEST(ObjectListTest, lists_mds_objects) {
     }
 }
 
+// The locations of an MDS's topology, a page at a time: the environment's OST
+// and three more entries, in the order of their topology ids, the password of
+// a location's user information left out. A location that is not an MDS has no
+// topology.
+TEST(ObjectListTest, lists_the_locations_of_an_mds) {
+    std::vector<rawstor::mdsserver::TopologyOST> extra;
+    const std::pair<const char*, const char*> entries[] = {
+        {"018f4e2a-0000-7000-8000-000000000004",
+         "ost://user:secret@127.0.0.1:9004"},
+        {"018f4e2a-0000-7000-8000-000000000003", "ost://127.0.0.1:9003"},
+        {"018f4e2a-0000-7000-8000-000000000002", "ost://127.0.0.1:9002"},
+    };
+    for (const auto& [id, location] : entries) {
+        rawstor::mdsserver::TopologyOST ost{};
+        ASSERT_EQ(rawstd_uuid_from_string(&ost.id, id), 0);
+        ost.location = location;
+        ost.weight = 100;
+        ost.path[3] = "host2";
+        extra.push_back(ost);
+    }
+    rawstor::tests::ObjectEnv env(8940, 8941, extra);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    // Every page of the topology of `where`, `limit` locations at a time.
+    auto locations_of = [&](const std::string& where, unsigned int limit,
+                            std::vector<std::string>* found,
+                            size_t* pages) -> ssize_t {
+        RawstorPaginationToken token = {};
+        *pages = 0;
+        do {
+            RawstorStringList* page = nullptr;
+            ssize_t res =
+                rawstor::tests::sync_run(queue.get(), [&](auto cb, void* data) {
+                    return rawstor_location_topology(
+                        queue.get(), where.c_str(), limit, &page, &token, cb,
+                        data
+                    );
+                });
+            if (res != 0) {
+                return res;
+            }
+            for (const char** it = rawstor_string_list_iter(page);
+                 it != nullptr; it = rawstor_string_list_next(it)) {
+                found->push_back(*it);
+            }
+            rawstor_string_list_delete(page);
+            ++*pages;
+        } while (!rawstor_pagination_token_empty(&token) && *pages < 10);
+        return 0;
+    };
+
+    const std::vector<std::string> expected = {
+        "ost://127.0.0.1:8941",
+        "ost://127.0.0.1:9002",
+        "ost://127.0.0.1:9003",
+        "ost://user@127.0.0.1:9004",
+    };
+    for (unsigned int limit : {0u, 1u, 2u, 3u}) {
+        std::vector<std::string> found;
+        size_t pages = 0;
+        ASSERT_EQ(locations_of(env.location(), limit, &found, &pages), 0);
+        EXPECT_EQ(found, expected) << "limit " << limit;
+        EXPECT_EQ(pages, limit == 0 ? 1u : (4 + limit - 1) / limit);
+    }
+
+    std::vector<std::string> found;
+    size_t pages = 0;
+    EXPECT_EQ(locations_of("file:///tmp", 0, &found, &pages), -ENOTSUP);
+}
+
+// A listing page that fails leaves the token where it was: Slot repeats a
+// failed call with the same arguments, and a token cleared on the way would
+// make the repeat list the first page again.
+TEST(ObjectListTest, a_failed_page_keeps_its_token) {
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    RawstdUUID token;
+    memset(token.bytes, 0x11, sizeof(token.bytes));
+    auto expect_untouched = [&](auto task) {
+        try {
+            run(*queue, std::move(task));
+            ADD_FAILURE() << "no error";
+        } catch (const std::system_error&) {
+        }
+        for (uint8_t byte : token.bytes) {
+            EXPECT_EQ(byte, 0x11);
+        }
+    };
+
+    // A location gone from under a local backend.
+    std::shared_ptr<rawstor::Backend> local =
+        run(*queue,
+            rawstor::Backend::create(
+                *queue, rawstd::URI("file:///nonexistent-rawstor-listing")
+            ));
+    std::vector<rawstor::ChunkGroup> chunks;
+    expect_untouched(local->list_chunks({}, 0, chunks, token));
+
+    // An MDS that is gone from under its connection.
+    auto env = std::make_unique<rawstor::tests::ObjectEnv>(8942, 8943);
+    std::shared_ptr<rawstor::Backend> mds =
+        run(*queue,
+            rawstor::Backend::create(*queue, rawstd::URI(env->location())));
+    env.reset();
+    expect_untouched(mds->list_chunks({}, 0, chunks, token));
+    std::vector<RawstdUUID> accounts;
+    expect_untouched(mds->list_accounts(0, accounts, token));
+    std::vector<std::string> locations;
+    expect_untouched(mds->list_locations(0, locations, token));
+}
+
 // An mds:// Backend is a control-plane client only: every data-path call
 // is a permanent ENOTSUP, which Slot never retries -- an object's I/O goes
 // to the members its target string expands to.

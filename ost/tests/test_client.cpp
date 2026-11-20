@@ -1702,6 +1702,24 @@ TEST(OstClientTest, an_ost_has_no_account_registry) {
     EXPECT_EQ(client.recv_response().body.res, -ENOSYS);
 }
 
+// The topology is the MDS's: an OST has none.
+TEST(OstClientTest, an_ost_has_no_topology) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(256, listen_fd, dir.uri().c_str());
+
+    rawstor::ostserver::tests::Queue queue;
+    auto [raw_client, client_fd] = connect_client(server, queue);
+    ClientCleanup server_client(std::move(raw_client), queue);
+    rawstor::ostserver::tests::Client client(client_fd);
+
+    client.send_list_locations();
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >= sizeof(RawstorFrameResponse);
+    }));
+    EXPECT_EQ(client.recv_response().body.res, -ENOSYS);
+}
+
 // HANDSHAKE answers with the subset of the offered features the server
 // knows; none is defined yet, so whatever is offered, none is accepted.
 TEST(OstClientTest, handshake_accepts_no_unknown_feature) {

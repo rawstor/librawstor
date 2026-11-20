@@ -216,6 +216,11 @@ public:
         unsigned int limit, std::vector<RawstdUUID>& accounts, RawstdUUID& token
     );
 
+    rawstd::Task<void> list_locations(
+        unsigned int limit, std::vector<std::string>& locations,
+        RawstdUUID& token
+    );
+
     // Records `owner` as the owner of the copy `id`/`offset`, under the copy's
     // record lock like every other rewrite of its metadata.
     rawstd::Task<void>

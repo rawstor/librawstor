@@ -1396,6 +1396,11 @@ PyObject* py_rawstor_account_list(PyObject* Py_UNUSED(self), PyObject* args) {
     return location_page(args, rawstor_location_accounts);
 }
 
+PyObject*
+py_rawstor_location_topology(PyObject* Py_UNUSED(self), PyObject* args) {
+    return location_page(args, rawstor_location_topology);
+}
+
 static PyObject* account_mutation(
     PyObject* args,
     int (*mutate)(

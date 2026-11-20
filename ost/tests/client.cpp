@@ -336,6 +336,16 @@ uint16_t Client::send_list_accounts() {
     return cid;
 }
 
+uint16_t Client::send_list_locations() {
+    uint16_t cid = _next_cid++;
+    RawstorFrameListLocations frame{};
+    frame.head = {
+        .magic = RAWSTOR_MAGIC, .cmd = RAWSTOR_CMD_LIST_LOCATIONS, .cid = cid
+    };
+    send_all(_fd, &frame, sizeof(frame));
+    return cid;
+}
+
 uint16_t Client::send_unknown_command() {
     uint16_t cid = _next_cid++;
     RawstorFrameHead head = {

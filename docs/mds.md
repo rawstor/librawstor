@@ -37,6 +37,7 @@ numbers its stages separately.
 | Version redundancy status surfacing | 2 | ❌ | TODO |
 | vhost/QEMU flush hook for versions | 2 | ❌ | the CLI assumes no concurrent writer |
 | Backend health / `LOCATION_INFO` collector | — | ✅ | `mds/src/monitor.cpp`, `mds/src/opts.cpp` |
+| `LIST_LOCATIONS`: the locations of the topology, paged like `LIST`; `rawstor location list` | — | ✅ | `mds/src/client.cpp`, `src/wire_backend.cpp`, `cli/locations.c` |
 | `HANDSHAKE`: feature bits, the first request of every connection (no protocol version) | — | ✅ | [Protocol](protocol.md), `src/wire_backend.cpp`, `ost/src/client.cpp`, `mds/src/client.cpp` |
 | Unified response frame `{res, len, hash}` | — | ❌ | — |
 | Witness: metadata-only members and quorum | 3 | ✅ | `src/chunk.cpp`, SQLite witness records |

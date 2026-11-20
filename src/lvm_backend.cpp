@@ -236,7 +236,6 @@ rawstd::Task<void> Backend::list_chunks(
     }
     RawstdUUID input_token = filtered ? RawstdUUID{} : token;
     chunks.clear();
-    token = {};
 
     // Grouped by id as they're read: every "-<offset>" LV sharing one
     // uuid prefix becomes that uuid's own single ChunkGroup entry.

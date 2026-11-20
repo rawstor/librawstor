@@ -72,6 +72,13 @@ class TestLocation(unittest.TestCase):
             targets = list(location.objects())
             self.assertEqual(targets, [])
 
+    def test_locations_need_an_mds(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            location = rawstor.Location(f"file://{temp_dir}")
+            with self.assertRaises(OSError) as cm:
+                list(location.locations())
+            self.assertEqual(cm.exception.errno, errno.ENOTSUP)
+
     def test_objects(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             location = rawstor.Location(f"file://{temp_dir}")

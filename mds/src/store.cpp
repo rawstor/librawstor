@@ -744,6 +744,7 @@ ObjectStore::Access ObjectStore::authorize(
         case RAWSTOR_CMD_OBJ_REMOVE_VERSION:
         case RAWSTOR_CMD_LOCATION_INFO:
         case RAWSTOR_CMD_LIST_ACCOUNTS:
+        case RAWSTOR_CMD_LIST_LOCATIONS:
         case RAWSTOR_CMD_ACCOUNT_CREATE:
         case RAWSTOR_CMD_ACCOUNT_REMOVE:
         case RAWSTOR_CMD_OBJ_TRANSFER:
@@ -982,6 +983,31 @@ std::vector<ChunkEntry> ObjectStore::list_chunks(
         }
     );
     return entries;
+}
+
+std::vector<TopologyOST>
+ObjectStore::list_locations(RawstdUUID& token, unsigned int limit) {
+    std::lock_guard<std::recursive_mutex> guard(_mutex);
+    std::vector<TopologyOST> sorted = _topology->osts();
+    std::sort(
+        sorted.begin(), sorted.end(),
+        [](const TopologyOST& a, const TopologyOST& b) {
+            return rawstd_uuid_cmp(&a.id, &b.id) < 0;
+        }
+    );
+    std::vector<TopologyOST> page;
+    for (const TopologyOST& ost : sorted) {
+        if (rawstd_uuid_cmp(&ost.id, &token) <= 0) {
+            continue;
+        }
+        if (limit != 0 && page.size() == limit) {
+            token = page.back().id;
+            return page;
+        }
+        page.push_back(ost);
+    }
+    token = {};
+    return page;
 }
 
 std::shared_ptr<const Topology> ObjectStore::topology() {

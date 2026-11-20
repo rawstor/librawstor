@@ -5,6 +5,7 @@
 #include "image.h"
 #include "info.h"
 #include "list.h"
+#include "locations.h"
 #include "output.h"
 #include "pki.h"
 #include "remove.h"
@@ -2525,6 +2526,81 @@ static int run_account(int argc, char** argv) {
     return EX_USAGE;
 }
 
+static void command_location_list_usage(void) {
+    fprintf(
+        stdout,
+        "Rawstor CLI " PACKAGE_VERSION "\n"
+        "\n"
+        "usage: rawstor [options] location list(ls) LOCATION\n"
+        "\n"
+        "Lists the locations of the topology of the MDS at LOCATION: the "
+        "places an\n"
+        "object's chunks can live, one URI per line.\n"
+        "\n"
+        "  LOCATION              An mds:// location. If omitted, falls back "
+        "to the\n"
+        "                        RAWSTOR_LOCATION environment variable.\n"
+        "\n"
+        "command options:\n"
+        "  -h, --help            Show this help message and "
+        "exit\n" RAWSTOR_CLI_OUTPUT_USAGE
+    );
+}
+
+static int command_location_list(int argc, char** argv) {
+    const char* optstring = "h";
+    struct option longopts[] = {
+        {"help", no_argument, NULL, 'h'},
+        {"format", required_argument, NULL, RAWSTOR_CLI_OPT_FORMAT},
+        {"column", required_argument, NULL, RAWSTOR_CLI_OPT_COLUMN},
+        {},
+    };
+
+    RawstorCliOutput output_arg = {.unit = global_unit};
+    optind = 0;
+    while (1) {
+        int c = getopt_long(argc, argv, optstring, longopts, NULL);
+        if (c == -1) {
+            break;
+        }
+
+        switch (c) {
+        case 'h':
+            command_location_list_usage();
+            return EXIT_SUCCESS;
+
+        case RAWSTOR_CLI_OPT_FORMAT:
+            if (rawstor_cli_output_set_format(&output_arg, optarg) != 0) {
+                fprintf(
+                    stderr, "Unknown format: %s (table, json or value)\n",
+                    optarg
+                );
+                return EX_USAGE;
+            }
+            break;
+
+        case RAWSTOR_CLI_OPT_COLUMN:
+            output_arg.columns = optarg;
+            break;
+
+        default:
+            return EX_USAGE;
+        }
+    }
+
+    char* args[1] = {NULL};
+    int res = account_args(argc, argv, args, 1);
+    if (res != 0) {
+        return res;
+    }
+    const char* location = account_location(args[0]);
+    if (location == NULL) {
+        return EX_USAGE;
+    }
+
+    return rawstor_cli_location_list(location, &output_arg);
+}
+
 static void location_usage(void) {
     fprintf(
         stdout,
@@ -2536,6 +2612,7 @@ static void location_usage(void) {
         "subcommand:\n"
         "  info                  Show used, available and total space of "
         "a location\n"
+        "  list(ls)              List the locations of an MDS topology\n"
         "\n"
         "Run `rawstor location <subcommand> --help` to show its usage.\n"
     );
@@ -2556,6 +2633,8 @@ static int run_location(int argc, char** argv) {
     argv++;
     if (strcmp(sub, "info") == 0) {
         return command_info(argc, argv);
+    } else if (strcmp(sub, "list") == 0 || strcmp(sub, "ls") == 0) {
+        return command_location_list(argc, argv);
     }
     fprintf(stderr, "Unexpected location subcommand: %s\n", sub);
     return EX_USAGE;

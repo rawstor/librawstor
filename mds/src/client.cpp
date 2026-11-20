@@ -18,6 +18,7 @@
 #include <system_error>
 #include <vector>
 
+#include <cstdint>
 #include <cstring>
 #include <ctime>
 
@@ -651,6 +652,54 @@ rawstd::Task<void> Client::_dispatch(
             head.cmd, head.cid, res, res > 0 ? entries.data() : nullptr,
             res > 0 ? static_cast<size_t>(res) : 0
         );
+        break;
+    }
+    case RAWSTOR_CMD_LIST_LOCATIONS: {
+        RawstorFrameListLocationsPayload payload{};
+        co_await recv_all(stream, &payload, sizeof(payload));
+        // The token is the topology id the page ended at.
+        RawstdUUID token = uuid_of(payload.token);
+        unsigned int limit = payload.limit == 0 || payload.limit > list_limit
+                                 ? list_limit
+                                 : payload.limit;
+        int32_t res = 0;
+        std::vector<unsigned char> data;
+        try {
+            auto access =
+                store.authorize(client->_transport->peer(), head.cmd, {}, {});
+            auto page = store.list_locations(token, limit);
+            RawstorFrameLocationPage header{};
+            memcpy(header.token, token.bytes, sizeof(header.token));
+            data.resize(sizeof(header));
+            memcpy(data.data(), &header, sizeof(header));
+            for (const rawstor::mdsserver::TopologyOST& ost : page) {
+                if (ost.location.size() > UINT16_MAX) {
+                    RAWSTD_THROW_SYSTEM_ERROR(EOVERFLOW);
+                }
+                RawstorFrameLocationEntry entry{};
+                entry.location_len = static_cast<uint16_t>(ost.location.size());
+                const size_t at = data.size();
+                data.resize(at + sizeof(entry) + ost.location.size());
+                memcpy(data.data() + at, &entry, sizeof(entry));
+                memcpy(
+                    data.data() + at + sizeof(entry), ost.location.data(),
+                    ost.location.size()
+                );
+            }
+            if (data.size() > INT32_MAX) {
+                RAWSTD_THROW_SYSTEM_ERROR(EOVERFLOW);
+            }
+        } catch (const std::system_error& e) {
+            res = -e.code().value();
+        }
+        if (res < 0) {
+            co_await client->_send_response(head.cmd, head.cid, res);
+        } else {
+            co_await client->_send_response(
+                head.cmd, head.cid, static_cast<int32_t>(data.size()),
+                data.data(), data.size()
+            );
+        }
         break;
     }
     case RAWSTOR_CMD_LIST_VERSIONS: {

@@ -263,6 +263,37 @@ int rawstor_location_remove_account(
 ) RAWSTOR_NOEXCEPT;
 
 /**
+ * @brief Asynchronously list the locations of an MDS topology: the places an
+ *        object's chunks can live.
+ *
+ * @p location must name exactly one `mds://` URI; -ENOTSUP otherwise. @p
+ * locations receives the location URI of each entry of the topology, in
+ * ascending order of the entries' topology ids. Free the list with @ref
+ * rawstor_string_list_delete.
+ *
+ * Paginated like @ref rawstor_location_list: start with an empty token, and
+ * pass the token returned by a call to the next one until
+ * @ref rawstor_pagination_token_empty says nothing is left.
+ *
+ * @param queue      RawIO queue.
+ * @param location   `mds://` location.
+ * @param limit      Most locations to return; 0 means the library default.
+ * @param locations  Receives the list on success.
+ * @param token      In: where to resume (empty to start). Out: where the next
+ *                   page resumes, empty after the last one. Must stay valid
+ *                   until @p cb runs.
+ * @param cb         Completion callback; @c result is 0 or a negative errno.
+ * @param data       Passed to @p cb.
+ *
+ * @return 0 if @p cb will be invoked, a negative errno on immediate failure.
+ */
+int rawstor_location_topology(
+    RawIOQueue* queue, const char* location, unsigned int limit,
+    RawstorStringList** locations, RawstorPaginationToken* token,
+    int (*cb)(ssize_t result, void* data), void* data
+) RAWSTOR_NOEXCEPT;
+
+/**
  * @brief Asynchronously list the objects of a location.
  *
  * @p targets receives the target of each object. A target names the account

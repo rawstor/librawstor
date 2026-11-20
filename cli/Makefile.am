@@ -26,6 +26,8 @@ rawstor_SOURCES = chunks.c \
                   info.h \
                   list.c \
                   list.h \
+                  locations.c \
+                  locations.h \
                   main.c \
                   output.cpp \
                   output.h \

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `rawstor location list MDS` lists the locations of an MDS topology, the URIs its objects' chunks can live at (`LIST_LOCATIONS`); `rawstor_location_topology()` does the same for a program, and pyrawstor has `Location.locations()`.
 - An object UUID can stand in for a target: `rawstor object show|remove|resize|transfer|chunks|slots|resolve`, `rawstor version ...`, `rawstor-vhost` and `rawstor-vduse` accept `LOCATION UUID`, or a bare `UUID` with the location taken from `RAWSTOR_LOCATION`.
 - Objects and versions export to a file image and new objects are created from a file or from another object or version: `rawstor_target_export()`, `rawstor_target_create_from_file()`, `rawstor_target_create_from_target()` ([concepts](docs/concepts.md#image)); `rawstor_location_create_from_file()` and `rawstor_location_create_from_target()` create the object at a location, as `rawstor_location_create()` does; pyrawstor has `Target.export()`, `Target.create_from_file()`, `Target.create_from()`, `Location.create_from_file()` and `Location.create_from()`; the CLI has `rawstor object export`, `rawstor version export`, `rawstor object import` and `rawstor object copy`(`cp`, also `rawstor copy`); they report progress as a percentage (the callback is called many times, 100 is the last call).
 - Python `rawstor.initialize(insecure=True)` supports running without TLS certificates.

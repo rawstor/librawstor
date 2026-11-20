@@ -157,6 +157,12 @@ public:
         unsigned int limit, std::vector<RawstdUUID>& accounts, RawstdUUID& token
     ) override;
 
+    // One page of the locations of the MDS's topology.
+    rawstd::Task<void> list_locations(
+        unsigned int limit, std::vector<std::string>& locations,
+        RawstdUUID& token
+    ) override;
+
     rawstd::Task<void> create_account(
         const RawstdUUID& idempotency_key, const RawstdUUID& account
     ) override;
