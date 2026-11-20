@@ -55,6 +55,15 @@ def demote(text):
     return re.sub(r"^(#{2,5}) ", r"#\1 ", text, flags=re.MULTILINE)
 
 
+def site_links(text):
+    """Turns repository-relative `docs/...` links into site-relative ones.
+
+    ChangeLog.md links to pages as `docs/page.md`, from the repository root;
+    on the site, `docs/` is the root.
+    """
+    return text.replace("](docs/", "](")
+
+
 def render(release):
     tag = release["tag_name"]
     date = release["published_at"][:10]
@@ -69,7 +78,7 @@ def render(release):
     for heading in ("## Assets", "## Changelog"):
         if parts.get(heading):
             out.append(f"### {heading[3:]}\n")
-            out.append(demote(parts[heading]) + "\n")
+            out.append(site_links(demote(parts[heading])) + "\n")
     return "\n".join(out)
 
 
