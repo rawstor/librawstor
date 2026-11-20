@@ -9,6 +9,7 @@
 
 #include <rawstd/coro.hpp>
 #include <rawstd/gpp.hpp>
+#include <rawstd/iovec.h>
 #include <rawstd/logging.h>
 #include <rawstd/socket.h>
 
@@ -73,6 +74,52 @@ private:
     rawio::Queue& _queue;
     int _fd;
     rawio::RecvStream::Canceller _recv;
+    // One sender at a time: what a call sends goes out whole before the next
+    // call starts, so the frames of the stream keep their boundaries.
+    rawstd::Semaphore _write_mutex{1};
+    // A send that failed after a part of its bytes went out leaves half a
+    // frame in the stream; nothing may follow it.
+    bool _broken = false;
+
+    // Sends all of `msg` and completes with its size. A short send of the
+    // socket is continued from where it stopped; the vectors of `msg` are
+    // left as they are.
+    rawstd::Task<size_t> _write(const msghdr* msg, unsigned int flags) {
+        co_await _write_mutex.acquire();
+        Release release(_write_mutex);
+        if (_broken) {
+            RAWSTD_THROW_SYSTEM_ERROR(ECONNABORTED);
+        }
+
+        iovec* iov = msg->msg_iov;
+        unsigned int niov = static_cast<unsigned int>(msg->msg_iovlen);
+        const size_t total = rawstd_iovec_size(iov, niov);
+        std::vector<iovec> rest;
+        msghdr part = *msg;
+        size_t sent = 0;
+        try {
+            while (sent < total) {
+                size_t n = co_await _queue.sendmsg(_fd, &part, flags);
+                if (n == 0) {
+                    RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
+                }
+                sent += n;
+                if (sent < total) {
+                    if (rest.empty()) {
+                        rest.assign(iov, iov + niov);
+                        iov = rest.data();
+                    }
+                    rawstd_iovec_discard_front(&iov, &niov, n);
+                    part.msg_iov = iov;
+                    part.msg_iovlen = niov;
+                }
+            }
+        } catch (...) {
+            _broken = sent > 0;
+            throw;
+        }
+        co_return total;
+    }
 
 public:
     PlainTransport(rawio::Queue& queue, int fd) noexcept :
@@ -83,12 +130,16 @@ public:
 
     rawstd::Task<size_t>
     send(const void* buf, size_t size, unsigned int flags) override {
-        co_return co_await _queue.send(_fd, buf, size, flags);
+        iovec iov{const_cast<void*>(buf), size};
+        msghdr msg{};
+        msg.msg_iov = &iov;
+        msg.msg_iovlen = 1;
+        co_return co_await _write(&msg, flags);
     }
 
     rawstd::Task<size_t>
     sendmsg(const msghdr* msg, unsigned int flags) override {
-        co_return co_await _queue.sendmsg(_fd, msg, flags);
+        return _write(msg, flags);
     }
 
     rawio::RecvStream recv_multishot(
