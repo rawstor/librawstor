@@ -146,6 +146,8 @@ rawstd::DetachedTask Server::_admit(int fd) {
     _handshaking.insert(fd);
     try {
         co_await _add_client(fd);
+    } catch (const rawstor::tls::HandshakeLimitError&) {
+        // Counted and logged by tls::accept().
     } catch (const std::exception& e) {
         rawstd_error("%s\n", e.what());
     }

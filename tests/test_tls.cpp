@@ -207,6 +207,56 @@ TEST(TlsTest, a_silent_connection_does_not_hold_up_others) {
     close(silent);
 }
 
+// True once the server has closed `fd` (or reset it), false if it is still
+// open after about a second.
+bool closed_by_peer(int fd) {
+    pollfd p{fd, POLLIN, 0};
+    for (int i = 0; i < 10; ++i) {
+        if (poll(&p, 1, 100) > 0) {
+            char buf[256];
+            ssize_t n = recv(fd, buf, sizeof(buf), 0);
+            if (n <= 0) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+TEST(TlsTest, handshakes_in_flight_are_limited) {
+    setenv("RAWSTOR_OPTS_TLS_HANDSHAKE_LIMIT", "2", 1);
+    rawstor::tests::TlsProcess tls(ost_uri(ost_id));
+    OstServer server(8904);
+
+    // Two peers that never speak fill the limit and are left alone ...
+    int first = server.connect_raw();
+    int second = server.connect_raw();
+    EXPECT_FALSE(closed_by_peer(first));
+    EXPECT_FALSE(closed_by_peer(second));
+
+    // ... the next one is closed without being read from.
+    int third = server.connect_raw();
+    EXPECT_TRUE(closed_by_peer(third));
+    close(third);
+
+    // A slot freed by a peer that left is taken by the next one.
+    close(first);
+    int fourth = -1;
+    bool admitted = false;
+    for (int i = 0; i < 50 && !admitted; ++i) {
+        fourth = server.connect_raw();
+        admitted = !closed_by_peer(fourth);
+        if (!admitted) {
+            close(fourth);
+        }
+    }
+    EXPECT_TRUE(admitted);
+
+    close(fourth);
+    close(second);
+    unsetenv("RAWSTOR_OPTS_TLS_HANDSHAKE_LIMIT");
+}
+
 TEST(TlsTest, a_plaintext_client_is_dropped) {
     rawstor::tests::TlsProcess tls(ost_uri(ost_id));
     OstServer server(8902);
