@@ -36,10 +36,9 @@ Stage 1 introduced the public ABI, wire layouts and data-member behavior
 needed by multi-attach while the client still operates as one writer
 process. Witness support, a prerequisite, is implemented. Stage 2 integrates
 clients on different processes and machines with the configuration register,
-including the witness vote for two data copies: the client's own transitions
-already go through it, and the adoption of another writer's decision and
-the resync across processes are what is left. There is no single-acceptor
-exception to the register quorum.
+including the witness vote for two data copies: every transition goes
+through it, another writer's decision is adopted, and a resync runs across
+processes. There is no single-acceptor exception to the register quorum.
 
 ## Overview
 
@@ -56,9 +55,7 @@ member's behavior that several writer processes need, so that stage 2 is a
 client-side change only: servers are upgraded first. With stage 1 the
 client still runs as the one writer process of a chunk: it makes its
 transitions through the register, never meeting another proposer, and
-stamps its writes with the current chunk configuration epoch. Several
-processes writing one object at once are not supported yet, and nothing
-refuses them.
+stamps its writes with the current chunk configuration epoch.
 
 **Stage 2** lets several processes write. There is no primary: no member,
 server or client is the place every write goes through (unlike Ceph's

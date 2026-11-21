@@ -7,12 +7,12 @@ deciding how to deploy.
 
 ## Data safety and mirroring
 
-- **One writer process per object.** An object is a virtual disk used by one
-  client process at a time (one VM through `rawstor-vhost` or `rawstor-vduse`).
-  Several writer processes (multi-attach) are not supported and nothing
-  refuses them. Inside one process the object may be open several times, for
-  example by every virtqueue of a multiqueue device; those opens act as one
-  writer. See [Mirroring](mirroring.md#model-and-assumptions) and
+- **No writer exclusivity.** Several writer processes may open one mirrored
+  object (multi-attach) and nothing refuses a second one: there is no lease or
+  exclusive open, so a guest that must not be attached twice has to be
+  protected by the caller. Inside one process the object may be open several
+  times, for example by every virtqueue of a multiqueue device; those opens
+  act as one writer. See [Mirroring](mirroring.md#model-and-assumptions) and
   [Multi-attach](multiattach.md).
 - **The degrade-barrier window.** Without a durable data write per request,
   there is a short window between an acknowledged write and the durable
