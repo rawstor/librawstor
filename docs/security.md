@@ -41,7 +41,7 @@ document's own numbering (see [Implementation stages](#implementation-stages)).
 | `HANDSHAKE`: feature bits, the first request of every connection (no protocol version) | 1 | ✅ | [Protocol](protocol.md) |
 | Owner account of an object in the protocol, chunk metadata, `LIST` and the MDS store; account registry; a default account | 1 | ✅ | [Accounts](accounts.md) |
 | mTLS (OpenSSL) on every port: OST, MDS, witness, client side | 2 | ✅ | `librawtls`; the client library and every service speak it, and refuse to start without [TLS settings](configuration.md#tls) unless run with `--insecure` |
-| Limit on concurrent TLS handshakes per listener | 2 | ❌ | planned, see stage 2 |
+| Limit on concurrent TLS handshakes per listener | 2 | ✅ | `RAWSTOR_OPTS_TLS_HANDSHAKE_LIMIT`, [Configuration](configuration.md) |
 | kTLS offload of the data path | 2 | ❌ | optional, off by default (stage 0) |
 | `--insecure`: plaintext, no authentication, per process | 2 | ✅ | `--insecure` on every executable, `RawstorOpts::insecure` in a program, `EXTRA_ARGS="--insecure"` in a systemd service configuration; [Without TLS](configuration.md#without-tls) |
 | Certificate and CA reload without downtime | 2 | ✅ | `SIGHUP` and `SIGUSR1` in `rawstor-ost` and `rawstor-mds`, `SIGUSR1` in `rawstor-vhost` and `rawstor-vduse`; `rawstor_tls_request_reload()` |
@@ -773,17 +773,14 @@ require re-doing earlier ones.
    `RawstorOpts::insecure`, and pyrawstor's tests run over a CA of their
    own. kTLS stays an option that is not built (stage 0 measured it).
 
-   Still to do in this stage: a limit on the handshakes a listener has in
-   flight. A handshake that has not completed has no identity yet, so any peer
-   that can reach the port can start one, and the deadline bounds how long each
+   A handshake that has not completed has no identity yet, so any peer that
+   can reach the port can start one, and the deadline bounds how long each
    takes but not how many there are at once: the sockets and the TLS state of
-   all of them add up. The listeners of `rawstor-ost` and `rawstor-mds` should
-   count the handshakes in flight and close a new connection, before it is read
-   from, once a configured number is reached; the number is an
-   `RAWSTOR_OPTS_*` setting with a default well above what a cluster's own
-   clients and OSTs open, and a closed connection is logged and counted, since
-   a legitimate peer that retries is told apart from a flood only by the
-   rate.
+   all of them add up. `rawstor-ost` and `rawstor-mds` count the handshakes
+   in flight over all their worker threads and close a new connection, before
+   it is read from, once `RAWSTOR_OPTS_TLS_HANDSHAKE_LIMIT` is reached. A
+   closed connection is logged and counted, since a legitimate peer that
+   retries is told apart from a flood only by the rate.
 3. **Authorization (done).** CA-signed account roles and object restrictions;
    independent MDS and OST checks against ownership and per-command permissions;
    `-EACCES` / `-ENOENT` semantics (a foreign object is `-ENOENT`).
