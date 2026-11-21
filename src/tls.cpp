@@ -9,6 +9,8 @@
 
 #include <atomic>
 #include <cerrno>
+#include <chrono>
+#include <cstdint>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -31,10 +33,49 @@ std::set<std::string> mds_hosts;
 // What request_reload() reaches from a signal handler, without the lock.
 std::atomic<rawtls::Context*> signal_context{nullptr};
 
+// Server side handshakes in progress, over every listening thread.
+std::atomic<unsigned int> handshakes_in_flight{0};
+// Connections closed because of the limit, and how many of them the log
+// already told about: a flood must not also flood the log. The log state is
+// read and written under refusal_mutex, so what is logged only advances.
+std::mutex refusal_mutex;
+uint64_t handshakes_refused = 0;
+uint64_t handshakes_refused_logged = 0;
+std::chrono::steady_clock::time_point handshake_refusal_logged_at;
+
+void note_refused(unsigned int limit) {
+    std::lock_guard<std::mutex> lock(refusal_mutex);
+    ++handshakes_refused;
+    std::chrono::steady_clock::time_point now =
+        std::chrono::steady_clock::now();
+    // At most one line a second; the first refusal is always told.
+    if (handshakes_refused != 1 &&
+        now - handshake_refusal_logged_at < std::chrono::seconds(1)) {
+        return;
+    }
+    handshake_refusal_logged_at = now;
+    uint64_t since = handshakes_refused - handshakes_refused_logged;
+    handshakes_refused_logged = handshakes_refused;
+    rawstd_warning(
+        "TLS handshake limit of %u reached: closed %lu connection(s) "
+        "(%lu in total)\n",
+        limit, static_cast<unsigned long>(since),
+        static_cast<unsigned long>(handshakes_refused)
+    );
+}
+
+struct HandshakeSlot {
+    ~HandshakeSlot() { handshakes_in_flight.fetch_sub(1); }
+};
+
 } // namespace
 
 namespace rawstor {
 namespace tls {
+
+HandshakeLimitError::HandshakeLimitError() :
+    std::system_error(EBUSY, std::generic_category(), "TLS handshake limit") {
+}
 
 void initialize() {
     if (rawstor_opts_insecure()) {
@@ -185,6 +226,13 @@ accept(rawio::Queue& queue, int fd) {
     if (c == nullptr) {
         co_return rawtls::Transport::plain(queue, fd);
     }
+    unsigned int limit = rawstor_opts_tls_handshake_limit();
+    if (handshakes_in_flight.fetch_add(1) >= limit) {
+        handshakes_in_flight.fetch_sub(1);
+        note_refused(limit);
+        throw HandshakeLimitError();
+    }
+    HandshakeSlot slot;
     co_return co_await rawtls::Transport::tls(
         queue, fd, *c, rawtls::Mode::server
     );

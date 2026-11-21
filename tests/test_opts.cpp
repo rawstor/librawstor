@@ -48,6 +48,7 @@ TEST(OptsTest, invalid_environment_fails_and_keeps_current_options) {
              Case{"RAWSTOR_OPTS_TCP_USER_TIMEOUT", "2147483648"},
              Case{"RAWSTOR_OPTS_MIRROR_PROBE_INTERVAL", "0"},
              Case{"RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY", "256X"},
+             Case{"RAWSTOR_OPTS_TLS_HANDSHAKE_LIMIT", "0"},
          }) {
         ScopedEnv env(c.name, c.value);
         EXPECT_EQ(rawstor_opts_initialize(nullptr), -EINVAL)

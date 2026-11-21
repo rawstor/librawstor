@@ -22,6 +22,7 @@ extern "C" {
 //     unsigned int mirror_probe_interval;
 //     unsigned int mirror_resync_lease;
 //     unsigned int insecure;
+//     unsigned int tls_handshake_limit;
 // };
 
 int rawstor_opts_initialize(const struct RawstorOpts* opts);
@@ -70,6 +71,9 @@ unsigned int rawstor_opts_mirror_resync_lease(void);
 // way to run without it, and it excludes the TLS settings:
 // with any of them set rawstor_opts_initialize() fails with EINVAL.
 unsigned int rawstor_opts_insecure(void);
+
+// The most TLS handshakes a server process has in flight at once.
+unsigned int rawstor_opts_tls_handshake_limit(void);
 
 // The TLS settings, read from the environment: RAWSTOR_TLS_TRUST_DOMAIN,
 // RAWSTOR_TLS_CERT, RAWSTOR_TLS_KEY and RAWSTOR_TLS_CA, all four or none,

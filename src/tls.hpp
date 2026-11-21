@@ -12,6 +12,7 @@
 
 #include <memory>
 #include <string>
+#include <system_error>
 
 namespace rawstor {
 namespace tls {
@@ -61,10 +62,22 @@ rawstd::Task<std::unique_ptr<rawtls::Transport>> connect(
     const std::string& host
 );
 
+// accept() refuses a connection while the process already has
+// RAWSTOR_OPTS_TLS_HANDSHAKE_LIMIT handshakes in flight. Nothing was read from
+// the socket and the caller closes it; the refusal is already counted and
+// logged, so the caller need not log it again.
+class HandshakeLimitError final : public std::system_error {
+public:
+    HandshakeLimitError();
+};
+
 /*
  * The Transport of an accepted socket: plain when TLS is off, otherwise the TLS
  * server side of it, after the handshake. A client that does not complete it
- * in time, or that is refused, fails it.
+ * in time, or that is refused, fails it. Throws HandshakeLimitError, before
+ * reading from `fd`, when the process already has as many handshakes in
+ * flight as RAWSTOR_OPTS_TLS_HANDSHAKE_LIMIT allows (all listeners of the
+ * process count together).
  */
 rawstd::Task<std::unique_ptr<rawtls::Transport>>
 accept(rawio::Queue& queue, int fd);

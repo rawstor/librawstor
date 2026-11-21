@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.1] - Unreleased
 
+### Added
+
+- `RAWSTOR_OPTS_TLS_HANDSHAKE_LIMIT` (default 1024): `rawstor-ost` and `rawstor-mds` close a new connection, unread, while that many TLS handshakes are in flight, and log the refusals ([security design](docs/security.md)).
+
 ### Fixed
 
 - `lvm://`: creating a version failed with "LV name ... is not supported" once `<vg>/<lv>` of the snapshot passed LVM's 127-character limit (a long VG name or a large chunk offset); a snapshot's name now carries the version id in a 22-character form. Snapshots created by earlier builds are no longer found.
