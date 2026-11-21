@@ -106,7 +106,7 @@ used ring) before the completion reaches the guest. On the source,
 requests are done. The destination's `rawstor-vhost` opens the same object
 ahead of time but writes only after that hand-over; both processes
 holding the object open meanwhile is what [multi-attach](multiattach.md)
-stage 2 covers for mirrored objects.
+covers for mirrored objects.
 `rawstor-vhost-qemu` gets this from libvhost-user; `rawstor-vduse` has no
 dirty page logging.
 
