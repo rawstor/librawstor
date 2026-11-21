@@ -36,31 +36,31 @@ std::atomic<rawtls::Context*> signal_context{nullptr};
 // Server side handshakes in progress, over every listening thread.
 std::atomic<unsigned int> handshakes_in_flight{0};
 // Connections closed because of the limit, and how many of them the log
-// already told about: a flood must not also flood the log.
-std::atomic<uint64_t> handshakes_refused{0};
-std::atomic<uint64_t> handshakes_refused_logged{0};
-std::atomic<int64_t> handshake_refusal_logged_at{0};
+// already told about: a flood must not also flood the log. The log state is
+// read and written under refusal_mutex, so what is logged only advances.
+std::mutex refusal_mutex;
+uint64_t handshakes_refused = 0;
+uint64_t handshakes_refused_logged = 0;
+std::chrono::steady_clock::time_point handshake_refusal_logged_at;
 
 void note_refused(unsigned int limit) {
-    uint64_t total = handshakes_refused.fetch_add(1) + 1;
-    int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
-                      std::chrono::steady_clock::now().time_since_epoch()
-    )
-                      .count();
-    int64_t last = handshake_refusal_logged_at.load();
+    std::lock_guard<std::mutex> lock(refusal_mutex);
+    ++handshakes_refused;
+    std::chrono::steady_clock::time_point now =
+        std::chrono::steady_clock::now();
     // At most one line a second; the first refusal is always told.
-    if (total != 1 && now - last < 1000) {
+    if (handshakes_refused != 1 &&
+        now - handshake_refusal_logged_at < std::chrono::seconds(1)) {
         return;
     }
-    if (!handshake_refusal_logged_at.compare_exchange_strong(last, now)) {
-        return;
-    }
-    uint64_t since = total - handshakes_refused_logged.exchange(total);
+    handshake_refusal_logged_at = now;
+    uint64_t since = handshakes_refused - handshakes_refused_logged;
+    handshakes_refused_logged = handshakes_refused;
     rawstd_warning(
         "TLS handshake limit of %u reached: closed %lu connection(s) "
         "(%lu in total)\n",
         limit, static_cast<unsigned long>(since),
-        static_cast<unsigned long>(total)
+        static_cast<unsigned long>(handshakes_refused)
     );
 }
 

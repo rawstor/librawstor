@@ -52,17 +52,6 @@ struct RawstorOpts {
      * where it runs. See docs/security.md.
      */
     unsigned int insecure;
-    /**
-     * How many TLS handshakes a server process (rawstor-ost, rawstor-mds)
-     * has in flight at once, over all its listening threads. A connection
-     * that arrives when that many are in progress is closed before anything
-     * is read from it, and counted and logged. A handshake is bounded in
-     * time but a peer that is not yet authenticated costs a socket and TLS
-     * state for all of it, so this bounds what an unauthenticated peer can
-     * hold. Has no effect without TLS. Zero takes
-     * RAWSTOR_OPTS_TLS_HANDSHAKE_LIMIT or its default.
-     */
-    unsigned int tls_handshake_limit;
 };
 
 /**
