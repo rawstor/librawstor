@@ -549,7 +549,7 @@ reads, and does not complete it. So:
 
 The mover is a client process that opens the chunk as one more writer: it needs
 the proposer, the resync engine and the MDS access every writer has, and
-multi-attach stage 2 lets it run beside the VM's own process. It is a set of
+multi-attach lets it run beside the VM's own process. It is a set of
 `rawstor` subcommands (`object migrate`, `object mirrors`, `location drain`); a
 balancer daemon over the same code would be a later consumer, not another
 mechanism.

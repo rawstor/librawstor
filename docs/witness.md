@@ -18,4 +18,4 @@ With one more location than `--mirrors`, the last is the witness; the stored
 A chunk the MDS places with an even mirror count gets a witness automatically ([Automatic witness placement](mds.md#automatic-witness-placement)); declare one explicitly only for plain `ost://` objects and similar targets.
 `rawstor object slots` reports its member role and record state. See
 [Witness](mds.md#witness) for voting and failure rules. Interprocess
-mirror coordination is multiattach stage 2 and is not implemented here.
+mirror coordination is [multi-attach](multiattach.md).
