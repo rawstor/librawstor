@@ -968,14 +968,15 @@ For example, create a two-copy object with a witness on MDS:
 rawstor object create -s 1G -m 2 'ost://10.0.0.11:9090,ost://10.0.0.12:9090,ost://10.0.0.13:9091'
 ```
 
-The mirroring model supports several writer queues within one process (see
+The mirroring model supports several writer queues within one process and
+several writer processes (see
 [Model and assumptions](mirroring.md#model-and-assumptions)); this feature
-does not add writer exclusion or distributed mirror synchronization.
+does not add writer exclusion.
 
 Use the returned complete target, including the witness, for subsequent
-opens. Member ordering and the member set must stay fixed. Interprocess
-coordination between independently attached writers is multiattach stage 2
-and is not implemented by this feature.
+opens. Member ordering and the member set must stay fixed. Independently
+attached writers coordinate through the configuration register
+([multi-attach](multiattach.md)), not through this feature.
 
 Chunk decides the configuration through the same register requests for DATA
 and witness members. The caller decides whether quorum permits recreating a
@@ -1081,8 +1082,8 @@ relaxed inspection semantics and reads from whatever members are reachable.
 The metadata vote establishes which generation is current; it cannot replace
 a data copy or recover data lost by every authoritative copy. The data
 durability and flush contract still applies. Writer queues share MirrorControl
-and its transition lock within one process; multiattach stage 2 across
-processes is not implemented.
+and its transition lock within one process; across processes the writers
+coordinate through the register ([multi-attach](multiattach.md)).
 
 History comparison includes every member. After A and W record S2, stale B
 at S1 cannot start with W if A is unavailable: the newest generation has no
@@ -1232,7 +1233,7 @@ I/O or CoW operation is issued to a witness.
 Wire changes are negotiated by `HANDSHAKE` feature bits; a protocol version
 is not planned. An I/O `map_version` fence is not planned either: a member
 change is fenced by the register epoch instead ([Migration](migration.md)).
-Interprocess mirror coordination remains multiattach stage 2.
+Interprocess mirror coordination is [multi-attach](multiattach.md).
 
 ## Implementation stages
 
