@@ -22,6 +22,7 @@ extern "C" {
 //     unsigned int mirror_probe_interval;
 //     unsigned int mirror_resync_lease;
 //     unsigned int insecure;
+//     unsigned int tls_handshake_limit;
 // };
 
 int rawstor_opts_initialize(const struct RawstorOpts* opts);
