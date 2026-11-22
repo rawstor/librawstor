@@ -1066,3 +1066,84 @@ TEST_F(HandshakeTest, ClientMayExpectOnlyTheRoleOfTheServer) {
         std::system_error
     );
 }
+
+namespace {
+
+// Starts `count` sends of different sizes at once, so that the Transport has
+// them all queued when it writes, and checks that each completes with its own
+// size and that the peer gets their bytes whole and in the order started.
+void check_concurrent_sends(
+    rawio::Queue& queue, Transport& a, Transport& b, size_t count, size_t base
+) {
+    std::vector<std::string> payloads;
+    std::string expected;
+    for (size_t i = 0; i < count; ++i) {
+        payloads.push_back(random_bytes(
+            base + (i * 977) % (base + 1), static_cast<unsigned>(i)
+        ));
+        expected += payloads.back();
+    }
+
+    rawio::RecvStream stream = b.recv_multishot(4096, 64, 0, 0);
+    std::string received;
+    rawstd::Task<void> read = read_pieces(stream, expected.size(), received);
+    // sendmsg_all() keeps a reference to its parts until the send is done.
+    std::vector<std::vector<std::string>> parts(count);
+    std::vector<rawstd::Task<size_t>> sends;
+    for (size_t i = 0; i < count; ++i) {
+        // Alternate the two calls: both go through the same queue.
+        if (i % 2 == 0) {
+            sends.push_back(send_all(a, payloads[i]));
+        } else {
+            parts[i] = {payloads[i].substr(0, 3), payloads[i].substr(3)};
+            sends.push_back(sendmsg_all(a, parts[i]));
+        }
+    }
+    ASSERT_TRUE(pump(queue, [&]() {
+        if (!read.done()) {
+            return false;
+        }
+        for (rawstd::Task<size_t>& send : sends) {
+            if (!send.done()) {
+                return false;
+            }
+        }
+        return true;
+    }));
+    for (size_t i = 0; i < count; ++i) {
+        EXPECT_EQ(sends[i].get(), payloads[i].size());
+    }
+    read.get();
+    EXPECT_TRUE(received == expected);
+}
+
+} // namespace
+
+TEST_F(TransportTest, PlainSendsStartedTogetherArriveWholeAndInOrder) {
+    std::unique_ptr<Transport> a = Transport::plain(*queue, pair.fds[0]);
+    std::unique_ptr<Transport> b = Transport::plain(*queue, pair.fds[1]);
+    check_concurrent_sends(*queue, *a, *b, 200, 100);
+}
+
+TEST_F(TransportTest, PlainBatchOfSendsSurvivesShortSends) {
+    shrink_send_buffer(pair.fds[0]);
+    std::unique_ptr<Transport> a = Transport::plain(*queue, pair.fds[0]);
+    std::unique_ptr<Transport> b = Transport::plain(*queue, pair.fds[1]);
+    check_concurrent_sends(*queue, *a, *b, 64, 20000);
+}
+
+TEST_F(TransportTest, TlsSendsStartedTogetherArriveWholeAndInOrder) {
+    std::unique_ptr<Transport> a;
+    std::unique_ptr<Transport> b;
+    connect_tls(a, b);
+    ASSERT_TRUE(a && b);
+    check_concurrent_sends(*queue, *a, *b, 200, 100);
+}
+
+TEST_F(TransportTest, TlsBatchOfSendsMixesSmallAndLargeBuffers) {
+    std::unique_ptr<Transport> a;
+    std::unique_ptr<Transport> b;
+    connect_tls(a, b);
+    ASSERT_TRUE(a && b);
+    check_concurrent_sends(*queue, *a, *b, 40, 40000);
+}
