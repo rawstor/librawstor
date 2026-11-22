@@ -105,6 +105,10 @@ private:
     // Submits the registration again after it ended for lack of buffers.
     bool _resubmit() noexcept;
 
+    // Hands what is pending, or the end of the stream, to a consumer that
+    // waits for it.
+    void _wake_waiter();
+
 public:
     BufferRing(
         Queue& q, io_uring& ring, size_t entry_size, unsigned int entries

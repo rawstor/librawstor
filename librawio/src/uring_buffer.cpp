@@ -222,6 +222,10 @@ void BufferRing::on_arrival(int result, unsigned int flags) {
         }
     }
 
+    _wake_waiter();
+}
+
+void BufferRing::_wake_waiter() {
     if (_waiter) {
         rawio::RecvStream::Item out;
         int out_error = 0;
@@ -296,8 +300,12 @@ bool BufferRing::_resubmit() noexcept {
 
 void BufferRing::on_release() noexcept {
     ++_free;
-    if (_starved && !_closed && !_has_terminal) {
-        _resubmit();
+    if (_starved && !_closed && !_has_terminal && !_resubmit()) {
+        // Nothing is armed and nothing will release a buffer to try again:
+        // a consumer that waits would wait for ever.
+        _has_terminal = true;
+        _terminal_error = ENOBUFS;
+        _wake_waiter();
     }
 }
 
@@ -319,10 +327,17 @@ void BufferRing::cancel() noexcept {
     try {
         if (_event != nullptr) {
             _q.cancel(_event);
-        } else if (_starved && _resubmit()) {
-            // The registration that ends the stream: it completes with the
-            // cancellation, or with ENOBUFS if the ring is still empty.
-            _q.cancel(_event);
+        } else if (_starved) {
+            if (_resubmit()) {
+                // The registration that ends the stream: it completes with
+                // the cancellation, or with ENOBUFS if the ring is still
+                // empty.
+                _q.cancel(_event);
+            } else {
+                _has_terminal = true;
+                _terminal_error = ECANCELED;
+                _wake_waiter();
+            }
         }
     } catch (...) {
     }
