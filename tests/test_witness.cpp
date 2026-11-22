@@ -1282,7 +1282,7 @@ TEST_F(WitnessTest, conflicting_member_shapes_require_an_agreeing_quorum) {
     }
 }
 
-TEST_F(WitnessTest, failed_leave_on_the_witness_leaves_data_members_clean) {
+TEST_F(WitnessTest, close_does_not_send_leave_to_the_witness) {
     create();
     auto metadata = metas();
     rawstor::tests::Server server(29641, 256);
@@ -1293,7 +1293,6 @@ TEST_F(WitnessTest, failed_leave_on_the_witness_leaves_data_members_clean) {
     session->cmd_meta(RAWSTOR_MAGIC, 1, 0, reply);
     session->cmd_sync_prepare(RAWSTOR_MAGIC, 2, 0, reply);
     session->cmd_sync_accept(RAWSTOR_MAGIC, 4, 0, reply);
-    session->cmd_leave(RAWSTOR_MAGIC, 6, -EIO);
     rawstor::Target mirrored(
         {rawstd::URI(a.uri() + "/" + id_string(id)),
          rawstd::URI(b.uri() + "/" + id_string(id)),
@@ -1302,8 +1301,8 @@ TEST_F(WitnessTest, failed_leave_on_the_witness_leaves_data_members_clean) {
     auto object = run(*queue, mirrored.open(*queue, 0));
     write(*object);
     run(*queue, object->close(true));
-    // The data members left on their own and are clean; the witness holds
-    // no copy that a failed departure could leave different.
+    // The data members left on their own and are clean; the witness has no
+    // session to leave, so the scripted server expects no LEAVE from it.
     for (const auto& location : {a.uri(), b.uri()}) {
         rawstor::Target data({rawstd::URI(location + "/" + id_string(id))});
         EXPECT_EQ(
