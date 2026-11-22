@@ -135,9 +135,17 @@ rawstd::Task<void> recv_frame(
     rawio::RecvStream::Item item = co_await stream->next(size);
 
     if (item.size() != size) {
+        // Only the end of the stream leaves a part of what was asked for; the
+        // next call tells how it ended.
+        int reason = 0;
+        try {
+            co_await stream->next(0);
+        } catch (const std::system_error& e) {
+            reason = e.code().value();
+        }
         rawstd_error(
-            "fd %d: Unexpected %s size: %zu != %zu\n", fd, what, item.size(),
-            size
+            "fd %d: Unexpected %s size: %zu != %zu (stream ended: %s)\n", fd,
+            what, item.size(), size, reason ? strerror(reason) : "no reason"
         );
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
