@@ -265,9 +265,14 @@ public:
  * co_await-able handle for recv_multishot(): `Item i = co_await
  * stream.next(want);` -- `want` is a "how many bytes am I ready to accept
  * next" flow-control value, throws std::system_error once the stream
- * ends (cancelled, EPIPE, ENOBUFS...),
+ * ends (cancelled, EPIPE, ...),
  * possibly *after* one final successful next() call if a terminal error
  * arrived bundled with trailing data (never silently drops bytes).
+ *
+ * A ring that runs out of buffers does not end the stream: what the kernel
+ * could not take stays in the socket, and the stream takes it as items are
+ * released. Only a `want` that is more than the whole ring can hold ends it,
+ * with ENOBUFS, after the last of what fits.
  */
 class RecvStream final {
 public:
