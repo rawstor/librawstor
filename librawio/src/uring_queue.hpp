@@ -12,6 +12,8 @@
 namespace rawio {
 namespace uring {
 
+class BufferRing;
+
 class Queue final : public rawio::Queue {
 private:
     io_uring _ring;
@@ -89,6 +91,12 @@ public:
         int fd, size_t entry_size, unsigned int entries, size_t size,
         unsigned int flags
     ) override;
+
+    // Submits the registration of `buffer` again, after the kernel ended it
+    // because the ring had no free buffer.
+    void resubmit_recv_multishot(
+        std::shared_ptr<BufferRing> buffer, int fd, unsigned int flags
+    );
 
     rawio::Awaitable<size_t>
     recvmsg(int fd, msghdr* msg, unsigned int flags) override;
