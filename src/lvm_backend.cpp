@@ -967,14 +967,47 @@ rawstd::Task<void> Backend::create_version(
         std::string(rawstor_tag_prefix) + tag,
         origin_path
     };
+    std::exception_ptr eptr;
     try {
         co_await rawstor::run_command(_queue, std::move(argv));
+        co_return;
     } catch (const std::system_error& e) {
         rawstd_error(
             "lvm: failed to create snapshot %s: %s\n", path.c_str(), e.what()
         );
-        throw;
+        eptr = std::current_exception();
     }
+
+    // lvcreate can fail after it created the LV. Such a leftover is
+    // inactive, so it has no device node and the existence check above does
+    // not see it, while it still holds its space and makes every retry fail
+    // with "already exists". No co_await inside a catch block, hence the
+    // rollback here.
+    std::vector<std::string> lookup_argv = {"lvs", "--config", lvm_config,
+                                            "-o",  "lv_name",  path};
+    bool leftover = true;
+    try {
+        co_await rawstor::run_command(_queue, std::move(lookup_argv));
+    } catch (const std::system_error&) {
+        leftover = false;
+    }
+    if (leftover) {
+        rawstd_warning(
+            "lvm: removing the half-created snapshot %s\n", path.c_str()
+        );
+        std::vector<std::string> remove_argv = {
+            "lvremove", "--config", lvm_config, "-f", path
+        };
+        try {
+            co_await rawstor::run_command(_queue, std::move(remove_argv));
+        } catch (const std::system_error& e) {
+            rawstd_warning(
+                "lvm: failed to remove the half-created snapshot %s: %s\n",
+                path.c_str(), e.what()
+            );
+        }
+    }
+    std::rethrow_exception(eptr);
 }
 
 rawstd::Task<void> Backend::remove_version(
