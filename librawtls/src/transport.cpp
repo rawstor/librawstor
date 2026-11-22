@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <cstring>
 #include <ctime>
+#include <deque>
 #include <exception>
 #include <memory>
 #include <optional>
@@ -37,19 +38,6 @@
 #include <sys/uio.h>
 
 namespace {
-
-// Gives the unit back to the semaphore when the coroutine that took it ends.
-class Release final {
-private:
-    rawstd::Semaphore& _semaphore;
-
-public:
-    explicit Release(rawstd::Semaphore& semaphore) noexcept :
-        _semaphore(semaphore) {}
-    Release(const Release&) = delete;
-    Release& operator=(const Release&) = delete;
-    ~Release() { _semaphore.release(); }
-};
 
 int chunk(size_t size) noexcept {
     return static_cast<int>(std::min<size_t>(size, INT_MAX));
@@ -69,21 +57,146 @@ void log_errors(const char* what) {
     RAWSTD_THROW_SYSTEM_ERROR(EACCES);
 }
 
-// What every Transport that writes to a socket has in common: one sender at a
-// time, so that what a call sends goes out whole before the next call starts
+// What every Transport that writes to a socket has in common: one writer at a
+// time, so that what a call sends goes out whole before the next call's bytes
 // and the frames of the stream keep their boundaries; and a connection that is
 // broken once a failed write has left half a frame in the stream.
+//
+// Sends do not wait for each other's syscalls. A send is queued; the writer
+// takes everything queued at that moment as one batch and puts it on the wire
+// with one write, so that a burst of small requests costs one syscall and, on
+// TLS, a few records instead of one of each per request. While a batch is on
+// its way, the sends that arrive form the next one.
 class SerialTransport : public rawtls::Transport {
-private:
-    rawstd::Semaphore _write_mutex{1};
+public:
+    // A send that has been handed to the writer.
+    struct Frame {
+        const msghdr* msg;
+        unsigned int flags;
+        size_t size;
+        std::exception_ptr error;
+        bool done = false;
+        std::coroutine_handle<> waiter;
 
-    rawstd::Task<size_t> _serialized(const msghdr* msg, unsigned int flags) {
-        co_await _write_mutex.acquire();
-        Release release(_write_mutex);
-        if (_broken) {
-            RAWSTD_THROW_SYSTEM_ERROR(ECONNABORTED);
+        Frame(const msghdr* msg, unsigned int flags) noexcept :
+            msg(msg),
+            flags(flags),
+            size(rawstd_iovec_size(
+                msg->msg_iov, static_cast<unsigned int>(msg->msg_iovlen)
+            )) {}
+    };
+
+private:
+    // The most the writer puts into one batch: enough to turn a burst into a
+    // single syscall, little enough not to keep the first send of the batch
+    // waiting for a megabyte of the others.
+    static constexpr size_t max_batch_frames = 256;
+    static constexpr size_t max_batch_bytes = 1 << 20;
+    static constexpr size_t max_batch_iov = 1024;
+
+    class Awaiter final {
+    private:
+        Frame& _frame;
+
+    public:
+        explicit Awaiter(Frame& frame) noexcept : _frame(frame) {}
+        bool await_ready() const noexcept { return _frame.done; }
+        void await_suspend(std::coroutine_handle<> h) noexcept {
+            _frame.waiter = h;
         }
-        co_return co_await _send_locked(msg, flags);
+        size_t await_resume() const {
+            if (_frame.error) {
+                std::rethrow_exception(_frame.error);
+            }
+            return _frame.size;
+        }
+    };
+
+    // What the writer shares with its Transport. The writer is resuming the
+    // senders when the last of them may let go of the Transport, and so it
+    // outlives it for that moment: it must be able to tell, and to stop
+    // without touching the Transport.
+    struct Writer {
+        std::deque<Frame*> queue;
+        bool running = false;
+        bool alive = true;
+    };
+
+    std::shared_ptr<Writer> _writer = std::make_shared<Writer>();
+
+    // A message that carries an address or ancillary data goes out on its own:
+    // those belong to one sendmsg() of the message.
+    static bool _solo(const msghdr* msg) noexcept {
+        return msg->msg_name != nullptr || msg->msg_control != nullptr;
+    }
+
+    // Takes the frames at the head of the queue that go out in one write.
+    static void _take_batch(Writer& writer, std::vector<Frame*>& batch) {
+        size_t bytes = 0;
+        size_t iov = 0;
+        while (!writer.queue.empty()) {
+            Frame* frame = writer.queue.front();
+            if (!batch.empty()) {
+                if (batch.size() >= max_batch_frames ||
+                    bytes + frame->size > max_batch_bytes ||
+                    iov + frame->msg->msg_iovlen > max_batch_iov ||
+                    frame->flags != batch.front()->flags || _solo(frame->msg) ||
+                    _solo(batch.front()->msg)) {
+                    break;
+                }
+            }
+            bytes += frame->size;
+            iov += frame->msg->msg_iovlen;
+            batch.push_back(frame);
+            writer.queue.pop_front();
+        }
+    }
+
+    // Sends what is queued, a batch at a time, until nothing is left.
+    // Everything it touches is in `writer`, except while a batch is on its
+    // way: the Transport must not be destroyed then, as for any send.
+    static rawstd::DetachedTask
+    _write_loop(SerialTransport* self, std::shared_ptr<Writer> writer) {
+        std::vector<Frame*> batch;
+        std::vector<std::coroutine_handle<>> woken;
+        while (!writer->queue.empty()) {
+            batch.clear();
+            _take_batch(*writer, batch);
+            std::exception_ptr error;
+            if (self->_broken) {
+                try {
+                    RAWSTD_THROW_SYSTEM_ERROR(ECONNABORTED);
+                } catch (...) {
+                    error = std::current_exception();
+                }
+            } else {
+                try {
+                    co_await self->_send_batch(batch);
+                } catch (...) {
+                    error = std::current_exception();
+                }
+            }
+            // The senders are resumed once the whole batch is settled: what
+            // they send next joins the queue, behind what is already there.
+            woken.clear();
+            for (Frame* frame : batch) {
+                if (!frame->done) {
+                    frame->error = error;
+                    frame->done = true;
+                }
+                if (frame->waiter) {
+                    woken.push_back(frame->waiter);
+                }
+            }
+            for (std::coroutine_handle<> h : woken) {
+                h.resume();
+            }
+            if (!writer->alive) {
+                // The last sender let go of the Transport.
+                co_return;
+            }
+        }
+        writer->running = false;
     }
 
 protected:
@@ -92,24 +205,43 @@ protected:
     // turn fail instead of writing to a socket that is being closed.
     bool _broken = false;
 
-    // Sends all of `msg` and completes with its size. Called with the write
-    // mutex held and the connection not broken; `msg` stays alive until it
-    // completes.
-    virtual rawstd::Task<size_t>
-    _send_locked(const msghdr* msg, unsigned int flags) = 0;
+    // Sends all of the frames of `batch`, in order, and marks each one done as
+    // soon as all its bytes are out (the writer completes the frames that are
+    // not done when this throws, with the error). All frames have the same
+    // flags and a frame of a batch of several has neither address nor
+    // ancillary data. The messages stay alive until this completes.
+    virtual rawstd::Task<void>
+    _send_batch(const std::vector<Frame*>& batch) = 0;
 
 public:
+    ~SerialTransport() override { _writer->alive = false; }
+
     rawstd::Task<size_t>
     send(const void* buf, size_t size, unsigned int flags) final {
         iovec iov{const_cast<void*>(buf), size};
         msghdr msg{};
         msg.msg_iov = &iov;
         msg.msg_iovlen = 1;
-        co_return co_await _serialized(&msg, flags);
+        co_return co_await _enqueue(&msg, flags);
     }
 
     rawstd::Task<size_t> sendmsg(const msghdr* msg, unsigned int flags) final {
-        return _serialized(msg, flags);
+        return _enqueue(msg, flags);
+    }
+
+private:
+    rawstd::Task<size_t> _enqueue(const msghdr* msg, unsigned int flags) {
+        if (_broken) {
+            RAWSTD_THROW_SYSTEM_ERROR(ECONNABORTED);
+        }
+        Frame frame(msg, flags);
+        _writer->queue.push_back(&frame);
+        if (!_writer->running) {
+            _writer->running = true;
+            _write_loop(this, _writer);
+            rawstd::DetachedTask::rethrow_if_pending();
+        }
+        co_return co_await Awaiter(frame);
     }
 };
 
@@ -118,17 +250,47 @@ private:
     rawio::Queue& _queue;
     int _fd;
     rawio::RecvStream::Canceller _recv;
-    // Sends all of `msg` and completes with its size. A short send of the
-    // socket is continued from where it stopped; the vectors of `msg` are
-    // left as they are.
-    rawstd::Task<size_t>
-    _send_locked(const msghdr* msg, unsigned int flags) override {
-        iovec* iov = msg->msg_iov;
-        unsigned int niov = static_cast<unsigned int>(msg->msg_iovlen);
-        const size_t total = rawstd_iovec_size(iov, niov);
+    // The iovecs of the batch, gathered into one array. Kept between batches
+    // so that a busy connection does not allocate for each.
+    std::vector<iovec> _gather;
+
+    // Sends the frames of the batch with as few sendmsg() calls as the socket
+    // takes: usually one. A short send of the socket is continued from where
+    // it stopped; the vectors of the messages are left as they are.
+    rawstd::Task<void> _send_batch(const std::vector<Frame*>& batch) override {
+        iovec* iov;
+        unsigned int niov;
+        msghdr part;
+        size_t total = 0;
+        if (batch.size() == 1) {
+            // Nothing to gather, and the message may carry an address or
+            // ancillary data that only it can describe.
+            part = *batch.front()->msg;
+            iov = part.msg_iov;
+            niov = static_cast<unsigned int>(part.msg_iovlen);
+            total = batch.front()->size;
+        } else {
+            _gather.clear();
+            for (const Frame* frame : batch) {
+                const msghdr* msg = frame->msg;
+                _gather.insert(
+                    _gather.end(), msg->msg_iov, msg->msg_iov + msg->msg_iovlen
+                );
+                total += frame->size;
+            }
+            part = {};
+            iov = _gather.data();
+            niov = static_cast<unsigned int>(_gather.size());
+            part.msg_iov = iov;
+            part.msg_iovlen = niov;
+        }
+        const unsigned int flags = batch.front()->flags;
         std::vector<iovec> rest;
-        msghdr part = *msg;
+        // The vectors of a single message are not ours to change.
+        bool own = batch.size() != 1;
         size_t sent = 0;
+        size_t completed = 0;
+        size_t frame_end = 0;
         try {
             while (sent < total) {
                 size_t n = co_await _queue.sendmsg(_fd, &part, flags);
@@ -136,15 +298,24 @@ private:
                     RAWSTD_THROW_SYSTEM_ERROR(EPIPE);
                 }
                 sent += n;
+                // Frames that are out whole are done, whatever happens to the
+                // ones behind them.
+                while (completed < batch.size() &&
+                       frame_end + batch[completed]->size <= sent) {
+                    frame_end += batch[completed]->size;
+                    batch[completed]->done = true;
+                    ++completed;
+                }
                 // Ancillary data goes out with the first bytes of a message:
                 // what continues it carries none, or the peer would get it
                 // again.
                 part.msg_control = nullptr;
                 part.msg_controllen = 0;
                 if (sent < total) {
-                    if (rest.empty()) {
+                    if (!own) {
                         rest.assign(iov, iov + niov);
                         iov = rest.data();
+                        own = true;
                     }
                     rawstd_iovec_discard_front(&iov, &niov, n);
                     part.msg_iov = iov;
@@ -157,7 +328,6 @@ private:
             }
             throw;
         }
-        co_return total;
     }
 
 public:
@@ -471,28 +641,74 @@ private:
         }
     }
 
-    // Encrypts the buffers of `msg` and sends them, whole and in order. A
-    // send takes the write mutex from encrypting until the last byte of its
+    // Plaintext waiting for a record: the small buffers of a batch share
+    // records instead of making one each.
+    std::vector<unsigned char> _stage;
+
+    void _stage_flush() {
+        if (!_stage.empty()) {
+            _encrypt(_stage.data(), _stage.size());
+            _stage.clear();
+        }
+    }
+
+    // Encrypts `data` after what is staged: what is staged is filled up to a
+    // record first, then a buffer that is not smaller than a record goes
+    // straight to the session, and any other one waits with its neighbours
+    // until they fill a record.
+    void _encrypt_staged(const void* data, size_t size) {
+        const unsigned char* p = static_cast<const unsigned char*>(data);
+        if (!_stage.empty()) {
+            size_t n = std::min(size, record_size - _stage.size());
+            _stage.insert(_stage.end(), p, p + n);
+            p += n;
+            size -= n;
+            if (_stage.size() < record_size) {
+                return;
+            }
+            _stage_flush();
+        }
+        if (size >= record_size) {
+            _encrypt(p, size);
+        } else {
+            _stage.insert(_stage.end(), p, p + size);
+        }
+    }
+
+    // Encrypts the buffers of the messages of the batch, in order, and sends
+    // them with one write: the records of the whole batch go out together.
+    // A batch takes the writer from encrypting until the last byte of its
     // records is out.
-    rawstd::Task<size_t>
-    _send_locked(const msghdr* msg, unsigned int) override {
-        const iovec* iov = msg->msg_iov;
-        size_t count = static_cast<size_t>(msg->msg_iovlen);
+    rawstd::Task<void> _send_batch(const std::vector<Frame*>& batch) override {
         // Reconnect with the reloaded credentials before sending an expired
         // certificate's command; the server's EACCES is a permanent IO error.
         if (_mode == rawtls::Mode::client &&
             _local_expiration <= static_cast<uint64_t>(time(nullptr))) {
             RAWSTD_THROW_SYSTEM_ERROR(ECONNRESET);
         }
-        size_t total = 0;
-        for (size_t i = 0; i < count; ++i) {
-            if (iov[i].iov_len > 0) {
-                _encrypt(iov[i].iov_base, iov[i].iov_len);
-                total += iov[i].iov_len;
+        try {
+            _stage.reserve(record_size);
+            for (const Frame* frame : batch) {
+                const iovec* iov = frame->msg->msg_iov;
+                size_t count = static_cast<size_t>(frame->msg->msg_iovlen);
+                for (size_t i = 0; i < count; ++i) {
+                    if (iov[i].iov_len > 0) {
+                        _encrypt_staged(iov[i].iov_base, iov[i].iov_len);
+                    }
+                }
             }
+            _stage_flush();
+        } catch (...) {
+            // A session that failed to encrypt is of no use: what went into
+            // it before is not going to reach the peer as a whole.
+            _stage.clear();
+            _broken = true;
+            throw;
         }
         co_await _flush();
-        co_return total;
+        for (Frame* frame : batch) {
+            frame->done = true;
+        }
     }
 
     rawstd::Task<void> _run_handshake() {
