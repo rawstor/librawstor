@@ -19,6 +19,7 @@
 #include <chrono>
 #include <future>
 #include <memory>
+#include <string>
 #include <system_error>
 #include <thread>
 #include <vector>
@@ -313,48 +314,27 @@ TEST_F(MultishotTest, recv) {
     }
 }
 
-TEST_F(MultishotTest, recv_overflow) {
+// What is wanted does not fit the ring: nothing could ever free a buffer,
+// so after what the ring holds the stream ends with ENOBUFS.
+TEST_F(MultishotTest, recv_larger_than_ring) {
     {
-        const char server_buf[] = "dat1dat2dat3dat4x";
+        const char server_buf[] = "dat1dat2dat3dat4dat5";
         _server.write(server_buf, sizeof(server_buf) - 1);
         _server.wait();
     }
 
-    /**
-     * NOTE: entry_size=4, entries=4 not working for uring in linux-6.11.0
-     */
     std::vector<MultishotVectorItem> items;
     rawio::RecvStream stream = _queue->recv_multishot(_fd, 8, 2, 4, 0);
 
-    for (int i = 0; i < 5; ++i) {
-        pull(*_queue, stream, 4, items);
-    }
+    pull(*_queue, stream, 20, items);
+    pull(*_queue, stream, 20, items);
 
-    EXPECT_EQ(items.size(), (size_t)5);
-    if (items.size() >= 1) {
-        EXPECT_EQ(items[0].result(), (size_t)4);
-        EXPECT_EQ(items[0].error(), 0);
-        EXPECT_EQ(strncmp(items[0].data(), "dat1", 4), 0);
-    }
-    if (items.size() >= 2) {
-        EXPECT_EQ(items[1].result(), (size_t)4);
-        EXPECT_EQ(items[1].error(), 0);
-        EXPECT_EQ(strncmp(items[1].data(), "dat2", 4), 0);
-    }
-    if (items.size() >= 3) {
-        EXPECT_EQ(items[2].result(), (size_t)4);
-        EXPECT_EQ(items[2].error(), 0);
-        EXPECT_EQ(strncmp(items[2].data(), "dat3", 4), 0);
-    }
-    if (items.size() >= 4) {
-        EXPECT_EQ(items[3].result(), (size_t)4);
-        EXPECT_EQ(items[3].error(), 0);
-        EXPECT_EQ(strncmp(items[3].data(), "dat4", 4), 0);
-    }
-    if (items.size() >= 5) {
-        EXPECT_EQ(items[4].result(), (size_t)0);
-        EXPECT_EQ(items[4].error(), ENOBUFS);
-    }
+    ASSERT_EQ(items.size(), (size_t)2);
+    EXPECT_EQ(items[0].error(), 0);
+    EXPECT_EQ(items[0].result(), (size_t)16);
+    EXPECT_EQ(strncmp(items[0].data(), "dat1dat2dat3dat4", 16), 0);
+    EXPECT_EQ(items[1].result(), (size_t)0);
+    EXPECT_EQ(items[1].error(), ENOBUFS);
 
     EXPECT_NO_THROW(_queue->cancel(stream.event()));
 }
@@ -547,11 +527,6 @@ TEST_F(MultishotTest, stop_iteration_overflow) {
 
     pull(*_queue, stream, 4, items);
     EXPECT_EQ(items.size(), (size_t)1);
-    if (items.size() >= 1) {
-        EXPECT_EQ(items[0].result(), (size_t)4);
-        EXPECT_EQ(items[0].error(), 0);
-        EXPECT_EQ(strncmp(items[0].data(), "dat1", 4), 0);
-    }
 
     {
         const char server_buf[] = "dat4dat5dat6dat7dat8dat9";
@@ -559,17 +534,63 @@ TEST_F(MultishotTest, stop_iteration_overflow) {
         _server.wait();
     }
 
-    // Still "paused" (never asked for more than 0 again), but the kernel
-    // ran the provided-buffer pool dry regardless -- that overflow must
-    // still surface.
-    pull(*_queue, stream, 0, items);
-    EXPECT_EQ(items.size(), (size_t)2);
-    if (items.size() >= 2) {
-        EXPECT_EQ(items[1].result(), (size_t)0);
-        EXPECT_EQ(items[1].error(), ENOBUFS);
+    // The stream is paused (nothing pulled) while the kernel runs the
+    // provided-buffer pool dry: what did not fit waits in the socket and
+    // comes out as the pulls go on.
+    for (int i = 0; i < 8; ++i) {
+        pull(*_queue, stream, 4, items);
     }
 
+    std::string received;
+    for (const MultishotVectorItem& item : items) {
+        ASSERT_EQ(item.error(), 0);
+        received.append(item.data(), item.result());
+    }
+    EXPECT_EQ(received, "dat1dat2dat3dat4dat5dat6dat7dat8dat9");
+
     EXPECT_NO_THROW(_queue->cancel(stream.event()));
+}
+
+// A stream that waits for buffers (no registration is armed) still ends when
+// it is cancelled, for the consumer that waits on it as well.
+TEST_F(MultishotTest, recv_cancel_while_waiting_for_buffers) {
+    if (rawio::Queue::engine_name() != "uring") {
+        GTEST_SKIP() << "only io_uring has a registration that waits for "
+                        "buffers";
+    }
+
+    const char server_buf[] = "dat1dat2dat3dat4dat5dat6";
+    _server.write(server_buf, sizeof(server_buf) - 1);
+    _server.wait();
+
+    rawio::RecvStream stream = _queue->recv_multishot(_fd, 8, 2, 4, 0);
+    rawio::RecvStream::Canceller canceller = stream.canceller();
+
+    // Holds the whole ring while the kernel finds no free buffer.
+    rawio::RecvStream::Item first = rawio::tests::run(
+        *_queue, rawio::tests::wrap<rawio::RecvStream::Item>(stream.next(16))
+    );
+    ASSERT_EQ(first.size(), (size_t)16);
+
+    rawstd::Task<rawio::RecvStream::Item> t =
+        rawio::tests::wrap<rawio::RecvStream::Item>(stream.next(4));
+    canceller.cancel();
+    for (int n = 0; n < 100 && !t.done(); ++n) {
+        try {
+            _queue->wait_timeout(10);
+        } catch (const std::system_error& e) {
+            if (e.code().value() != ETIME) {
+                throw;
+            }
+        }
+    }
+    ASSERT_TRUE(t.done()) << "cancel did not end the stream";
+    try {
+        t.get();
+        FAIL() << "expected ECANCELED";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ECANCELED);
+    }
 }
 
 TEST_F(MultishotTest, recv_close_partial) {
@@ -772,10 +793,10 @@ TEST_F(MultishotTest, recv_canceller_after_the_stream_is_over) {
 
 // io_uring ends a multishot recv on its own when a completion can't be
 // posted (e.g. the completion ring is full): the last completion still
-// carries data but no IORING_CQE_F_MORE. The stream must then deliver
-// what arrived and fail -- not wait for data a dead registration will
-// never deliver.
-TEST_F(MultishotTest, recv_ended_by_kernel_fails_instead_of_hanging) {
+// carries data but no IORING_CQE_F_MORE. The stream must deliver what
+// arrived and go on with a new registration -- not wait for data a dead
+// registration will never deliver.
+TEST_F(MultishotTest, recv_ended_by_kernel_is_submitted_again) {
     if (rawio::Queue::engine_name() != "uring") {
         GTEST_SKIP() << "only io_uring ends a multishot registration itself";
     }
@@ -798,8 +819,7 @@ TEST_F(MultishotTest, recv_ended_by_kernel_fails_instead_of_hanging) {
         usleep(5000);
     }
 
-    int error = 0;
-    for (int i = 0; i < 16 && error == 0; ++i) {
+    for (int i = 0; i < 8; ++i) {
         rawstd::Task<rawio::RecvStream::Item> t =
             rawio::tests::wrap<rawio::RecvStream::Item>(stream.next(4));
         for (int n = 0; n < 100 && !t.done(); ++n) {
@@ -813,13 +833,14 @@ TEST_F(MultishotTest, recv_ended_by_kernel_fails_instead_of_hanging) {
         }
         ASSERT_TRUE(t.done()) << "stream hangs on a registration the kernel "
                                  "already ended";
-        try {
-            t.get();
-        } catch (const std::system_error& e) {
-            error = e.code().value();
-        }
+        rawio::RecvStream::Item item = t.get();
+        ASSERT_EQ(item.size(), (size_t)4);
+        char buf[4];
+        rawstd_iovec_to_buf(item.iov(), item.niov(), 0, buf, 4);
+        EXPECT_EQ(strncmp(buf, "datX", 4), 0);
     }
-    EXPECT_NE(error, 0);
+
+    EXPECT_NO_THROW(_queue->cancel(stream.event()));
 }
 
 // Same as recv_ended_by_kernel_fails_instead_of_hanging, for

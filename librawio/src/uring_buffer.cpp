@@ -24,9 +24,10 @@ namespace rawio {
 namespace uring {
 
 BufferRingEntry::BufferRingEntry(
-    io_uring_buf_ring* buf_ring, void* data, size_t size, size_t result,
-    unsigned int index, int mask
+    BufferRing* owner, io_uring_buf_ring* buf_ring, void* data, size_t size,
+    size_t result, unsigned int index, int mask
 ) :
+    _owner(owner),
     _buf_ring(buf_ring),
     _data(data),
     _size(size),
@@ -38,6 +39,7 @@ BufferRingEntry::BufferRingEntry(
 BufferRingEntry::~BufferRingEntry() {
     io_uring_buf_ring_add(_buf_ring, _data, _size, _index, _mask, 0);
     io_uring_buf_ring_advance(_buf_ring, 1);
+    _owner->on_release();
 }
 
 __u16 BufferRing::_id_counter = 0;
@@ -49,6 +51,12 @@ BufferRing::BufferRing(
     _ring(ring),
     _entry_size(entry_size),
     _entry_shift(std::countr_zero(entry_size)),
+    _entries(entries),
+    _fd(-1),
+    _flags(0),
+    _free(entries),
+    _starved(false),
+    _cancel_requested(false),
     _id(++_id_counter),
     _buf_ring(nullptr),
     _buf_ring_size(
@@ -109,6 +117,7 @@ BufferRing::BufferRing(
 }
 
 BufferRing::~BufferRing() {
+    _closed = true;
     while (!_pending_entries.empty()) {
         _pending_entries.pop();
     }
@@ -173,8 +182,10 @@ void BufferRing::on_arrival(int result, unsigned int flags) {
         unsigned int index = flags >> IORING_CQE_BUFFER_SHIFT;
         std::unique_ptr<BufferRingEntry> pending_entry =
             std::make_unique<BufferRingEntry>(
-                _buf_ring, _get_entry(index), _entry_size, result, index, _mask
+                this, _buf_ring, _get_entry(index), _entry_size, result, index,
+                _mask
             );
+        --_free;
         _pending_size += result;
         _pending_entries.push(std::move(pending_entry));
     }
@@ -183,22 +194,38 @@ void BufferRing::on_arrival(int result, unsigned int flags) {
         result = -EPIPE;
     }
 
-    if (result < 0 && !_has_terminal) {
+    // A registration that was asked to stop ends by ENOBUFS as well when the
+    // ring has no buffer left.
+    if (_cancel_requested && result == -ENOBUFS) {
+        result = -ECANCELED;
+    }
+
+    // ENOBUFS is not an error of the stream: the kernel ended the
+    // registration because the ring had no free buffer, and what it could not
+    // take is still in the socket, held back by the TCP window.
+    if (result < 0 && result != -ENOBUFS && !_has_terminal) {
         _has_terminal = true;
         _terminal_error = -result;
     }
 
-    // Without IORING_CQE_F_MORE the kernel has ended this registration on
-    // its own even though this completion still carries data (e.g. it
-    // couldn't post the next completion to a full completion ring): what's
-    // pending is the last that will ever arrive. Delivered first, then
-    // ENOBUFS -- the same overflow error the other multishot streams
-    // report -- instead of waiting for data that will never come.
+    // Without IORING_CQE_F_MORE the kernel has ended the registration on its
+    // own, even if this completion still carries data (the ring ran out of
+    // buffers, or it couldn't post the next completion to a full completion
+    // ring). It is submitted again once the ring has a free buffer; what is
+    // pending is delivered meanwhile.
     if (!(flags & IORING_CQE_F_MORE) && !_has_terminal) {
-        _has_terminal = true;
-        _terminal_error = ENOBUFS;
+        _event = nullptr;
+        _starved = true;
+        if (_free > 0 && !_resubmit()) {
+            _has_terminal = true;
+            _terminal_error = ENOBUFS;
+        }
     }
 
+    _wake_waiter();
+}
+
+void BufferRing::_wake_waiter() {
     if (_waiter) {
         rawio::RecvStream::Item out;
         int out_error = 0;
@@ -222,6 +249,14 @@ bool BufferRing::try_produce(
         _extract(want, out);
         error = 0;
         return true;
+    }
+    // Every buffer of the ring holds data that is not enough for `want`:
+    // nothing can free one, so the stream cannot be refilled -- what is wanted
+    // does not fit the ring.
+    if (_starved && !_has_terminal && _free == 0 &&
+        _pending_entries.size() == _entries && _pending_size < want) {
+        _has_terminal = true;
+        _terminal_error = ENOBUFS;
     }
     if (_has_terminal) {
         // Gated on `_size` (== `want` here) even while delivering a
@@ -253,6 +288,27 @@ void BufferRing::set_waiter(
     _waiter_error = error;
 }
 
+bool BufferRing::_resubmit() noexcept {
+    try {
+        _q.resubmit_recv_multishot(shared_from_this(), _fd, _flags);
+    } catch (...) {
+        return false;
+    }
+    _starved = false;
+    return true;
+}
+
+void BufferRing::on_release() noexcept {
+    ++_free;
+    if (_starved && !_closed && !_has_terminal && !_resubmit()) {
+        // Nothing is armed and nothing will release a buffer to try again:
+        // a consumer that waits would wait for ever.
+        _has_terminal = true;
+        _terminal_error = ENOBUFS;
+        _wake_waiter();
+    }
+}
+
 void BufferRing::close() noexcept {
     _closed = true;
     if (_event != nullptr && !_has_terminal) {
@@ -264,11 +320,26 @@ void BufferRing::close() noexcept {
 }
 
 void BufferRing::cancel() noexcept {
-    if (_event != nullptr && !_has_terminal && !_closed) {
-        try {
+    if (_has_terminal || _closed) {
+        return;
+    }
+    _cancel_requested = true;
+    try {
+        if (_event != nullptr) {
             _q.cancel(_event);
-        } catch (...) {
+        } else if (_starved) {
+            if (_resubmit()) {
+                // The registration that ends the stream: it completes with
+                // the cancellation, or with ENOBUFS if the ring is still
+                // empty.
+                _q.cancel(_event);
+            } else {
+                _has_terminal = true;
+                _terminal_error = ECANCELED;
+                _wake_waiter();
+            }
         }
+    } catch (...) {
     }
 }
 
