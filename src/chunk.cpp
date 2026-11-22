@@ -4573,10 +4573,12 @@ rawstd::Task<void> Chunk::close(bool clean) {
     bool leave = clean && !flush_failed && !_write_failed && !_any_leaving() &&
                  c.exclusions_recorded() && !c.unhealed();
     // Only the members in the set: an excluded one's record is rewritten
-    // by its next resync anyway.
+    // by its next resync anyway. A witness takes no writes, so it has no
+    // session to leave (an MDS hosting it doesn't know LEAVE at all).
     std::vector<Slot*> leaving;
     for (size_t i = 0; leave && i < _members.size(); ++i) {
-        if (_members[i].slot && _state(i) == MemberState::IN_SYNC) {
+        if (_members[i].slot && !_members[i].witness &&
+            _state(i) == MemberState::IN_SYNC) {
             leaving.push_back(_members[i].slot.get());
         }
     }
