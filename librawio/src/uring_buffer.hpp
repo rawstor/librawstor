@@ -15,9 +15,11 @@ namespace rawio {
 namespace uring {
 
 class Queue;
+class BufferRing;
 
 class BufferRingEntry final {
 private:
+    BufferRing* _owner;
     io_uring_buf_ring* _buf_ring;
 
     void* _data;
@@ -28,8 +30,8 @@ private:
 
 public:
     BufferRingEntry(
-        io_uring_buf_ring* buf_ring, void* data, size_t size, size_t result,
-        unsigned int index, int mask
+        BufferRing* owner, io_uring_buf_ring* buf_ring, void* data, size_t size,
+        size_t result, unsigned int index, int mask
     );
     BufferRingEntry(const BufferRingEntry&) = delete;
     BufferRingEntry(BufferRingEntry&&) = delete;
@@ -52,7 +54,8 @@ public:
  * place that turns pending entries into a delivered item -- see the .cpp
  * for the exact want/terminal-error precedence rules.
  */
-class BufferRing final : public rawio::RecvStream::Backend {
+class BufferRing final : public rawio::RecvStream::Backend,
+                         public std::enable_shared_from_this<BufferRing> {
 private:
     static __u16 _id_counter;
 
@@ -61,6 +64,18 @@ private:
 
     const size_t _entry_size;
     const unsigned int _entry_shift;
+    const unsigned int _entries;
+
+    int _fd;
+    unsigned int _flags;
+
+    // Buffers that are in the ring, free for the kernel to fill.
+    unsigned int _free;
+    // The registration ended because the ring had no free buffer (what the
+    // kernel could not take is still in the socket): it is submitted again
+    // as soon as a buffer comes back.
+    bool _starved;
+    bool _cancel_requested;
 
     const __u16 _id;
     io_uring_buf_ring* _buf_ring;
@@ -87,6 +102,9 @@ private:
 
     void _extract(size_t want, rawio::RecvStream::Item& out);
 
+    // Submits the registration again after it ended for lack of buffers.
+    bool _resubmit() noexcept;
+
 public:
     BufferRing(
         Queue& q, io_uring& ring, size_t entry_size, unsigned int entries
@@ -102,6 +120,15 @@ public:
     unsigned int id() const noexcept;
 
     inline void set_event(Event* event) noexcept { _event = event; }
+
+    // What the registration is made of, for submitting it again.
+    inline void set_source(int fd, unsigned int flags) noexcept {
+        _fd = fd;
+        _flags = flags;
+    }
+
+    // Called when a buffer of a delivered item is given back to the ring.
+    void on_release() noexcept;
 
     // Called once per CQE belonging to this registration: `result` is the
     // raw signed CQE result (negative -errno, or a non-negative byte

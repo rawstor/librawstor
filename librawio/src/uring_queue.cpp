@@ -900,6 +900,7 @@ rawio::RecvStream Queue::recv_multishot(
     );
     std::shared_ptr<BufferRing> buffer =
         std::make_shared<BufferRing>(*this, _ring, entry_size, entries);
+    buffer->set_source(fd, flags);
 
     io_uring_sqe* sqe = _get_sqe();
     io_uring_prep_recv_multishot(sqe, fd, nullptr, 0, flags);
@@ -912,6 +913,23 @@ rawio::RecvStream Queue::recv_multishot(
     buffer->set_event(static_cast<rawio::Event*>(c.release()));
 
     return rawio::RecvStream(std::move(buffer));
+}
+
+void Queue::resubmit_recv_multishot(
+    std::shared_ptr<BufferRing> buffer, int fd, unsigned int flags
+) {
+    rawstd::TraceEvent trace_event = RAWSTD_TRACE_EVENT(
+        '|', "fd = %d, buffer group = %u, flags = %u\n", fd, buffer->id(), flags
+    );
+    io_uring_sqe* sqe = _get_sqe();
+    io_uring_prep_recv_multishot(sqe, fd, nullptr, 0, flags);
+    sqe->flags |= IOSQE_BUFFER_SELECT;
+    sqe->buf_group = buffer->id();
+    auto c = std::make_unique<RecvMultishotCompletion>(
+        std::move(trace_event), buffer
+    );
+    io_uring_sqe_set_data(sqe, c.get());
+    buffer->set_event(static_cast<rawio::Event*>(c.release()));
 }
 
 rawio::Awaitable<size_t>
