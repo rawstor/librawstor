@@ -327,21 +327,16 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
     if (first == nullptr) {
         co_return;
     }
-    // 64 * 16 buffers of 1u<<17 (128KiB) each = 128MiB: comfortably covers
-    // this client's usual worst case (rawstor-vhost's default
-    // write-throttle-limit of 128 concurrent requests, each up to a
-    // virtio-blk transfer's realistic ~512KiB) with headroom. Undersized
-    // (the previous 64 * 4 = 32MiB), this ring overflows well within that
-    // healthy range: the kernel can't find a free buffer for more
-    // incoming data, the multishot registration terminates with ENOBUFS,
-    // and whatever request was mid-read gets torn down as a short read
-    // ("Unexpected request data size") -- indistinguishable
-    // from a real transport failure to everything downstream, so it
-    // reconnects and retries, immediately overflowing again under the same
-    // sustained load and burning through rawstor_opts_io_attempts() for
-    // real.
+    // 256 buffers of 1u<<17 (128KiB) each = 32MiB per connection. A request
+    // is read whole before it is handled, so the ring has to hold the
+    // largest one (a virtio-blk transfer or a resync block, a few MiB) with
+    // room for the buffers that a short receive leaves partly filled. A
+    // ring that runs out of buffers is not an error: what does not fit waits
+    // in the socket, and the ring is refilled as the requests are read.
+    // Every buffer of a ring ends up touched, so its size is the memory a
+    // connection costs the server.
     rawio::RecvStream stream_owner = first->_transport->recv_multishot(
-        1u << 17, 64 * 16, sizeof(RawstorFrameHead), 0
+        1u << 17, 256, sizeof(RawstorFrameHead), 0
     );
     rawio::RecvStream* stream = &stream_owner;
     first.reset();
