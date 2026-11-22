@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `lvm://`: creating a chunk leaves 20% of the volume group free for version snapshots and fails with `ENOSPC` otherwise.
+- `rawstor-ost` keeps the member records of a `file://`, `lvm://` or `zfs://` store in memory for `--meta-cache-ttl` (default 5000 ms, `0` turns it off), so polling them no longer runs `lvs` each time ([OST](docs/ost.md#member-record-cache)).
 
 ### Fixed
 

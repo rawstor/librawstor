@@ -2,6 +2,7 @@
 #define RAWSTOR_SLOT_HPP
 
 #include "backend.hpp"
+#include "meta_cache.hpp"
 #include "telemetry.hpp"
 
 #include <rawstor/location.h>
@@ -109,6 +110,13 @@ private:
 
     std::shared_ptr<Backend> _backend;
 
+    // The records of the store this Slot's backend is for, or null.
+    // Shared with every other Slot of the process that writes that store
+    // (rawstor-ost passes one to all of its own); see MetaCache for what
+    // that requires. Read by meta(), erased around every change of a
+    // record.
+    std::shared_ptr<MetaCache> _meta_cache;
+
     // Set while _reconnect() is replacing _backend -- see its own doc
     // comment.
     bool _reconnecting;
@@ -181,10 +189,20 @@ public:
     // the returned Slot is ready for the metadata methods (or open() to
     // additionally set_object() it for the data-path methods), but
     // nothing has been set_object()ed yet.
-    static rawstd::Task<std::unique_ptr<Slot>>
-    create(rawio::Queue& queue, const rawstd::URI& location);
+    //
+    // `meta_cache` lets meta() answer from memory; pass it only if this
+    // process owns the store and every Slot of it that changes a record
+    // has the same cache (see MetaCache). Null reads the backend every
+    // time.
+    static rawstd::Task<std::unique_ptr<Slot>> create(
+        rawio::Queue& queue, const rawstd::URI& location,
+        std::shared_ptr<MetaCache> meta_cache = nullptr
+    );
 
-    Slot(Private, rawio::Queue& queue, std::shared_ptr<Backend> backend);
+    Slot(
+        Private, rawio::Queue& queue, std::shared_ptr<Backend> backend,
+        std::shared_ptr<MetaCache> meta_cache
+    );
     ~Slot();
     Slot(const Slot&) = delete;
 
