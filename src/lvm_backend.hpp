@@ -32,7 +32,7 @@ namespace lvm {
  * or a target URI's own path segment. Device path: /dev/<vg>/<uuid>-<offset>.
  *
  * A non-nil `version_id` names that version's own classic snapshot LV:
- * <uuid>-<offset>-s<version_id>, read-only, carrying the live LV's tag as of
+ * s<version_id>-<offset>, read-only, carrying the live LV's tag as of
  * the version. Not thin: the snapshot's COW area is preallocated at the
  * origin's full size.
  *
@@ -44,7 +44,7 @@ private:
     std::string _vg_name;
 
     // A non-nil `version_id` names that version's own snapshot LV:
-    // "<uuid>-<offset>-s<version_id>" -- the "-s<id>" suffix is the version
+    // "s<version_id>-<offset>" -- the "s<id>" prefix is the version
     // key itself (docs/mds.md, "Versions"), nothing stored twice.
     std::string _lv_name(
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
