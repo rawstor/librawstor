@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `rawstor-vhost`, `rawstor-vduse`: closing a mirrored object with a witness on an MDS logged "Function not implemented" and "Bad file descriptor" errors, and the MDS logged "Unsupported command"; a witness has no session to leave, so it is no longer sent LEAVE.
 - `rawstor-ost`, `rawstor-vhost` and the other users of a receive ring: a ring with no free buffer, or a registration that the kernel ended on its own, cut the request in progress short ("Unexpected request data size"), dropped the connection and made every request in flight on it retry; the data now waits in the socket until the ring has room again.
-- `rawstor-ost`: the receive ring of a connection is 32 MiB, not 128 MiB; every buffer of it ends up touched, so a server with many connections was killed by the kernel for lack of memory.
+- `rawstor-ost` and the client library: the receive ring of a connection is 32 MiB, not 128 MiB; every buffer of it ends up touched, so a server with many connections was killed by the kernel for lack of memory, and `rawstor-vhost` held that much per chunk and member.
 
 ## [0.3.1] - 2026-11-22
 

@@ -783,10 +783,13 @@ void Backend::_start_receive_ring() {
     rawstd::TraceEvent trace_event =
         RAWSTD_TRACE_EVENT('m', "%s\n", "multishot recv");
     // Short metadata responses need 32KiB. Data I/O and variable-sized
-    // listings use 1024 buffers of 128KiB for burst headroom.
+    // listings use 256 buffers of 128KiB, 32MiB: a response is read whole, so
+    // the ring has to hold the largest one (a few MiB). A ring that runs out
+    // of buffers only holds the server back. Every buffer of a ring ends up
+    // touched, so its size is the memory a connection costs.
     rawio::RecvStream stream = _transport->recv_multishot(
-        _large_receive_ring ? 1u << 17 : 4096,
-        _large_receive_ring ? 64 * 16 : 8, sizeof(RawstorFrameResponse), 0
+        _large_receive_ring ? 1u << 17 : 4096, _large_receive_ring ? 256 : 8,
+        sizeof(RawstorFrameResponse), 0
     );
     _receiving = true;
     _pump.begin();
