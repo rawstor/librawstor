@@ -4,10 +4,10 @@ A **quota** bounds what one [account](accounts.md) may provision on an MDS: how
 many bytes its objects and versions reserve, and how many objects and versions
 it owns. The provider administrator sets it; the MDS enforces it when the
 account's objects are created, grown, versioned or transferred in, and refuses
-the request that would exceed it with `-EDQUOT`. An OST applies the same idea to
-what is allocated on it directly, which also bounds the damage of one account
-[squatting](accounts.md#planned-allocation-namespace-isolation) another
-account's object UUIDs on a node.
+the request that would exceed it with `-EDQUOT`. The quota exists only on the
+MDS; an OST has no limits of its own, and what an account allocates on an OST
+directly is a separate problem, see
+[Direct OST allocation](#direct-ost-allocation).
 
 A quota is a **provisioning limit**, not a measure of physical use. It is
 checked against the sizes the MDS records, never against what an OST holds
@@ -31,8 +31,8 @@ document's own numbering (see [Implementation stages](#implementation-stages)).
 | Transfer into an account checks its quota; usage moves with the object | 3 | ❌ | [Transfer](#transfer) |
 | `--reconstruct` recomputes usage; limits survive it | 4 | ❌ | [Reconstruct](#reconstruct) |
 | Mirror count change and migration charge the owner | — | ❌ | depends on [Migration](migration.md#permissions-and-capacity) |
-| OST: per-account limits and usage of members allocated on it, `ALLOCATE` refused with `-EDQUOT` | 5 | ❌ | [OST side](#ost-side) |
-| Default OST limit for an account without an explicit one | 5 | ❌ | [OST side](#ost-side) |
+| OST reports per-account usage of the members it holds (no limits) | 5 | ❌ | [Direct OST allocation](#direct-ost-allocation) |
+| MDS-issued allocation grants, charged to the quota and verified by the OST | 6 | ❌ | [Direct OST allocation](#direct-ost-allocation) |
 
 ## Model
 
@@ -88,7 +88,7 @@ refused `resize` and a later one never disagree about what fits.
 A request that charges nothing (a read, a `LIST`, `META`, a shrink that the
 MDS does not implement) is never refused for a quota. The MDS charges only what
 passes through it; a direct `ALLOCATE` on an OST with no MDS involved is
-bounded by the OST's own quota, see [OST side](#ost-side).
+not charged, see [Direct OST allocation](#direct-ost-allocation).
 
 ## Usage counters
 
@@ -237,45 +237,49 @@ that fails it never reaches placement.
 an object, and so also while any usage is non-zero. A quota does not make
 removal harder.
 
-## OST side
+## Direct OST allocation
 
 An account with a `manage` certificate may `ALLOCATE` a member directly on an
 OST, without the MDS. Its certificate authorizes the account, but not a
-particular object UUID, so such an account can fill a node with members of
-UUIDs it does not own, obstructing the legitimate owner's later placement
-(see [allocation namespace isolation](accounts.md#planned-allocation-namespace-isolation)).
-The MDS quota does not see these allocations. An OST therefore enforces a quota
-of its own, and the squatting is then **bounded** instead of unlimited: an
-account can occupy at most its quota of the node, whatever UUIDs it names.
+particular object UUID, so such an account can fill nodes with members of UUIDs
+it does not own and obstruct the legitimate owner's later placement (see
+[allocation namespace isolation](accounts.md#planned-allocation-namespace-isolation)).
+The MDS never sees these allocations, so its quota does not cover them.
 
-- The OST keeps, per account, the number of members and the bytes allocated for
-  it on this OST, and limits for both. `ALLOCATE` for an account that would pass
-  a limit is refused with `-EDQUOT`, before anything is created. Removing a
-  member refunds. The owner is already a field of every member's metadata
-  record, so the counters are rebuilt from the records at start and need no
-  separate store.
-- An account with no explicit limit gets the **OST's default limit**
-  (configured per OST, e.g. in `/etc/rawstor/ost/<uuid>.conf`, see
-  [rawstor-ost](ost.md)). Without a default the mitigation does not exist for
-  accounts nobody configured, so a default is part of this stage, and a
-  provider that wants no limit sets it to unlimited explicitly.
-- Limits on an OST are set by the provider, the same way as on the MDS
-  (`ACCOUNT_SET_QUOTA` is accepted by an OST for an `admin`; `ACCOUNT_INFO`
-  reports the OST's own figures). The MDS does not push limits: the OST works
-  with no MDS online, as direct I/O does today.
-- The two counters are different quantities and are not added up: the MDS one
-  is what the account provisioned across the whole cluster, the OST one is what
-  sits on one node. An object created through the MDS is charged at both, and
-  that is intended. A provider keeps the OST default well above the largest
-  MDS quota an account can be given per node, or sets explicit limits.
-- What it does **not** do: it does not stop account B from taking A's UUID at a
-  missing offset, only from taking more than B's share of the node. Because it
-  bounds B, A's unsquatted share stays reachable as long as the provider
-  does not oversubscribe the node's capacity with limits. The
-  [acceptance criteria of the namespace plan](accounts.md#acceptance-tests) that
-  require B to be unable to obstruct A remain open until a namespace model is
-  chosen; they are met by this quota only as "an obstruction costs B quota and
-  is bounded".
+**An OST gets no limits.** A per-OST limit is not an account quota: objects are
+spread over many nodes unevenly, so a node's limit either cuts an honest account
+that happens to hold much there or is too high to protect anything, and a
+squatter can take the limit on every node. The total over the cluster is
+the only meaningful bound, and only the MDS knows it. The quota is therefore a
+guarantee for objects the MDS manages and **not** a cap on what an account can
+force onto an OST directly.
+
+What can be done about direct allocation, in the order of cost:
+
+1. **Visibility (stage 5).** The OST already keeps every member's owner in its
+   metadata record, so it can report, per account, how many members and bytes it
+   holds, and `ACCOUNT_INFO` on an OST answers with these figures and no limit.
+   The administrator (or a control plane) sums them over the OSTs and compares
+   them with the MDS usage of the account; the difference is what was allocated
+   behind the MDS's back. Nothing is refused; it makes squatting visible and
+   removable.
+2. **Allocation grants (stage 6).** The MDS issues a signed grant naming the
+   account, the object UUID, the OST, the offset and the size, and charges it to
+   the quota when it issues it (the `OBJ_CREATE` and `OBJ_RESIZE` descriptors
+   would carry them). An OST verifies the signature against a trusted MDS key,
+   the way it verifies a certificate, without an online MDS, and an `ALLOCATE`
+   that carries a valid grant is within the quota by construction. This is both
+   the global bound and the *verifiable ownership evidence* that the
+   [namespace plan](accounts.md#planned-allocation-namespace-isolation) asks
+   for: B cannot obtain a grant for A's UUID, so it cannot occupy A's key. The
+   price is that a direct allocation without an MDS stops being possible where
+   an OST requires grants, which today is an intended feature of `manage`. It is
+   therefore designed together with the ownership model there, not here, and
+   until that decision this document does not specify the grant format.
+
+Until stage 6 a direct allocation is not bounded by any quota, and the
+[acceptance criteria of the namespace plan](accounts.md#acceptance-tests) that
+require B to be unable to obstruct A are not met by anything in this document.
 
 ## Reconstruct
 
@@ -322,12 +326,8 @@ definition ([Security](security.md)) and can do both.
 
 ## Not here
 
-- **A complete fix of UUID squatting.** The [OST quota](#ost-side) bounds how
-  much of a node an account can occupy, squatted UUIDs included, but it does
-  not tell whose an arbitrary UUID is: the namespace decision stays with
-  [the allocation plan](accounts.md#planned-allocation-namespace-isolation).
-- **Physical usage and thin accounting.** Neither quota reads what an OST
-  actually stores; the OST counts what was allocated for the account. Overcommitment of the pool (the sum of quotas above its free space) is
+- **Physical usage and thin accounting.** The quota never reads what an OST
+  actually stores. Overcommitment of the pool (the sum of quotas above its free space) is
   an operator's decision; the existing free-space report tells whether the
   pool is in trouble.
 - **Rate limits, IOPS and bandwidth, noisy-neighbour control.** Separate work;
@@ -361,12 +361,11 @@ Each stage is tested at the layer it adds, through existing interfaces:
   without limits; a restored database keeps both; the start-up consistency
   check detects a hand-corrupted counter.
 
-- stage 5: an account at its OST limit cannot allocate another member, direct or
-  through the MDS, and a second account is unaffected; account B squatting A's
-  UUIDs at missing offsets stops at B's limit and A's own allocation still
-  succeeds; removal refunds; counters are rebuilt equal after an OST restart;
-  an account with no explicit limit gets the default; the OST works with the
-  MDS down.
+- stage 5: an OST reports per-account counters equal to its member records,
+  rebuilt equal after a restart, and an account client reads only its own;
+  the sum over the OSTs matches the MDS usage when nothing was allocated
+  directly and exceeds it by exactly the direct allocations otherwise;
+- stage 6: tests are defined with the grant format and the ownership model.
 
 An end-to-end test creates objects under a vhost-like writer until the quota
 is hit and checks that the writer on the objects it already has is not
@@ -387,11 +386,14 @@ disturbed by the refusal.
 4. **Reconstruct and consistency.** Recomputing the usage in `--reconstruct`;
    the start-up counter check.
 
-5. **OST quota.** Per-account counters rebuilt from the member records, limits
-   and the default limit in the OST's configuration, `-EDQUOT` on `ALLOCATE`,
-   `ACCOUNT_SET_QUOTA`/`ACCOUNT_INFO` on an OST, refund on removal. Independent
-   of stages 1-4 (an OST needs no MDS) and the stage that addresses the
-   squatting problem; it can be done first if that is the priority.
+5. **OST usage report.** Per-account counters of the members an OST holds,
+   built from their metadata records, `ACCOUNT_INFO` on an OST (usage only, no
+   limits, and `ACCOUNT_SET_QUOTA` is still `-ENOSYS` there). Independent of
+   stages 1-4.
+6. **Allocation grants.** MDS-issued signed grants charged to the quota and
+   verified by the OST, which close squatting and make the quota a bound on
+   direct allocation. Designed with the ownership model of the
+   [namespace plan](accounts.md#planned-allocation-namespace-isolation).
 
 Stage 1 is the substance; the rest is surface and bookkeeping. Changing the
 number of mirrors and migration ([Migration](migration.md#permissions-and-capacity))
@@ -418,11 +420,6 @@ charges the owner and one that would exceed the quota is refused before
   stays charged. A lease on the charge, released if the client does not confirm
   within a time, would close it at the price of a new protocol step; the
   existing leftover is visible and removable, so left as is.
-- **Default OST limit value.** A safe default needs a number a provider can
-  live with on day one; candidates are a fraction of the node's capacity or
-  unlimited with a warning. Unlimited keeps the squatting exposure, a hard
-  default can surprise a legitimate large account, so the default must be
-  decided together with how limits are provisioned on a new node.
 - **Per-location limits from the MDS.** Limiting an account to chosen locations
   is placement policy, not a quota, and belongs with [Migration](migration.md)
   location control.

@@ -394,8 +394,8 @@ certificate does not prove global ownership of a UUID when the requested OST
 member has no local metadata. A manager can occupy another account's future
 member key. See the [allocation namespace plan](accounts.md#planned-allocation-namespace-isolation)
 for the impact, architectural alternatives and acceptance criteria. This is
-separate from intentional direct OST access; [OST account quotas](quotas.md#ost-side)
-bound how much of a node it can take but do not close it.
+separate from intentional direct OST access; account [quotas](quotas.md#direct-ost-allocation)
+do not cover direct allocations until MDS-issued grants exist.
 
 ## Accounts
 
