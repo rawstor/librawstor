@@ -12,6 +12,8 @@
 #include <rawstd/logging.h>
 #include <rawstd/uuid.h>
 
+#include <rawthread/lock.hpp>
+
 #include <algorithm>
 #include <cerrno>
 #include <cinttypes>
@@ -20,6 +22,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -96,6 +99,28 @@ constexpr long staging_min_age_seconds = 300;
 // after the first sweep) orphans repeatedly would be pure waste.
 std::mutex swept_vgs_mutex;
 std::unordered_set<std::string> swept_vgs;
+
+// Serializes, per VG, the reserve check and the lvcreate of create(): two
+// concurrent creates would otherwise both pass the check against the same
+// free space. One lock per VG name for the life of the process; the map only
+// grows, so a returned reference stays valid.
+std::mutex allocation_locks_mutex;
+std::map<std::string, std::unique_ptr<rawthread::Lock>> allocation_locks;
+
+rawthread::Lock& allocation_lock(const std::string& vg_name) {
+    std::lock_guard<std::mutex> guard(allocation_locks_mutex);
+    std::unique_ptr<rawthread::Lock>& lock = allocation_locks[vg_name];
+    if (!lock) {
+        lock = std::make_unique<rawthread::Lock>();
+    }
+    return *lock;
+}
+
+// Releases an allocation lock on every way out of a coroutine.
+struct AllocationLockGuard {
+    rawthread::Lock& lock;
+    ~AllocationLockGuard() { lock.unlock(); }
+};
 
 std::string trim(const std::string& s) {
     size_t begin = s.find_first_not_of(" \t\r\n");
@@ -207,9 +232,58 @@ Backend::_open_object(const RawstdUUID& id, uint64_t offset, int flags) {
     co_return fd;
 }
 
+rawstd::Task<void> Backend::_check_version_origin(
+    const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+) {
+    std::string path = _device_path(id, offset, version_id);
+    if (!co_await _exists(path)) {
+        rawstd_error("lvm: snapshot %s does not exist\n", path.c_str());
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
+
+    // See list_chunks()'s own comment on this GCC 13 ICE workaround.
+    std::vector<std::string> argv = {"lvs",      "--config",
+                                     lvm_config, "--reportformat",
+                                     "json",     "-o",
+                                     "origin",   path};
+    std::string output;
+    try {
+        output = co_await rawstor::run_command_capture(_queue, std::move(argv));
+    } catch (const std::system_error& e) {
+        rawstd_error(
+            "lvm: failed to read the origin of %s: %s\n", path.c_str(), e.what()
+        );
+        throw;
+    }
+
+    std::string origin;
+    try {
+        origin = nlohmann::json::parse(output)
+                     .at("report")
+                     .at(0)
+                     .at("lv")
+                     .at(0)
+                     .at("origin")
+                     .get<std::string>();
+    } catch (const std::exception& e) {
+        rawstd_error(
+            "lvm: failed to parse lvs JSON output for %s: %s\n", path.c_str(),
+            e.what()
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    if (origin != _lv_name(id, offset)) {
+        rawstd_error(
+            "lvm: snapshot %s is not a version of this object\n", path.c_str()
+        );
+        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    }
+}
+
 rawstd::Task<int> Backend::_open_version(
     const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
 ) {
+    co_await _check_version_origin(id, offset, version_id);
     std::string path = _device_path(id, offset, version_id);
 
     // O_RDONLY: a version device is read-only at the device level too
@@ -466,23 +540,6 @@ rawstd::Task<void> Backend::create(
 
     co_await _cleanup_staging_lvs();
 
-    // Versions are classic snapshots that each take the origin's full size
-    // out of the same VG, so a chunk may not eat into the reserved share.
-    if (member_role != RAWSTOR_MEMBER_WITNESS) {
-        RawstorLocationInfo vg = co_await info();
-        uint64_t reserve = vg.total / 100 * snapshot_reserve_percent;
-        uint64_t free_bytes = vg.total - vg.used;
-        if (free_bytes < sp.size || free_bytes - sp.size < reserve) {
-            rawstd_error(
-                "lvm: VG %s has %" PRIu64 " bytes free, %" PRIu64
-                " needed on top of the %" PRIu64
-                "-byte reserve kept for version snapshots\n",
-                _vg_name.c_str(), free_bytes, sp.size, reserve
-            );
-            RAWSTD_THROW_SYSTEM_ERROR(ENOSPC);
-        }
-    }
-
     // Unique per *attempt*, not derived from `id` -- two concurrent
     // create() calls for the same id (e.g. a client that reconnected and
     // resent ALLOCATE while the server was still processing its first,
@@ -558,14 +615,39 @@ rawstd::Task<void> Backend::create(
         "lvcreate", "--config",   lvm_config, "--yes", "-L",    size_buf,
         "-n",       staging_name, "--addtag", tag,     _vg_name
     };
-    try {
-        co_await rawstor::run_command(_queue, std::move(create_argv));
-    } catch (const std::system_error& e) {
-        rawstd_error(
-            "lvm: failed to create LV %s in VG %s: %s\n", uuid_str,
-            _vg_name.c_str(), e.what()
-        );
-        throw;
+    {
+        // The VG's free space is read and spent under one lock (see
+        // allocation_lock()). Versions are classic snapshots that each take
+        // the origin's full size out of the same VG, so a chunk may not eat
+        // into the reserved share.
+        rawthread::Lock& vg_lock = allocation_lock(_vg_name);
+        co_await vg_lock.lock(_queue);
+        AllocationLockGuard vg_guard{vg_lock};
+
+        if (member_role != RAWSTOR_MEMBER_WITNESS) {
+            RawstorLocationInfo vg = co_await info();
+            uint64_t reserve = vg.total / 100 * snapshot_reserve_percent;
+            uint64_t free_bytes = vg.total - vg.used;
+            if (free_bytes < sp.size || free_bytes - sp.size < reserve) {
+                rawstd_error(
+                    "lvm: VG %s has %" PRIu64 " bytes free, %" PRIu64
+                    " needed on top of the %" PRIu64
+                    "-byte reserve kept for version snapshots\n",
+                    _vg_name.c_str(), free_bytes, sp.size, reserve
+                );
+                RAWSTD_THROW_SYSTEM_ERROR(ENOSPC);
+            }
+        }
+
+        try {
+            co_await rawstor::run_command(_queue, std::move(create_argv));
+        } catch (const std::system_error& e) {
+            rawstd_error(
+                "lvm: failed to create LV %s in VG %s: %s\n", uuid_str,
+                _vg_name.c_str(), e.what()
+            );
+            throw;
+        }
     }
 
     // co_await isn't allowed inside a catch block, so every failure below
@@ -751,9 +833,8 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Backend::meta(
     // A version's own snapshot LV answers the same tag query as the live
     // LV: it carries the record the live LV had when it was taken.
     std::string path = _device_path(id, offset, version_id);
-    if (!rawstd_uuid_is_nil(&version_id) && !co_await _exists(path)) {
-        rawstd_error("lvm: LV %s does not exist\n", path.c_str());
-        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
+    if (!rawstd_uuid_is_nil(&version_id)) {
+        co_await _check_version_origin(id, offset, version_id);
     }
     std::string tags = co_await _lv_tags(path);
     std::string tag = find_tag(tags, rawstor_tag_prefix);
@@ -981,14 +1062,28 @@ rawstd::Task<void> Backend::create_version(
     // lvcreate can fail after it created the LV. Such a leftover is
     // inactive, so it has no device node and the existence check above does
     // not see it, while it still holds its space and makes every retry fail
-    // with "already exists". No co_await inside a catch block, hence the
-    // rollback here.
-    std::vector<std::string> lookup_argv = {"lvs", "--config", lvm_config,
-                                            "-o",  "lv_name",  path};
-    bool leftover = true;
+    // with "already exists". The same failure is what a request that lost a
+    // race for this name gets, and the LV then belongs to the winner: only an
+    // LV that is not a snapshot (lv_attr does not start with 's') is a
+    // leftover. No co_await inside a catch block, hence the rollback here.
+    std::vector<std::string> lookup_argv = {"lvs",      "--config",
+                                            lvm_config, "--reportformat",
+                                            "json",     "-o",
+                                            "lv_attr",  path};
+    bool leftover = false;
     try {
-        co_await rawstor::run_command(_queue, std::move(lookup_argv));
-    } catch (const std::system_error&) {
+        std::string output = co_await rawstor::run_command_capture(
+            _queue, std::move(lookup_argv)
+        );
+        std::string attr = nlohmann::json::parse(output)
+                               .at("report")
+                               .at(0)
+                               .at("lv")
+                               .at(0)
+                               .at("lv_attr")
+                               .get<std::string>();
+        leftover = !attr.empty() && attr[0] != 's';
+    } catch (const std::exception&) {
         leftover = false;
     }
     if (leftover) {
@@ -1018,10 +1113,11 @@ rawstd::Task<void> Backend::remove_version(
 
     // Same ENOENT convention as remove(): a nonexistent version is
     // permanent, not the retryable EIO lvremove would produce.
-    if (rawstd_uuid_is_nil(&version_id) || !co_await _exists(path)) {
+    if (rawstd_uuid_is_nil(&version_id)) {
         rawstd_error("lvm: snapshot %s does not exist\n", path.c_str());
         RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
     }
+    co_await _check_version_origin(id, offset, version_id);
 
     rawstd_info("lvm: removing snapshot %s\n", path.c_str());
 

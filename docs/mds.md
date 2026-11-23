@@ -873,14 +873,19 @@ visible once the orchestrator has verified its barrier:
 **v1 notes (shipped):**
 
 - **LVM versions are classic (non-thin) snapshots.** A version is a
-  read-only `lvcreate --snapshot` named `s<version_id>-<offset>` (the object is the
-  snapshot's origin; the name stays short because LVM refuses a device-mapper
-  name over 127 characters, and the snapshot's `-cow` device doubles every `-`),
-  created
-  with `-l 100%ORIGIN`: the preallocated COW area holds every block of the
-  origin being rewritten, so a version is never invalidated by overflow, at
-  the price of reserving the origin's full size in the VG per version. Chunk
-  creation leaves 20% of the VG free for them and fails with `ENOSPC` otherwise. The
+  read-only `lvcreate --snapshot` named `s<version_id>-<offset>`. The object
+  is the snapshot's origin, which open, meta and remove check against the
+  requested object (`ENOENT` otherwise); the name stays short because LVM
+  refuses a device-mapper name over 127 characters, and the snapshot's `-cow`
+  device doubles every `-`. It is created with `-l 100%ORIGIN`: the
+  preallocated COW area holds every block of the origin being rewritten, so a
+  version is never invalidated by overflow, at the price of reserving the
+  origin's full size in the VG per version. Chunk creation leaves 20% of the
+  VG free for them and fails with `ENOSPC` otherwise; the check and the
+  allocation run under one per-VG lock, so it holds between the creates of one
+  process, not between processes sharing a VG. A snapshot whose `lvcreate`
+  failed halfway is removed, unless it is a finished snapshot (a concurrent
+  request for the same version made it). The
   snapshot carries the live LV's `rawstor.meta` tag as of the version
   (`lvcreate` does not copy tags). Removing the live LV removes its
   snapshots. A thin backend is not implemented. zfs versions are

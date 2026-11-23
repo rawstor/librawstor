@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `lvm://`: a version of a chunk failed with "Input/output error" because the snapshot's device-mapper name exceeded 127 characters; snapshot LVs are now named `s<version_id>-<offset>`.
+- `lvm://`: a version of a chunk failed with "Input/output error" because the snapshot's device-mapper name exceeded 127 characters; snapshot LVs are now named `s<version_id>-<offset>`. Snapshots created by earlier builds are no longer found.
 - `lvm://`: a version whose `lvcreate` failed halfway left a snapshot LV behind that made every retry fail with "already exists"; it is now removed.
 
 ## [0.3.2] - 2026-11-22

@@ -76,6 +76,13 @@ private:
     // list on the LV at `path`, as reported by `lvs -o lv_tags`.
     rawstd::Task<std::string> _lv_tags(const std::string& path);
 
+    // A version's snapshot LV is named by the version and the offset only,
+    // so the object it belongs to is the LV's origin: throws ENOENT unless
+    // the snapshot exists and is a snapshot of this object's chunk.
+    rawstd::Task<void> _check_version_origin(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+    );
+
 public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);
 
