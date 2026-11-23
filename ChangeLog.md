@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `lvm://`: a version snapshot LV is named with the whole version id, `s<uuid>-<offset>`, not the 22-character form. Snapshots created by earlier builds are no longer found.
 
+### Fixed
+
+- A version of an object with a witness could not be opened, so `rawstor version export` and a read-only `rawstor-vhost` on it failed with "Transport endpoint is not connected": the records of its copies list the witness among the members, which a version does not have.
+
 ## [0.3.3] - 2026-11-23
 
 ### Changed

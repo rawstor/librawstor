@@ -1232,6 +1232,49 @@ TEST_F(WitnessTest, snapshot_skips_unreachable_trailing_witness) {
     EXPECT_NO_THROW(run(*queue, snapshot.create_version(*queue)));
 }
 
+// A version holds the data members only, while its records are those of the
+// chunk with its witness.
+TEST_F(WitnessTest, a_version_of_a_witnessed_chunk_opens_read_only) {
+    create();
+    seed();
+    std::string suffix = "/" + id_string(id) + "/0/" + id_string(new_id());
+    rawstor::Target version(
+        {rawstd::URI(a.uri() + suffix), rawstd::URI(b.uri() + suffix)}
+    );
+    run(*queue, version.create_version(*queue));
+
+    auto object = run(*queue, version.open(*queue, RAWSTOR_READONLY));
+    char buf[5];
+    EXPECT_EQ(run(*queue, object->pread(buf, sizeof(buf), 0)), sizeof(buf));
+    EXPECT_EQ(std::string(buf, sizeof(buf)), "hello");
+    run(*queue, object->close(false));
+}
+
+TEST_F(WitnessTest, a_version_below_quorum_opens_only_forced) {
+    create();
+    seed();
+    std::string suffix = "/" + id_string(id) + "/0/" + id_string(new_id());
+    rawstor::Target version(
+        {rawstd::URI(a.uri() + suffix), rawstd::URI(b.uri() + suffix)}
+    );
+    run(*queue, version.create_version(*queue));
+
+    HiddenLocation offline(b);
+    try {
+        run(*queue, version.open(*queue, RAWSTOR_READONLY));
+        FAIL() << "a version below quorum opened";
+    } catch (const std::system_error& e) {
+        EXPECT_EQ(e.code().value(), ENOTCONN) << e.what();
+    }
+
+    auto object =
+        run(*queue, version.open(*queue, RAWSTOR_READONLY | RAWSTOR_FORCE));
+    char buf[5];
+    EXPECT_EQ(run(*queue, object->pread(buf, sizeof(buf), 0)), sizeof(buf));
+    EXPECT_EQ(std::string(buf, sizeof(buf)), "hello");
+    run(*queue, object->close(false));
+}
+
 TEST_F(WitnessTest, conflicting_member_shapes_require_an_agreeing_quorum) {
     for (size_t index : {0u, 2u}) {
         SCOPED_TRACE(index);
