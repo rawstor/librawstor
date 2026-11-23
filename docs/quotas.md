@@ -195,15 +195,20 @@ actions: **keep** it, **set** it to a value, or make it **unlimited**. The MDS
 applies them to the account's row in one transaction, so two administrators
 changing different limits at once both succeed and neither overwrites the
 other; a client never reads a row and writes it back. Setting the same limit
-twice is the last writer's, which is the intent of setting. The command is
-idempotent, so no `idempotency_key` is needed. Unlimited is an action, not a
-magic number.
+twice is the last writer's, which is the intent of setting. Like every
+mutating MDS request it carries an `idempotency_key` ([MDS
+design](mds.md#idempotent-mutations)): a request resent after a lost reply is
+answered with its recorded result and is not applied again, so a delayed retry
+of an earlier `set` cannot restore a limit a later one has changed. Unlimited is
+an action, not a magic number.
 
 A limit is a value of `0` to `INT64_MAX` (2^63 − 1 bytes or items), the range
 of the store's signed 64-bit integers; a larger one is refused with `-EINVAL`.
 That is eight exbibytes, past any real provisioning, and "unlimited" covers
-what is meant by more. Usage counters are in the same range and cannot reach
-it before the limit does.
+what is meant by more. Usage counters are in the same range. An unlimited
+limit is checked as `INT64_MAX`: a charge that would take a counter past it is
+refused with `-EDQUOT` like any other, and the size × copies of a request is
+computed with overflow checking, so a counter is always representable.
 
 `LIST_ACCOUNTS` rows grow the limits and the usage, so a provider's console
 lists every account with its figures in one paged call, and the answer to
@@ -373,7 +378,9 @@ Each stage is tested at the layer it adds, through existing interfaces:
   moving the whole charge, versions included; a transfer replayed after a lost
   reply does not move the charge twice;
 - stage 2 also: two concurrent `ACCOUNT_SET_QUOTA` naming different limits both
-  take effect; a limit above `INT64_MAX` is `-EINVAL`;
+  take effect; a `set` replayed after a later one is answered from the record
+  and does not undo it; a limit above `INT64_MAX` is `-EINVAL`; an unlimited
+  account refuses a charge that would pass `INT64_MAX`;
 - stage 4: `--reconstruct` yields counters equal to the map and accounts
   closed (limits `0`) until restored; a restored database keeps both; the start-up consistency
   check detects a hand-corrupted counter.
