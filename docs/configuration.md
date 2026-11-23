@@ -1,6 +1,6 @@
 # Configuration
 
-Environment variables tuning the Rawstor client and servers. Defaults are shown below.
+Environment variables tuning the RawStor client and servers. Defaults are shown below.
 
 | Variable | Default | Description |
 |----------|---------|-------------|

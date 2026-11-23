@@ -1,4 +1,4 @@
-# DRAFT: Rawstor High-level architecture
+# DRAFT: RawStor High-level architecture
 
 ## Status
 
@@ -131,8 +131,8 @@ Entity - object:
 - can be sliced across different OSTs (aka Chunks)
   - **IMPORTANT**: key difference of rawstor from other solutions is that you can deside how your data will be sliced across OSTs (chunk size, distribution strategy, etc.)
     - from "local" storage (one whole volume on one OST only as one `chunk`)
-    - to "distributed" storage (like `CEPH` - small chunks distributed across whole cluster, although this strategy is a little bit discouraged in Rawstor, we already have Ceph, Vitastor and other Ceph-like storages)
-    - best way to look at Rawstor as a "middle ground" between local and distributed storage (DRBD with massive slicing and feature-rich client, or shared-nothing Lustre with redundancy out of the box)
+    - to "distributed" storage (like `CEPH` - small chunks distributed across whole cluster, although this strategy is a little bit discouraged in RawStor, we already have Ceph, Vitastor and other Ceph-like storages)
+    - best way to look at RawStor as a "middle ground" between local and distributed storage (DRBD with massive slicing and feature-rich client, or shared-nothing Lustre with redundancy out of the box)
 - must have two modes
   - mutable: needed for fast block storage
   - immutable: convenient for object storage

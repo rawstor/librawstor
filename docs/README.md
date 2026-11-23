@@ -1,4 +1,4 @@
-# Rawstor documentation
+# RawStor documentation
 
 - [Quick start](quickstart.md) -- a mirrored VM disk from packages, every service run by systemd.
 - [Concepts](concepts.md) -- Location and Target: the addressing model every other doc builds on.
@@ -29,4 +29,4 @@ Project:
 
 - [Known limitations](limitations.md) -- what is not implemented yet and the risks accepted for now.
 - [Troubleshooting](troubleshooting.md) -- `io_uring` problems and how to tell them apart.
-- [Authors](authors.md) -- who wrote Rawstor.
+- [Authors](authors.md) -- who wrote RawStor.

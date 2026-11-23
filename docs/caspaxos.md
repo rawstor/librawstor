@@ -24,7 +24,7 @@ result. Two proposers racing each other never decide two different values,
 whichever minority each of them reached.
 
 `rawstd::caspaxos` is generic over the value type and over how requests
-reach the acceptors. Rawstor uses it for a mirrored chunk's configuration
+reach the acceptors. RawStor uses it for a mirrored chunk's configuration
 -- its members are the acceptors, every writer of the chunk a proposer
 (the multi-attach design) -- but nothing in it knows about chunks.
 
@@ -281,8 +281,8 @@ rawstd::Task<Reply<V>> accept(size_t index, Ballot ballot, const V& value,
   competing proposers, conflicts between phases, and out-of-order
   coroutine completions.
 
-This generic proposer is implemented independently of the Rawstor writer.
-Rawstor integration is developed separately in `add/multiqueue-mirroring`.
+This generic proposer is implemented independently of the RawStor writer.
+RawStor integration is developed separately in `add/multiqueue-mirroring`.
 
 ## Use in rawstor
 

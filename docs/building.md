@@ -1,6 +1,6 @@
 # Building from source
 
-Build Rawstor from a checkout and run every service by hand on one
+Build RawStor from a checkout and run every service by hand on one
 machine. For packages and systemd units see the [Quick start](quickstart.md).
 
 ```

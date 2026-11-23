@@ -1,4 +1,4 @@
-# Rawstor wire protocol
+# RawStor wire protocol
 
 ## Native conversions
 
@@ -1044,7 +1044,7 @@ data is read-only; a manager may manage versions of an allowed object.
 The certificate SAN provides the account; it is not duplicated in the policy.
 
 The policy is noncritical so standard TLS certificate verification remains
-in effect without suppressing unknown-critical-extension errors. Rawstor
+in effect without suppressing unknown-critical-extension errors. RawStor
 itself requires a usable policy for account access and parses it strictly.
 The CA signs it along with the identity, expiry and other certificate fields.
 
