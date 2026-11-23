@@ -1,10 +1,12 @@
 #include <ost/server.hpp>
 
 #include "config.h"
+#include "meta_cache.hpp"
 
 #include <rawstd/exitcode.h>
 #include <rawstd/logging.hpp>
 #include <rawstd/pipe.hpp>
+#include <rawstd/uri.hpp>
 
 #include <rawstor/rawstor.h>
 
@@ -12,6 +14,7 @@
 #include <signal.h>
 #include <unistd.h>
 
+#include <chrono>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -27,6 +30,7 @@
 
 #define DEFAULT_QUEUE_SIZE 4096
 #define DEFAULT_WORKERS 12
+#define DEFAULT_META_CACHE_TTL 60000
 #define DEFAULT_PORT 7777
 
 namespace {
@@ -81,6 +85,7 @@ public:
 std::vector<ScopedFd> wake_write_fds;
 
 constexpr int opt_insecure = 1000;
+constexpr int opt_meta_cache_ttl = 1001;
 
 void usage() {
     std::cout << "Rawstor OST backend " << PACKAGE_VERSION << std::endl
@@ -99,6 +104,11 @@ void usage() {
               << "  -w, --workers N       "
                  "Number of worker threads (default: "
               << DEFAULT_WORKERS << ")" << std::endl
+              << "  --meta-cache-ttl MS   "
+                 "How long member records of a file://, lvm:// or zfs:// "
+                 "store are kept in memory, in milliseconds; 0 reads the "
+                 "store every time (default: "
+              << DEFAULT_META_CACHE_TTL << ")" << std::endl
               << "  --insecure            "
                  "Run without TLS: plaintext, and no peer is authenticated"
               << std::endl
@@ -151,9 +161,31 @@ void reload_handler(int) {
 // makes Server::_wake_task()'s rawio_read() actually block waiting for a
 // second byte that isn't coming, or sact_handler()'s write() block at
 // all) so SIGINT/SIGTERM can ask it to stop.
+// The records of a store this process writes alone, kept in memory (see
+// MetaCache), or null where that cannot be: a store that is not served from
+// here (ost:// forwards to another server, whose records others change), or
+// a time to live of zero.
+std::shared_ptr<rawstor::MetaCache>
+make_meta_cache(const char* location, unsigned int ttl_ms) {
+    if (ttl_ms == 0) {
+        return nullptr;
+    }
+    std::vector<rawstd::URI> uris = rawstd::URI::uriv(location);
+    if (uris.size() != 1) {
+        return nullptr;
+    }
+    const std::string& scheme = uris.front().scheme();
+    if (scheme != "file" && scheme != "lvm" && scheme != "zfs") {
+        return nullptr;
+    }
+    return std::make_shared<rawstor::MetaCache>(
+        std::chrono::milliseconds(ttl_ms)
+    );
+}
+
 void ost(
     unsigned int queue_size, unsigned int workers, const std::string& addr,
-    unsigned int port, const char* location
+    unsigned int port, const char* location, unsigned int meta_cache_ttl
 ) {
     ScopedFd listen_fd(rawstor::ostserver::Server::bind_listen(addr, port));
     rawstd_info(
@@ -211,6 +243,12 @@ void ost(
     // One write barrier for all workers: the writers of a chunk member may
     // be connected to any of them.
     auto gate = std::make_shared<rawstor::ostserver::FreezeGate>();
+    // Likewise one cache of the store's records: every worker's Slots
+    // change them, and all must see each other's changes.
+    auto meta_cache = make_meta_cache(location, meta_cache_ttl);
+    if (meta_cache) {
+        rawstd_info("Member record cache: ttl=%u ms\n", meta_cache_ttl);
+    }
 
     std::vector<std::exception_ptr> errors(workers);
     std::vector<std::thread> threads;
@@ -222,11 +260,11 @@ void ost(
         // every one of them before this function returns -- Server never
         // closes it, see its own constructor doc comment.
         threads.emplace_back([&errors, i, queue_size, fd = listen_fd.get(),
-                              location, gate,
+                              location, gate, meta_cache,
                               wake_fd = wake_read_fds[i].get()]() {
             try {
                 rawstor::ostserver::Server s(
-                    queue_size, fd, location, wake_fd, gate
+                    queue_size, fd, location, wake_fd, gate, meta_cache
                 );
                 s.loop();
             } catch (...) {
@@ -282,6 +320,7 @@ int main(int argc, char** argv) {
         {"help", no_argument, nullptr, 'h'},
         {"queue-size", required_argument, nullptr, 'q'},
         {"insecure", no_argument, nullptr, opt_insecure},
+        {"meta-cache-ttl", required_argument, nullptr, opt_meta_cache_ttl},
         {"version", no_argument, nullptr, 'v'},
         {"workers", required_argument, nullptr, 'w'},
         {},
@@ -289,6 +328,7 @@ int main(int argc, char** argv) {
 
     const char* queue_size_arg = nullptr;
     const char* workers_arg = nullptr;
+    const char* meta_cache_ttl_arg = nullptr;
     const char* location_arg = nullptr;
     const char* bind_arg = nullptr;
     bool insecure = false;
@@ -321,6 +361,10 @@ int main(int argc, char** argv) {
 
         case opt_insecure:
             insecure = true;
+            break;
+
+        case opt_meta_cache_ttl:
+            meta_cache_ttl_arg = optarg;
             break;
 
         default:
@@ -358,6 +402,16 @@ int main(int argc, char** argv) {
         }
         if (workers == 0) {
             std::cerr << "workers must be at least 1" << std::endl;
+            return EX_USAGE;
+        }
+    }
+
+    unsigned int meta_cache_ttl = DEFAULT_META_CACHE_TTL;
+    if (meta_cache_ttl_arg != nullptr) {
+        std::istringstream iss(meta_cache_ttl_arg);
+        if (iss.peek() < '0' || iss.peek() > '9' || !(iss >> meta_cache_ttl) ||
+            !iss.eof()) {
+            std::cerr << "meta-cache-ttl must be unsigned integer" << std::endl;
             return EX_USAGE;
         }
     }
@@ -401,7 +455,7 @@ int main(int argc, char** argv) {
 
     int exit_code = EXIT_SUCCESS;
     try {
-        ost(queue_size, workers, name, port, location_arg);
+        ost(queue_size, workers, name, port, location_arg, meta_cache_ttl);
     } catch (const std::system_error& e) {
         std::cerr << e.what() << std::endl;
         exit_code = rawstd_exitcode_for_errno(e.code().value());

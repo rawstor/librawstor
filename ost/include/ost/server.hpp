@@ -16,6 +16,7 @@
 
 namespace rawstor {
 
+class MetaCache;
 class Slot;
 
 namespace ostserver {
@@ -29,6 +30,10 @@ private:
     // The write barrier of this process's chunk members; shared by every
     // worker's Server (see the constructor).
     std::shared_ptr<FreezeGate> _gate;
+
+    // The records of the store, shared by every worker's Server and given
+    // to every Slot they create, or null for none (see MetaCache).
+    std::shared_ptr<MetaCache> _meta_cache;
 
     unsigned int _live_clients = 0;
     unsigned int _departures = 0;
@@ -80,9 +85,14 @@ public:
     // least as long as this Server runs. `gate` is the write barrier the
     // FREEZE/THAW requests operate on: Servers that serve the same storage
     // from several threads must share one, a lone Server creates its own.
+    // `meta_cache` lets the Slots of this Server answer a record from
+    // memory: Servers that serve the same storage must share one, and only
+    // a process that is the sole writer of that storage may pass one --
+    // see MetaCache. Null reads the storage every time.
     Server(
         unsigned int queue_size, int listen_fd, const char* location,
-        int wake_fd = -1, std::shared_ptr<FreezeGate> gate = nullptr
+        int wake_fd = -1, std::shared_ptr<FreezeGate> gate = nullptr,
+        std::shared_ptr<MetaCache> meta_cache = nullptr
     );
     Server(const Server&) = delete;
     Server(Server&&) = delete;
@@ -101,6 +111,11 @@ public:
 
     inline const std::vector<rawstd::URI>& locations() const noexcept {
         return _locations;
+    }
+
+    // Every Slot this Server creates is created with it.
+    inline const std::shared_ptr<MetaCache>& meta_cache() const noexcept {
+        return _meta_cache;
     }
 
     // Drops `fd`'s Client from this Server (if it still has one) and, if

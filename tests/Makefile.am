@@ -37,6 +37,7 @@ test_all_SOURCES = main.cpp \
                    test_location_info.cpp \
                    test_tls.cpp \
                    test_member_state.cpp \
+                   test_meta_cache.cpp \
                    test_subprocess.cpp \
                    test_account.cpp \
                    test_session_replace.cpp \

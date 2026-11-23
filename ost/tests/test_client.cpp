@@ -1,4 +1,5 @@
 #include "client.hpp"
+#include "meta_cache.hpp"
 #include "queue.hpp"
 #include "tmp_dir.hpp"
 
@@ -955,6 +956,82 @@ TEST(OstClientTest, replacement_connection_takes_over_a_dropped_writer) {
     EXPECT_EQ(
         drop_first_writer(queue, server, dir.uri(), writer, writer, true),
         RAWSTOR_OBJECT_SYNC_STATE_DIRTY
+    );
+}
+
+namespace {
+
+// The state `client` reads from META of the chunk at offset 0 of `id`.
+RawstorSyncStateType read_meta_state(
+    rawstor::ostserver::tests::Client& client, RawIOQueue* queue,
+    const RawstdUUID& id
+) {
+    client.send_meta(id, 0);
+    EXPECT_TRUE(pump_until(queue, [&] {
+        return client.bytes_available() >=
+               sizeof(RawstorFrameResponse) + sizeof(RawstorFrameMetaPayload);
+    }));
+    RawstorFrameMetaPayload meta;
+    RawstorFrameResponse response = client.recv_response(&meta, sizeof(meta));
+    EXPECT_EQ(response.body.res, static_cast<int32_t>(sizeof(meta)));
+    return meta.state;
+}
+
+} // namespace
+
+// Several writers of one object are connected to one OST, which keeps the
+// records of its store in memory: what one connection writes, another
+// reads at once, not after the record's time to live.
+TEST(OstClientTest, a_cached_meta_shows_what_another_connection_wrote) {
+    rawstor::ostserver::tests::TmpDir dir;
+    int listen_fd = rawstor::ostserver::Server::bind_listen("127.0.0.1", 0);
+    rawstor::ostserver::Server server(
+        256, listen_fd, dir.uri().c_str(), -1, nullptr,
+        std::make_shared<rawstor::MetaCache>(std::chrono::hours(1))
+    );
+    rawstor::ostserver::tests::Queue queue;
+
+    RawstdUUID id;
+    ASSERT_EQ(rawstd_uuid7_init(&id), 0);
+
+    auto [raw_writer, writer_fd] = connect_client(server, queue);
+    ClientCleanup writer_cleanup(std::move(raw_writer), queue);
+    rawstor::ostserver::tests::Client writer(writer_fd);
+    auto [raw_reader, reader_fd] = connect_client(server, queue);
+    ClientCleanup reader_cleanup(std::move(raw_reader), queue);
+    rawstor::ostserver::tests::Client reader(reader_fd);
+
+    writer.send_allocate(id, 4096, 1);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return writer.bytes_available() >= sizeof(RawstorFrameResponse);
+    }));
+    ASSERT_EQ(writer.recv_response().body.res, 0);
+    writer.send_set_object(id);
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return writer.bytes_available() >= sizeof(RawstorFrameResponse);
+    }));
+    ASSERT_EQ(writer.recv_response().body.res, 0);
+
+    // The reader's record is now in the cache.
+    EXPECT_EQ(
+        read_meta_state(reader, queue, id), RAWSTOR_OBJECT_SYNC_STATE_CLEAN
+    );
+    EXPECT_EQ(
+        read_meta_state(reader, queue, id), RAWSTOR_OBJECT_SYNC_STATE_CLEAN
+    );
+
+    write_and_wait(writer, queue);
+    EXPECT_EQ(
+        read_meta_state(reader, queue, id), RAWSTOR_OBJECT_SYNC_STATE_DIRTY
+    );
+
+    writer.send_leave();
+    ASSERT_TRUE(pump_until(queue, [&] {
+        return writer.bytes_available() >= sizeof(RawstorFrameResponse);
+    }));
+    ASSERT_EQ(writer.recv_response().body.res, 0);
+    EXPECT_EQ(
+        read_meta_state(reader, queue, id), RAWSTOR_OBJECT_SYNC_STATE_CLEAN
     );
 }
 

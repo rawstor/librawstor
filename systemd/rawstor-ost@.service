@@ -37,9 +37,10 @@ WorkingDirectory=/var/lib/rawstor/ost/%i
 # Backing store this OST serves - a Location (see "Core concepts" in
 # README.md), e.g. file:///var/lib/rawstor/ost/<uuid>.
 Environment=LOCATION=file:///var/lib/rawstor/ost/%i
-# rawstor-ost's own --queue-size/--workers (see its --help).
+# rawstor-ost's own --queue-size/--workers/--meta-cache-ttl (see its --help).
 Environment=QUEUE_SIZE=4096
 Environment=WORKERS=12
+Environment=META_CACHE_TTL=60000
 # librawstor client/server tuning knobs (see README.md's "Environment
 # Variables" section for what each one does); set them in
 # /etc/rawstor/ost/<uuid>.conf below to override a default.
@@ -64,7 +65,7 @@ Environment=WORKERS=12
 # Set in the configuration file below, e.g. EXTRA_ARGS="--insecure".
 Environment=EXTRA_ARGS=
 EnvironmentFile=/etc/rawstor/ost/%i.conf
-ExecStart=/usr/bin/rawstor-ost $EXTRA_ARGS --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --workers=${WORKERS} ${LOCATION}
+ExecStart=/usr/bin/rawstor-ost $EXTRA_ARGS --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --workers=${WORKERS} --meta-cache-ttl=${META_CACHE_TTL} ${LOCATION}
 # Reads the certificate, key and CAs again for the connections made after it
 # (SIGHUP); the ones open keep what they started with. A file that cannot be
 # read is logged, and the old one stays.
