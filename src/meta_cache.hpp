@@ -49,15 +49,11 @@ private:
     struct Key {
         std::string bytes;
 
-        bool operator==(const Key& other) const noexcept {
-            return bytes == other.bytes;
-        }
+        bool operator==(const Key& other) const noexcept;
     };
 
     struct KeyHash {
-        size_t operator()(const Key& key) const noexcept {
-            return std::hash<std::string>()(key.bytes);
-        }
+        size_t operator()(const Key& key) const noexcept;
     };
 
     struct Entry {
@@ -66,24 +62,9 @@ private:
         std::list<Key>::iterator lru;
     };
 
-    static Key _key(const RawstdUUID& id, uint64_t offset) {
-        Key key;
-        key.bytes.assign(
-            reinterpret_cast<const char*>(id.bytes), sizeof(id.bytes)
-        );
-        key.bytes.append(
-            reinterpret_cast<const char*>(&offset), sizeof(offset)
-        );
-        return key;
-    }
+    static Key _key(const RawstdUUID& id, uint64_t offset);
 
-    void _erase_locked(const Key& key) {
-        auto it = _entries.find(key);
-        if (it != _entries.end()) {
-            _lru.erase(it->second.lru);
-            _entries.erase(it);
-        }
-    }
+    void _erase_locked(const Key& key);
 
     std::chrono::milliseconds _ttl;
     size_t _capacity;
@@ -105,9 +86,7 @@ private:
 public:
     explicit MetaCache(
         std::chrono::milliseconds ttl, size_t capacity = 16 * 1024
-    ) :
-        _ttl(ttl),
-        _capacity(capacity) {}
+    );
 
     MetaCache(const MetaCache&) = delete;
     MetaCache& operator=(const MetaCache&) = delete;
@@ -117,48 +96,12 @@ public:
      * fill() that follows the read of the backend.
      */
     std::optional<Records>
-    find(const RawstdUUID& id, uint64_t offset, Ticket& ticket) {
-        Key key = _key(id, offset);
-        std::lock_guard<std::mutex> lock(_mutex);
-        ticket.epoch = _epoch;
-        ticket.fillable = _writing.find(key) == _writing.end();
-        if (!ticket.fillable) {
-            return std::nullopt;
-        }
-        auto it = _entries.find(key);
-        if (it == _entries.end()) {
-            return std::nullopt;
-        }
-        if (std::chrono::steady_clock::now() >= it->second.expires) {
-            _erase_locked(key);
-            return std::nullopt;
-        }
-        _lru.splice(_lru.begin(), _lru, it->second.lru);
-        return it->second.records;
-    }
+    find(const RawstdUUID& id, uint64_t offset, Ticket& ticket);
 
     void fill(
         const RawstdUUID& id, uint64_t offset, const Ticket& ticket,
         const Records& records
-    ) {
-        Key key = _key(id, offset);
-        std::lock_guard<std::mutex> lock(_mutex);
-        if (!ticket.fillable || ticket.epoch != _epoch) {
-            return;
-        }
-        _erase_locked(key);
-        while (!_entries.empty() && _entries.size() >= _capacity) {
-            _entries.erase(_lru.back());
-            _lru.pop_back();
-        }
-        _lru.push_front(key);
-        _entries.emplace(
-            std::move(key),
-            Entry{
-                records, std::chrono::steady_clock::now() + _ttl, _lru.begin()
-            }
-        );
-    }
+    );
 
     /**
      * A change of the record of (id, offset) in the backend. Kept around
@@ -172,40 +115,16 @@ public:
         MetaCache* _cache;
         Key _key;
 
-        void _begin() {
-            std::lock_guard<std::mutex> lock(_cache->_mutex);
-            ++_cache->_epoch;
-            ++_cache->_writing[_key];
-            _cache->_erase_locked(_key);
-        }
-
-        void _end() {
-            std::lock_guard<std::mutex> lock(_cache->_mutex);
-            ++_cache->_epoch;
-            auto it = _cache->_writing.find(_key);
-            if (--it->second == 0) {
-                _cache->_writing.erase(it);
-            }
-            _cache->_erase_locked(_key);
-        }
+        void _begin();
+        void _end();
 
     public:
-        Write(MetaCache* cache, const RawstdUUID& id, uint64_t offset) :
-            _cache(cache) {
-            if (_cache != nullptr) {
-                _key = MetaCache::_key(id, offset);
-                _begin();
-            }
-        }
+        Write(MetaCache* cache, const RawstdUUID& id, uint64_t offset);
 
         Write(const Write&) = delete;
         Write& operator=(const Write&) = delete;
 
-        ~Write() {
-            if (_cache != nullptr) {
-                _end();
-            }
-        }
+        ~Write();
     };
 };
 
