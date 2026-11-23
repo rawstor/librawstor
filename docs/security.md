@@ -1,4 +1,4 @@
-# Rawstor security design (DRAFT)
+# RawStor security design (DRAFT)
 
 Authentication, authorization, transport and at-rest encryption, and the
 groundwork for multi-account. The deployment target is a **public cloud
@@ -114,7 +114,7 @@ peer authentication in one mechanism and avoids a home-made handshake.
 The identity of a peer is a [SPIFFE ID](https://github.com/spiffe/spiffe/blob/main/standards/SPIFFE-ID.md)
 in the certificate, as defined by the
 [X509-SVID](https://github.com/spiffe/spiffe/blob/master/standards/X509-SVID.md)
-standard: exactly one URI SAN, scheme `spiffe`. Rawstor uses the standard
+standard: exactly one URI SAN, scheme `spiffe`. RawStor uses the standard
 format and invents none:
 
 ```text
@@ -167,7 +167,7 @@ OST.
 
 ### Issuing certificates
 
-Rawstor consumes certificates from files and does not depend on how they are
+RawStor consumes certificates from files and does not depend on how they are
 produced. Tools that fit (versions as of November 2026, from the projects'
 published pages, to be re-checked when the choice is made):
 
@@ -186,7 +186,7 @@ published pages, to be re-checked when the choice is made):
   API and writes them to disk; on renewal it sends a configurable signal
   (default `SIGUSR1`) to a managed process or to the PID in a file. It does
   not forward signals or exit codes, so the service runs under systemd and
-  is signalled by pid file. Rawstor therefore needs to reload on that signal
+  is signalled by pid file. RawStor therefore needs to reload on that signal
   as well as on `SIGHUP`, and needs no SPIFFE client library.
 - **Vault PKI**, **step-ca**, **cert-manager**: issue a certificate with a
   URI SAN on request or by ACME, without attestation. Adequate when the
@@ -215,7 +215,7 @@ published pages, to be re-checked when the choice is made):
 
 ## External certificate source
 
-Rawstor never talks to a CA. It reads a certificate, a key and a CA bundle
+RawStor never talks to a CA. It reads a certificate, a key and a CA bundle
 from files and reloads them on a signal; everything that decides *who gets
 which certificate* lives outside it. This section shows what an operator
 sets up with an external source and what changes for security.
@@ -606,7 +606,7 @@ Two layers, because they answer different threats.
 
 **Server side (stage 5)** protects against stolen or retired disks. It needs
 no protocol change: ZFS native encryption or dm-crypt under the OST backend,
-with the key held by the host. Rawstor documents the supported setups; the OST
+with the key held by the host. RawStor documents the supported setups; the OST
 gains no key logic.
 
 **Client side (stage 6)** protects against the OST/MDS operator. Data is

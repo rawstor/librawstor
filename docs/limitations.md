@@ -1,6 +1,6 @@
 # Known limitations
 
-What Rawstor does not do yet, and the risks it accepts for now. Each item
+What RawStor does not do yet, and the risks it accepts for now. Each item
 links to the document that explains it. A feature marked ❌ in a document's
 status table is not implemented; this page collects the ones that matter when
 deciding how to deploy.
