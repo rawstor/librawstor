@@ -2115,8 +2115,8 @@ rawstd::Task<bool> Slot::_sync_accept(
                          ? RAWSTOR_OBJECT_SYNC_STATE_CLEAN
                          : RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
         co_await transition_state(
-            *be, _meta_cache.get(), id, offset,
-            RAWSTOR_OBJECT_SYNC_STATE_LOST, meta.state
+            *be, _meta_cache.get(), id, offset, RAWSTOR_OBJECT_SYNC_STATE_LOST,
+            meta.state
         );
         // Recheck the persisted state before the next first write.
         member->dirty.store(false, std::memory_order_release);

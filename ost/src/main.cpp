@@ -409,10 +409,9 @@ int main(int argc, char** argv) {
     unsigned int meta_cache_ttl = DEFAULT_META_CACHE_TTL;
     if (meta_cache_ttl_arg != nullptr) {
         std::istringstream iss(meta_cache_ttl_arg);
-        if (iss.peek() < '0' || iss.peek() > '9' ||
-            !(iss >> meta_cache_ttl) || !iss.eof()) {
-            std::cerr << "meta-cache-ttl must be unsigned integer"
-                      << std::endl;
+        if (iss.peek() < '0' || iss.peek() > '9' || !(iss >> meta_cache_ttl) ||
+            !iss.eof()) {
+            std::cerr << "meta-cache-ttl must be unsigned integer" << std::endl;
             return EX_USAGE;
         }
     }

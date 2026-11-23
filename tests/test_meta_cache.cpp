@@ -103,7 +103,9 @@ TEST(MetaCacheTest, a_write_of_one_chunk_leaves_the_others_alone) {
     cache.find(id, 4096, ticket);
     cache.fill(id, 4096, ticket, {record(RAWSTOR_OBJECT_SYNC_STATE_CLEAN)});
 
-    { rawstor::MetaCache::Write write(&cache, id, 0); }
+    {
+        rawstor::MetaCache::Write write(&cache, id, 0);
+    }
     EXPECT_FALSE(cache.find(id, 0, ticket));
     EXPECT_TRUE(cache.find(id, 4096, ticket));
 }
@@ -120,7 +122,9 @@ TEST(MetaCacheTest, a_read_that_overlaps_a_write_is_not_stored) {
 
     rawstor::MetaCache::Ticket before;
     cache.find(id, 0, before);
-    { rawstor::MetaCache::Write write(&cache, id, 0); }
+    {
+        rawstor::MetaCache::Write write(&cache, id, 0);
+    }
     cache.fill(id, 0, before, {record(RAWSTOR_OBJECT_SYNC_STATE_CLEAN)});
     rawstor::MetaCache::Ticket ticket;
     EXPECT_FALSE(cache.find(id, 0, ticket));
@@ -249,9 +253,8 @@ struct Store {
     }
 };
 
-RawstorObjectSyncStateValue state_of(
-    rawio::Queue& queue, rawstor::Slot& slot, const RawstdUUID& id
-) {
+RawstorObjectSyncStateValue
+state_of(rawio::Queue& queue, rawstor::Slot& slot, const RawstdUUID& id) {
     return run(queue, slot.meta(id, 0)).front().state;
 }
 

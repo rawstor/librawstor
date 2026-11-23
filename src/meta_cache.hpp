@@ -154,8 +154,9 @@ public:
         _lru.push_front(key);
         _entries.emplace(
             std::move(key),
-            Entry{records, std::chrono::steady_clock::now() + _ttl,
-                  _lru.begin()}
+            Entry{
+                records, std::chrono::steady_clock::now() + _ttl, _lru.begin()
+            }
         );
     }
 
