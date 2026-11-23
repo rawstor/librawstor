@@ -13,8 +13,8 @@ void rawstor_cli_progress(int percent);
 void rawstor_cli_progress_end(int result);
 
 /* Writes an object, or a version of it (a target that names one), to the
- * file `path`: rawstor_target_export(). */
-int rawstor_cli_export(const char* target, const char* path);
+ * file `path`: rawstor_target_export(), `force` opening it below quorum. */
+int rawstor_cli_export(const char* target, const char* path, int force);
 
 #ifdef __cplusplus
 }

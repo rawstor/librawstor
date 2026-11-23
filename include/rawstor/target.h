@@ -1095,6 +1095,11 @@ int rawstor_target_resize(
  * holds at that moment -- including a half-finished state if the writer is
  * mid-flight -- and quiescing it is the caller's business.
  *
+ * The open needs the quorum of a writable one. @c RAWSTOR_FORCE lifts that
+ * (see rawstor_target_open()): the export reads from the reachable members
+ * as they are, which is what a copy below quorum is for when nothing better
+ * is left. The result may then miss writes an unreachable member took.
+ *
  * Progress: unlike the other calls here, @p cb is called many times. @p result
  * is the completion percentage, an integer from 0 to 100. Each percentage is
  * reported at most once, in increasing order, so a call is always for a larger
@@ -1107,6 +1112,8 @@ int rawstor_target_resize(
  * @param queue   Queue used to drive the asynchronous export.
  * @param target  Object (or bound version) to export.
  * @param path    Destination file; copied before this call returns.
+ * @param flags   0, or @c RAWSTOR_FORCE; the open is always read-only.
+ *                Anything else is @c -EINVAL.
  * @param cb      Called repeatedly with the progress, see "Progress" above;
  *                @p result is 0..99 while working, then 100 on success or
  *                a negative errno (@c -ENOENT, @c -EIO, @c -EACCES, ...) on
@@ -1120,7 +1127,7 @@ int rawstor_target_resize(
  * @see rawstor_target_create_from_file
  */
 int rawstor_target_export(
-    RawIOQueue* queue, const char* target, const char* path,
+    RawIOQueue* queue, const char* target, const char* path, int flags,
     int (*cb)(ssize_t result, void* data), void* data
 ) RAWSTOR_NOEXCEPT;
 

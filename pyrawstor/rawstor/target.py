@@ -104,7 +104,8 @@ class Target:
 
     def export(
         self, path: str | os.PathLike,
-        progress: Callable[[int], None] | None = None
+        progress: Callable[[int], None] | None = None, *,
+        force: bool = False
     ) -> None:
         """Write this object -- or, if this target names a bound version,
         that version -- to the file `path`, created or truncated. A regular
@@ -114,12 +115,15 @@ class Target:
         the caller's business to avoid -- export a version instead for a
         consistent point. See rawstor_target_export(), <rawstor/target.h>.
 
+        `force` reads from the reachable mirror members even below quorum,
+        as they are: the result may miss writes an unreachable member took.
+
         `progress`, if given, is called with the completion percentage
         (an int, 0 to 100; 100 means done), each value at most once, in increasing order.
         The call returns after the last one; an exception raised by
         `progress` stops further calls to it and is raised once the
         operation has finished (it cannot be cancelled)."""
-        librawstor.object_export(self._uri, os.fspath(path), progress)
+        librawstor.object_export(self._uri, os.fspath(path), progress, force)
 
     def create_from_file(
         self, path: str | os.PathLike, *, width: int, size: int = 0,

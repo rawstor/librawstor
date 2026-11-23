@@ -69,12 +69,15 @@ const char* const rawstor_tag_prefix = "rawstor.meta=";
 const char* const attempt_tag_prefix = "rawstor.attempt=";
 
 // First character of a version snapshot LV's name:
-// "s<short version_id>-<offset>". A live chunk's name starts with a UUID hex
+// "s<version_id>-<offset>". A live chunk's name starts with a UUID hex
 // digit, never 's', so list_chunks() already skips a snapshot LV when listing
 // live chunks. The object is not part of the name -- it is the snapshot's
 // origin -- which keeps the device-mapper name of the snapshot's "-cow"
 // device (every '-' doubled, 127 characters at most) within its limit.
 const char version_prefix = 's';
+
+// Length of a UUID string without its terminator.
+constexpr size_t uuid_string_len = sizeof(RawstdUUIDString) - 1;
 
 // Share of a VG that create() leaves free for version snapshots: a classic
 // snapshot preallocates a copy-on-write area as large as its origin.
@@ -209,8 +212,8 @@ std::string Backend::_lv_name(
     if (rawstd_uuid_is_nil(&version_id)) {
         return std::string(uuid_str) + "-" + offset_str;
     }
-    RawstdUUIDShortString version_str;
-    rawstd_uuid_to_short_string(&version_id, &version_str);
+    RawstdUUIDString version_str;
+    rawstd_uuid_to_string(&version_id, &version_str);
     return std::string(1, version_prefix) + version_str + "-" + offset_str;
 }
 
@@ -310,7 +313,7 @@ rawstd::Task<void> Backend::list_chunks(
     // Filtered by a non-nil `id` (Backend::list_chunks()'s own doc
     // comment): every other uuid's own LVs are skipped while grouping,
     // and `token` plays no part. A non-nil `version_id` lists that
-    // version's own snapshot LVs ("s<short version_id>-<offset>") instead of
+    // version's own snapshot LVs ("s<version_id>-<offset>") instead of
     // the live LVs.
     bool filtered = !rawstd_uuid_is_nil(&id);
     bool version = !rawstd_uuid_is_nil(&version_id);
@@ -319,8 +322,8 @@ rawstd::Task<void> Backend::list_chunks(
     }
     std::string version_name_prefix;
     if (version) {
-        RawstdUUIDShortString version_str;
-        rawstd_uuid_to_short_string(&version_id, &version_str);
+        RawstdUUIDString version_str;
+        rawstd_uuid_to_string(&version_id, &version_str);
         version_name_prefix =
             std::string(1, version_prefix) + version_str + "-";
     }
@@ -926,7 +929,7 @@ rawstd::Task<void> Backend::_write_meta(
 }
 
 // Every snapshot LV of this chunk's own LV that this backend itself took
-// ("s<short version_id>-<offset>", _lv_name()'s naming); any other snapshot
+// ("s<version_id>-<offset>", _lv_name()'s naming); any other snapshot
 // of it (e.g. one taken by hand) is skipped.
 rawstd::Task<std::vector<RawstdUUID>>
 Backend::list_versions(const RawstdUUID& id, uint64_t offset) {
@@ -965,16 +968,14 @@ Backend::list_versions(const RawstdUUID& id, uint64_t offset) {
                 continue;
             }
             std::string name = lv.at("lv_name").get<std::string>();
-            if (name.size() !=
-                    1 + RAWSTD_UUID_SHORT_STRING_LEN + suffix.size() ||
+            if (name.size() != 1 + uuid_string_len + suffix.size() ||
                 name.compare(0, prefix.size(), prefix) != 0 ||
                 !name.ends_with(suffix)) {
                 continue;
             }
             RawstdUUID version_id;
-            if (rawstd_uuid_from_short_string(
-                    &version_id,
-                    name.substr(1, RAWSTD_UUID_SHORT_STRING_LEN).c_str()
+            if (rawstd_uuid_from_string(
+                    &version_id, name.substr(1, uuid_string_len).c_str()
                 ) < 0) {
                 continue;
             }

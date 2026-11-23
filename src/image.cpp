@@ -252,11 +252,11 @@ uint64_t image_size(
 // Every parameter is taken by value: the task outlives the caller's frame.
 rawstd::Task<void> export_image(
     rawio::Queue* queue, std::shared_ptr<Progress> progress,
-    rawstor::Target source, std::string path
+    rawstor::Target source, std::string path, int flags
 ) {
     RawstorObjectSpec sp = co_await source.spec(*queue);
     std::unique_ptr<rawstor::Object> object =
-        co_await source.open(*queue, RAWSTOR_READONLY);
+        co_await source.open(*queue, RAWSTOR_READONLY | flags);
 
     std::exception_ptr error;
     int fd = -1;
@@ -446,17 +446,17 @@ int submit(F&& make_task, int (*cb)(ssize_t, void*), void* data) {
 } // namespace
 
 int rawstor_target_export(
-    RawIOQueue* queue, const char* target, const char* path,
+    RawIOQueue* queue, const char* target, const char* path, int flags,
     int (*cb)(ssize_t result, void* data), void* data
 ) noexcept {
     return submit(
         [&](std::shared_ptr<Progress> progress) {
-            if (path == nullptr) {
+            if (path == nullptr || (flags & ~RAWSTOR_FORCE) != 0) {
                 RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
             }
             return export_image(
                 static_cast<rawio::Queue*>(queue), std::move(progress),
-                rawstor::Target(rawstd::URI::uriv(target)), path
+                rawstor::Target(rawstd::URI::uriv(target)), path, flags
             );
         },
         cb, data
