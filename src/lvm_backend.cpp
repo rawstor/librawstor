@@ -1082,31 +1082,22 @@ rawstd::Task<void> Backend::create_version(
     // not see it, while it still holds its space and makes every retry fail
     // with "already exists". The same failure is what a request that lost a
     // race for this name gets, and an LV of that name may be the winner's,
-    // one still being created, or not ours at all: only an LV that carries
-    // this attempt's own tag is removed. No co_await inside a catch block,
-    // hence the rollback here.
-    bool leftover = false;
+    // one still being created, or not ours at all. lvremove selects by this
+    // attempt's own tag, so only the LV this attempt created is removed, with
+    // no name looked up and then reused in between; it succeeds without
+    // removing anything when lvcreate failed before creating the LV. No
+    // co_await inside a catch block, hence the rollback here.
+    std::vector<std::string> remove_argv = {"lvremove", "--config",
+                                            lvm_config, "-f",
+                                            _vg_name,   "@" + attempt_tag};
     try {
-        std::string tags = co_await _lv_tags(path);
-        leftover = find_tag(tags, attempt_tag_prefix) == attempt_str;
-    } catch (const std::exception&) {
-        leftover = false;
-    }
-    if (leftover) {
+        co_await rawstor::run_command(_queue, std::move(remove_argv));
+    } catch (const std::system_error& e) {
         rawstd_warning(
-            "lvm: removing the half-created snapshot %s\n", path.c_str()
+            "lvm: failed to remove the snapshot %s left by a failed attempt: "
+            "%s\n",
+            path.c_str(), e.what()
         );
-        std::vector<std::string> remove_argv = {
-            "lvremove", "--config", lvm_config, "-f", path
-        };
-        try {
-            co_await rawstor::run_command(_queue, std::move(remove_argv));
-        } catch (const std::system_error& e) {
-            rawstd_warning(
-                "lvm: failed to remove the half-created snapshot %s: %s\n",
-                path.c_str(), e.what()
-            );
-        }
     }
     std::rethrow_exception(eptr);
 }
