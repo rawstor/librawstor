@@ -32,7 +32,7 @@ namespace lvm {
  * or a target URI's own path segment. Device path: /dev/<vg>/<uuid>-<offset>.
  *
  * A non-nil `version_id` names that version's own classic snapshot LV:
- * <uuid>-<offset>-s<version_id>, read-only, carrying the live LV's tag as of
+ * s<version_id>-<offset>, read-only, carrying the live LV's tag as of
  * the version. Not thin: the snapshot's COW area is preallocated at the
  * origin's full size.
  *
@@ -44,7 +44,7 @@ private:
     std::string _vg_name;
 
     // A non-nil `version_id` names that version's own snapshot LV:
-    // "<uuid>-<offset>-s<version_id>" -- the "-s<id>" suffix is the version
+    // "s<version_id>-<offset>" -- the "s<id>" prefix is the version
     // key itself (docs/mds.md, "Versions"), nothing stored twice.
     std::string _lv_name(
         const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id = {}
@@ -75,6 +75,13 @@ private:
     // Shared by meta()/_write_meta(): the current comma-separated tag
     // list on the LV at `path`, as reported by `lvs -o lv_tags`.
     rawstd::Task<std::string> _lv_tags(const std::string& path);
+
+    // A version's snapshot LV is named by the version and the offset only,
+    // so the object it belongs to is the LV's origin: throws ENOENT unless
+    // the snapshot exists and is a snapshot of this object's chunk.
+    rawstd::Task<void> _check_version_origin(
+        const RawstdUUID& id, uint64_t offset, const RawstdUUID& version_id
+    );
 
 public:
     Backend(Private p, rawio::Queue& queue, const rawstd::URI& location);

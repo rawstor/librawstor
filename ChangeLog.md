@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] - Unreleased
+
+### Changed
+
+- `lvm://`: creating a chunk leaves 20% of the volume group free for version snapshots and fails with `ENOSPC` otherwise.
+
+### Fixed
+
+- `lvm://`: a version of a chunk failed with "Input/output error" because the snapshot's device-mapper name exceeded 127 characters; snapshot LVs are now named `s<version_id>-<offset>`. Snapshots created by earlier builds are no longer found.
+- `lvm://`: a version whose `lvcreate` failed halfway left a snapshot LV behind that made every retry fail with "already exists"; it is now removed.
+
 ## [0.3.2] - 2026-11-22
 
 ### Fixed
