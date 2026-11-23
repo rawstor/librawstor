@@ -29,7 +29,7 @@ document's own numbering (see [Implementation stages](#implementation-stages)).
 | CLI `rawstor account quota`, C API, pyrawstor | 2 | ❌ | [CLI](#cli) |
 | Versions charged and counted | 3 | ❌ | [Versions](#versions) |
 | Transfer into an account checks its quota; usage moves with the object | 3 | ❌ | [Transfer](#transfer) |
-| `--reconstruct` recomputes usage; limits survive it | 4 | ❌ | [Reconstruct](#reconstruct) |
+| `--reconstruct` recomputes usage and closes the account until its limits are restored | 4 | ❌ | [Reconstruct](#reconstruct) |
 | Mirror count change and migration charge the owner | — | ❌ | depends on [Migration](migration.md#permissions-and-capacity) |
 | OST reports per-account usage of the members it holds (no limits) | 5 | ❌ | [Direct OST allocation](#direct-ost-allocation) |
 | MDS-issued allocation grants, charged to the quota and verified by the OST | 6 | ❌ | [Direct OST allocation](#direct-ost-allocation) |
@@ -155,10 +155,11 @@ copy-on-write area the size of the whole origin ([MDS design](mds.md#versions-st
 The first implementation charges every version the **worst case**,
 `logical_size × copies` of the object when it is committed, and counts it
 in `versions`. It is backend-independent and never under-charges, at the price
-of over-charging on ZFS. The two limits can be used apart: a provider that
-wants "snapshots are free in bytes, at most 5 per account" sets `versions` and
-leaves `bytes` to the objects; this is the knob provided rather than a
-per-backend estimate. Whether to let a ZFS-only deployment charge less is an
+of over-charging on ZFS. Versions therefore share the `bytes`
+limit with the objects, and there is no way to make snapshots free in bytes
+while limiting objects; `versions` is the separate control, it caps how many
+an account keeps ("at most 5 per account"). A separate byte limit for versions
+is not provided. Whether to let a ZFS-only deployment charge less is an
 [open question](#open-questions).
 
 ## Transfer
@@ -189,10 +190,20 @@ OST answers `-ENOSYS`:
 | `ACCOUNT_SET_QUOTA` | `admin` | sets or clears the three limits of an account; `-ENOENT` for an unknown one, `-EINVAL` for the nil account |
 | `ACCOUNT_INFO` | `admin` for any account, an account client for its own | returns the limits and the usage of one account |
 
-`ACCOUNT_SET_QUOTA` carries all three limits at once, each either a value or
-"unlimited", and replaces the previous ones; it is idempotent and an
-`idempotency_key` is not needed. An unlimited limit is a flag, not a magic
-number, so that `UINT64_MAX` is an ordinary value.
+`ACCOUNT_SET_QUOTA` carries, for each of the three limits, one of three
+actions: **keep** it, **set** it to a value, or make it **unlimited**. The MDS
+applies them to the account's row in one transaction, so two administrators
+changing different limits at once both succeed and neither overwrites the
+other; a client never reads a row and writes it back. Setting the same limit
+twice is the last writer's, which is the intent of setting. The command is
+idempotent, so no `idempotency_key` is needed. Unlimited is an action, not a
+magic number.
+
+A limit is a value of `0` to `INT64_MAX` (2^63 − 1 bytes or items), the range
+of the store's signed 64-bit integers; a larger one is refused with `-EINVAL`.
+That is eight exbibytes, past any real provisioning, and "unlimited" covers
+what is meant by more. Usage counters are in the same range and cannot reach
+it before the limit does.
 
 `LIST_ACCOUNTS` rows grow the limits and the usage, so a provider's console
 lists every account with its figures in one paged call, and the answer to
@@ -213,7 +224,8 @@ other.
 ## MDS side
 
 The `accounts` table grows six columns: three nullable limits and three usage
-counters, all 64-bit integers:
+counters, all signed 64-bit integers (`0` to `INT64_MAX`, see
+[Wire protocol](#wire-protocol)):
 
 ```text
 accounts(id, created_at,
@@ -287,11 +299,14 @@ require B to be unable to obstruct A are not met by anything in this document.
 from the objects it restores (the chunk sizes and copy counts it finds), and
 the counters match the map by construction. The **limits** are
 administration, not a property of a chunk; no OST holds them. A reconstructed
-account therefore comes back **unlimited**, the same way it comes back with no
-name. The administrator who needs the limits restores them with `account quota
-set` afterwards; the control plane that sets them keeps its own record, as it
-already does for account names. A database that is merely restored from a
-backup keeps them.
+account therefore comes back **closed**, with every limit `0`, rather than
+unlimited: until the administrator restores its limits with `account quota set`
+(or `--bytes - --objects - --versions -` for an account that never had any), it
+can read, write and remove what it has but cannot provision anything new, so
+the period between the reconstruction and the restoration cannot be used to
+exceed the former quota. The control plane that sets the limits keeps its own
+record, as it already does for account names. A database that is merely
+restored from a backup keeps its limits and is not closed.
 
 ## CLI
 
@@ -304,9 +319,9 @@ rawstor account list       mds://10.0.0.2:7776                         # + quota
 rawstor account quota show mds://<uuid>@10.0.0.2:7776                 # an account client: its own
 ```
 
-`set` changes only the limits it names and leaves the rest as they are (the
-client reads the account, merges, and writes the three, retrying on a
-concurrent change). Sizes use the suffixes `object create --size` already
+`set` changes only the limits it names and leaves the rest as they are; the
+MDS applies the named ones atomically (see [Wire protocol](#wire-protocol)),
+so concurrent `set`s of different limits do not interfere. Sizes use the suffixes `object create --size` already
 takes. `show` prints each limit, the usage and what remains. `-` means
 unlimited, `0` means none.
 
@@ -357,8 +372,10 @@ Each stage is tested at the layer it adds, through existing interfaces:
   overflow and leaving both accounts as they were, accepted when it fits and
   moving the whole charge, versions included; a transfer replayed after a lost
   reply does not move the charge twice;
+- stage 2 also: two concurrent `ACCOUNT_SET_QUOTA` naming different limits both
+  take effect; a limit above `INT64_MAX` is `-EINVAL`;
 - stage 4: `--reconstruct` yields counters equal to the map and accounts
-  without limits; a restored database keeps both; the start-up consistency
+  closed (limits `0`) until restored; a restored database keeps both; the start-up consistency
   check detects a hand-corrupted counter.
 
 - stage 5: an OST reports per-account counters equal to its member records,
