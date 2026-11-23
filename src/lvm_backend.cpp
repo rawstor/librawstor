@@ -63,6 +63,11 @@ const char* const lvm_config =
 // "rawstor.meta=version=1:state=0:epoch=0:...".
 const char* const rawstor_tag_prefix = "rawstor.meta=";
 
+// Prefix of the LVM tag create_version() puts on its snapshot LV, with an
+// id unique to the attempt: the rollback of a failed attempt removes an LV
+// only if it carries the attempt's own id.
+const char* const attempt_tag_prefix = "rawstor.attempt=";
+
 // First character of a version snapshot LV's name:
 // "s<short version_id>-<offset>". A live chunk's name starts with a UUID hex
 // digit, never 's', so list_chunks() already skips a snapshot LV when listing
@@ -1025,6 +1030,17 @@ rawstd::Task<void> Backend::create_version(
 
     rawstd_info("lvm: creating snapshot %s\n", path.c_str());
 
+    // Unique per attempt and set by the same lvcreate, so the rollback below
+    // can tell the LV this attempt created from any other LV of that name.
+    RawstdUUID attempt_id;
+    if (rawstd_uuid7_init(&attempt_id) != 0) {
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    RawstdUUIDString attempt_str;
+    rawstd_uuid_to_string(&attempt_id, &attempt_str);
+    const std::string attempt_tag =
+        std::string(attempt_tag_prefix) + std::string(attempt_str);
+
     // A classic (non-thin) snapshot has a preallocated copy-on-write area
     // that is invalidated, together with the version, once it fills up.
     // 100%ORIGIN sizes it to hold every block of the origin being
@@ -1046,6 +1062,8 @@ rawstd::Task<void> Backend::create_version(
         name,
         "--addtag",
         std::string(rawstor_tag_prefix) + tag,
+        "--addtag",
+        attempt_tag,
         origin_path
     };
     std::exception_ptr eptr;
@@ -1063,26 +1081,14 @@ rawstd::Task<void> Backend::create_version(
     // inactive, so it has no device node and the existence check above does
     // not see it, while it still holds its space and makes every retry fail
     // with "already exists". The same failure is what a request that lost a
-    // race for this name gets, and the LV then belongs to the winner: only an
-    // LV that is not a snapshot (lv_attr does not start with 's') is a
-    // leftover. No co_await inside a catch block, hence the rollback here.
-    std::vector<std::string> lookup_argv = {"lvs",      "--config",
-                                            lvm_config, "--reportformat",
-                                            "json",     "-o",
-                                            "lv_attr",  path};
+    // race for this name gets, and an LV of that name may be the winner's,
+    // one still being created, or not ours at all: only an LV that carries
+    // this attempt's own tag is removed. No co_await inside a catch block,
+    // hence the rollback here.
     bool leftover = false;
     try {
-        std::string output = co_await rawstor::run_command_capture(
-            _queue, std::move(lookup_argv)
-        );
-        std::string attr = nlohmann::json::parse(output)
-                               .at("report")
-                               .at(0)
-                               .at("lv")
-                               .at(0)
-                               .at("lv_attr")
-                               .get<std::string>();
-        leftover = !attr.empty() && attr[0] != 's';
+        std::string tags = co_await _lv_tags(path);
+        leftover = find_tag(tags, attempt_tag_prefix) == attempt_str;
     } catch (const std::exception&) {
         leftover = false;
     }

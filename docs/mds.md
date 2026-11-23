@@ -884,8 +884,9 @@ visible once the orchestrator has verified its barrier:
   VG free for them and fails with `ENOSPC` otherwise; the check and the
   allocation run under one per-VG lock, so it holds between the creates of one
   process, not between processes sharing a VG. A snapshot whose `lvcreate`
-  failed halfway is removed, unless it is a finished snapshot (a concurrent
-  request for the same version made it). The
+  failed halfway is removed, but only an LV that carries the attempt's own
+  `rawstor.attempt=<uuid>` tag (set by that `lvcreate`); an LV of that name
+  made by a concurrent request, or by anything else, is left alone. The
   snapshot carries the live LV's `rawstor.meta` tag as of the version
   (`lvcreate` does not copy tags). Removing the live LV removes its
   snapshots. A thin backend is not implemented. zfs versions are
