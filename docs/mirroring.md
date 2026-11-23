@@ -37,7 +37,7 @@ numbers its stages separately.
 | Fastest-mirror read selection | 4 | ❌ | — |
 | Member role `HEALING`: a copy that stays in the set while it is healed | 5 | ❌ | [Planned](#planned-the-healing-role) |
 | Resync and heal pacing: a byte rate for the copy, one limiter for the process | 6 | ❌ | [Planned](#planned-resync-rate-limiting) |
-| Adaptive pacing: the rate follows the foreground I/O between a floor and a ceiling | 6 | ❌ | [Planned](#planned-resync-rate-limiting) |
+| Adaptive pacing: the rate follows the foreground I/O between a floor and a ceiling | 7 | ❌ | [Planned](#planned-resync-rate-limiting) |
 
 ## Overview
 
@@ -542,10 +542,10 @@ If the client or the target OST crashes mid-resync, the copy's role remains sync
 
 The sweeper (`_resync_run()`) copies as fast as the source and the member
 allow. The same loop runs the resync of a returning member and the heal of
-F5, so one pacing covers both. It would be done in two steps, the second
+F5, so one pacing covers both. It would be done in two stages, the second
 building on the first.
 
-**Step 1: a byte rate.** `RAWSTOR_OPTS_MIRROR_RESYNC_RATE` (`mirror_resync_rate`
+**Stage 6: a byte rate.** `RAWSTOR_OPTS_MIRROR_RESYNC_RATE` (`mirror_resync_rate`
 in `RawstorOpts`) is the most bytes per second the copy sends, as a size
 (`K`, `M`, `G` suffixes); `0`, the default, is no limit.
 
@@ -570,9 +570,9 @@ in `RawstorOpts`) is the most bytes per second the copy sends, as a size
   ([Executor](migration.md#executor)), so with a rate set the fill is not
   paced, which keeps what that document says of it.
 
-**Step 2: a rate that follows the foreground I/O.** A fixed rate is either too
+**Stage 7: a rate that follows the foreground I/O.** A fixed rate is either too
 low when the writers are idle or too high when they are busy. The rate would
-move between a floor, `mirror_resync_rate_min`, and the ceiling of step 1:
+move between a floor, `mirror_resync_rate_min`, and the ceiling of stage 6:
 
 - **The floor is what makes the resync end.** Under a constant load a controller
   with no floor would never finish, and the copy stays without a redundant
@@ -720,4 +720,5 @@ of a vote during a heal is accepted for now.
 3. Online resync.
 4. Witness members are implemented; v2+ work includes persistent write-intent bitmap, OST start identity, stored checksums / scrub, fastest-mirror read selection.
 5. The member role `HEALING` ([Planned](#planned-the-healing-role)).
-6. Pacing of resync and heal ([Planned](#planned-resync-rate-limiting)): a byte rate, then a rate that follows the foreground I/O.
+6. A byte rate for the copy of resync and heal ([Planned](#planned-resync-rate-limiting)).
+7. A copy rate that follows the foreground I/O, between a floor and the rate of stage 6 ([Planned](#planned-resync-rate-limiting)).
