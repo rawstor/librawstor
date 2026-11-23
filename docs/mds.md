@@ -229,7 +229,7 @@ number:
 | Backend | Slot home + metadata | Versions (`version_id`) |
 |---------|----------------------|----------------------|
 | `file://` | dir `<id>/<offset>/`, `data` + `meta` inside it | fake snapshot: copy of `data` in `<id>/<offset>/<version_id>/data` |
-| `lvm://`  | LV `<id>-<offset>`, meta in LVM tags | read-only snapshot LV `<id>-<offset>-s<version_id>`, carrying the live LV's tag as of the version |
+| `lvm://`  | LV `<id>-<offset>`, meta in LVM tags | read-only snapshot LV `s<version_id>-<offset>`, carrying the live LV's tag as of the version |
 | `zfs://`  | zvol `<id>:<offset>`, meta in user properties | `@s<version_id>` |
 
 (The physical `<offset>` is never omitted, even "0" -- unlike the
@@ -873,10 +873,20 @@ visible once the orchestrator has verified its barrier:
 **v1 notes (shipped):**
 
 - **LVM versions are classic (non-thin) snapshots.** A version is a
-  read-only `lvcreate --snapshot` named `<id>-<offset>-s<version_id>`, created
-  with `-l 100%ORIGIN`: the preallocated COW area holds every block of the
-  origin being rewritten, so a version is never invalidated by overflow, at
-  the price of reserving the origin's full size in the VG per version. The
+  read-only `lvcreate --snapshot` named `s<version_id>-<offset>`. The object
+  is the snapshot's origin, which open, meta and remove check against the
+  requested object (`ENOENT` otherwise); the name stays short because LVM
+  refuses a device-mapper name over 127 characters, and the snapshot's `-cow`
+  device doubles every `-`. It is created with `-l 100%ORIGIN`: the
+  preallocated COW area holds every block of the origin being rewritten, so a
+  version is never invalidated by overflow, at the price of reserving the
+  origin's full size in the VG per version. Chunk creation leaves 20% of the
+  VG free for them and fails with `ENOSPC` otherwise; the check and the
+  allocation run under one per-VG lock, so it holds between the creates of one
+  process, not between processes sharing a VG. A snapshot whose `lvcreate`
+  failed halfway is removed, but only an LV that carries the attempt's own
+  `rawstor.attempt=<uuid>` tag (set by that `lvcreate`); an LV of that name
+  made by a concurrent request, or by anything else, is left alone. The
   snapshot carries the live LV's `rawstor.meta` tag as of the version
   (`lvcreate` does not copy tags). Removing the live LV removes its
   snapshots. A thin backend is not implemented. zfs versions are
