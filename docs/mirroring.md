@@ -32,6 +32,8 @@ numbers its stages separately.
 | Heal of a copy a vanished writer left `LOST` while other writers go on: exclusion and resync, one copy at a time | 3 | ✅ | `src/chunk.cpp` (`_lost_watch()`) |
 | Member role `HEALING`: a copy that stays in the set while it is healed | 5 | ❌ | [Planned](#planned-the-healing-role) |
 | Persistent write-intent bitmap (resumable resync, cheaper heal) | 4 | ❌ | — |
+| Resync and heal pacing: a byte rate for the copy, one limiter for the process | 6 | ❌ | [Planned](#planned-resync-rate-limiting) |
+| Adaptive pacing: the rate follows the foreground I/O between a floor and a ceiling | 6 | ❌ | [Planned](#planned-resync-rate-limiting) |
 | OST start identity in `META`: the heal never takes an OST-restarted copy as its reference ([known limitation](#known-limitation-the-degrade-barrier-window)) | 4 | ❌ | — |
 | Metadata-only witness on MDS, OST or local backend | 4 | ✅ | [Witness](mds.md#witness), `src/chunk.cpp` |
 | Stored checksums / scrub | 4 | ❌ | — |
@@ -495,7 +497,7 @@ Requirements: no downtime, and regions already rewritten by the client onto all 
 
 1. A bitmap lives in client memory; resync granularity ~1 MiB (a 1 TiB chunk → 128 KiB of bitmap) -- an unrelated, smaller-grained meaning of "chunk" than the mirrored entity this whole document is about (`RESYNC_CHUNK` in code). Initially all bits are set = "needs copy" (v1 is always a full resync).
 2. Client I/O continues throughout: reads are served **only from IN-SYNC mirrors**; **writes go both to IN-SYNC mirrors and to the SYNCING copy**. A write that fully covers a chunk clears its bit (that region is already identical). A partially covered chunk keeps its bit.
-3. A sweeper walks the bitmap: for each set bit it reads the chunk from a source mirror, writes it to the SYNCING copy, clears the bit. A chunk that reads back all zeros (typically never written) goes out as `write_zeroes` with unmap instead -- no payload on the wire, and the SYNCING copy stays sparse. Rate limiting (option) protects foreground I/O.
+3. A sweeper walks the bitmap: for each set bit it reads the chunk from a source mirror, writes it to the SYNCING copy, clears the bit. A chunk that reads back all zeros (typically never written) goes out as `write_zeroes` with unmap instead -- no payload on the wire, and the SYNCING copy stays sparse. The copy is not paced yet; [pacing it](#planned-resync-rate-limiting) is planned to protect foreground I/O.
 4. **Ordering hazard, sweeper × client write to the same chunk:** a per-chunk lock in the writer process's memory, shared by all its opens — a client write to a chunk currently being copied waits for the chunk copy to finish (or vice versa). Otherwise the sweeper could overwrite a fresh client write with stale source data.
 5. Bitmap empty → under the transition lock, the IN-SYNC copies move to a new `sync_id`/`epoch` (fsync), and the SYNCING copy's metadata is set to it (fsync) → the mirror is IN-SYNC (*When `sync_id` changes*). Client writes go on meanwhile, duplicated onto the copy; one that fails on it after its metadata is set excludes it again (F1) before that write is acknowledged.
 
@@ -535,6 +537,56 @@ sequenceDiagram
 ```
 
 If the client or the target OST crashes mid-resync, the copy's role remains syncing and the resync restarts from scratch (F8). Closing the open that owns the resync aborts it the same way, unless the copy's metadata is already being set: `close()` then waits for the rejoin to finish. A persistent write-intent bitmap (v2) makes it resumable and shrinks the F5 full resync to recently-touched regions.
+
+### Planned: resync rate limiting
+
+The sweeper (`_resync_run()`) copies as fast as the source and the member
+allow. The same loop runs the resync of a returning member and the heal of
+F5, so one pacing covers both. It would be done in two steps, the second
+building on the first.
+
+**Step 1: a byte rate.** `RAWSTOR_OPTS_MIRROR_RESYNC_RATE` (`mirror_resync_rate`
+in `RawstorOpts`) is the most bytes per second the copy sends, as a size
+(`K`, `M`, `G` suffixes); `0`, the default, is no limit.
+
+- **Pacing by deadline, not a bucket.** A region is at most `RESYNC_CHUNK`, so
+  the limiter keeps one deadline: a sweeper reserves `start = max(now,
+  deadline)` and moves the deadline to `start + len / rate` with a
+  compare-and-swap, then waits `start - now` on its own queue
+  (`queue.timeout()`, as the retry backoff does). No mutex, no thread blocked.
+- **One limiter for the process.** Several chunks resync at once (a vhost with
+  many objects, a drain); a limit per sweeper would send as many times the
+  rate as there are sweepers. Each sweeper reserves from the shared deadline
+  and waits on its own queue.
+- **Wait before the region is claimed.** A region claimed is a region client
+  writes park on (*Online resync algorithm*, step 4); the pause comes first,
+  then claim, read and write without a gap. A pause is cut short by close and
+  by abort of the resync (`ECANCELED` is not swallowed). A region that goes
+  back for another source after a failed read does not reserve a second slot.
+- **A zero region counts** by its length, like any other: it costs the source
+  a read.
+- **The copy of the fill of a migration** is the same loop. A slow copy under
+  random writes reaches the limit of 65,536 recorded ranges sooner
+  ([Executor](migration.md#executor)), so with a rate set the fill is not
+  paced, which keeps what that document says of it.
+
+**Step 2: a rate that follows the foreground I/O.** A fixed rate is either too
+low when the writers are idle or too high when they are busy. The rate would
+move between a floor, `mirror_resync_rate_min`, and the ceiling of step 1:
+
+- **The floor is what makes the resync end.** Under a constant load a controller
+  with no floor would never finish, and the copy stays without a redundant
+  member for as long as it runs.
+- **AIMD**: the rate grows by a fixed step while the foreground latency stays
+  at or under `mirror_resync_latency_target`, and halves once it is over.
+- **The signals**: an exponentially weighted latency of the writes of a
+  `Slot` (measured in the slot, which has nothing of the kind today), and how
+  long writes park on the region the sweeper holds (`_resync_enter()`), which
+  is the harm the sweeper does itself. An idle client (no request for about
+  100 ms) takes the ceiling at once.
+- **What it does not see**: other writers of the same object and other clients
+  of the same OST show up only as latency, so the target is on the latency
+  the writer observes, not on its own request count.
 
 ### Known limitation: the degrade-barrier window
 
@@ -668,3 +720,4 @@ of a vote during a heal is accepted for now.
 3. Online resync.
 4. Witness members are implemented; v2+ work includes persistent write-intent bitmap, OST start identity, stored checksums / scrub, fastest-mirror read selection.
 5. The member role `HEALING` ([Planned](#planned-the-healing-role)).
+6. Pacing of resync and heal ([Planned](#planned-resync-rate-limiting)): a byte rate, then a rate that follows the foreground I/O.
