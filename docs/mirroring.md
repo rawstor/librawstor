@@ -30,14 +30,14 @@ numbers its stages separately.
 | Force-open below quorum for writing (CLI / opts) | — | ❌ | — |
 | Heal of copies a vanished writer may have left different (F5) | 3 | ✅ | `src/chunk.cpp` (`_heal_maybe_start()`) |
 | Heal of a copy a vanished writer left `LOST` while other writers go on: exclusion and resync, one copy at a time | 3 | ✅ | `src/chunk.cpp` (`_lost_watch()`) |
-| Member role `HEALING`: a copy that stays in the set while it is healed | 5 | ❌ | [Planned](#planned-the-healing-role) |
 | Persistent write-intent bitmap (resumable resync, cheaper heal) | 4 | ❌ | — |
-| Resync and heal pacing: a byte rate for the copy, one limiter for the process | 6 | ❌ | [Planned](#planned-resync-rate-limiting) |
-| Adaptive pacing: the rate follows the foreground I/O between a floor and a ceiling | 6 | ❌ | [Planned](#planned-resync-rate-limiting) |
 | OST start identity in `META`: the heal never takes an OST-restarted copy as its reference ([known limitation](#known-limitation-the-degrade-barrier-window)) | 4 | ❌ | — |
 | Metadata-only witness on MDS, OST or local backend | 4 | ✅ | [Witness](mds.md#witness), `src/chunk.cpp` |
 | Stored checksums / scrub | 4 | ❌ | — |
 | Fastest-mirror read selection | 4 | ❌ | — |
+| Member role `HEALING`: a copy that stays in the set while it is healed | 5 | ❌ | [Planned](#planned-the-healing-role) |
+| Resync and heal pacing: a byte rate for the copy, one limiter for the process | 6 | ❌ | [Planned](#planned-resync-rate-limiting) |
+| Adaptive pacing: the rate follows the foreground I/O between a floor and a ceiling | 6 | ❌ | [Planned](#planned-resync-rate-limiting) |
 
 ## Overview
 
