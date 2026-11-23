@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - Unreleased
+
+### Added
+
+- `rawstor object export` and `rawstor version export` take `--force`: a mirror below its quorum is read from the members that are reachable, as they are. `rawstor_target_export()` takes a `flags` argument for it (`RAWSTOR_FORCE`), and pyrawstor `Target.export()` a `force` one.
+
+### Changed
+
+- `lvm://`: a version snapshot LV is named with the whole version id, `s<uuid>-<offset>`, not the 22-character form. Snapshots created by earlier builds are no longer found.
+
+### Fixed
+
+- A version of an object with a witness could not be opened, so `rawstor version export` and a read-only `rawstor-vhost` on it failed with "Transport endpoint is not connected": the records of its copies list the witness among the members, which a version does not have.
+
 ## [0.3.3] - 2026-11-23
 
 ### Changed

@@ -363,10 +363,12 @@ Three calls move data between files and objects, each reading and writing
 the object through the ordinary `Object` path, so any backend, mirrored or
 `mds://` multi-chunk, works the same way:
 
-- `rawstor_target_export(target, path)` writes the object to `path`
+- `rawstor_target_export(target, path, flags)` writes the object to `path`
   (created or truncated). A target that names a bound version exports that
   version. A regular file is written sparse — blocks that read as zero
-  become holes; a block device gets every block.
+  become holes; a block device gets every block. The object is opened
+  read-only; `flags` is 0 or `RAWSTOR_FORCE`, which reads a mirror below its
+  quorum from the members that are reachable, as they are.
 - `rawstor_target_create_from_file(target, path, spec)` creates a new
   object and fills it from a file or block device.
 - `rawstor_target_create_from_target(target, source, spec)` creates a new
@@ -384,7 +386,10 @@ TARGET/VERSION_ID FILE`, `rawstor object import FILE -m N` and
 A TARGET or SOURCE is spelled like any target: in full, `LOCATION UUID`, or a
 bare UUID under `RAWSTOR_LOCATION`. The new object is named as for `rawstor
 object create`: by `LOCATION` (`RAWSTOR_LOCATION` when none is given) with an
-optional `-u UUID`, a generated one otherwise, or by `-t TARGET`.
+optional `-u UUID`, a generated one otherwise, or by `-t TARGET`. The two
+`export` commands take `-f`/`--force`, which exports a mirror below its
+quorum from the members that are reachable; the file may then miss writes an
+unreachable member took.
 
 The three calls report progress through their one callback, which is called
 many times: `result` is the completion percentage, 0 to 100, each value at
