@@ -1085,11 +1085,17 @@ rawstd::Task<void> Backend::create_version(
     // one still being created, or not ours at all. lvremove selects by this
     // attempt's own tag, so only the LV this attempt created is removed, with
     // no name looked up and then reused in between; it succeeds without
-    // removing anything when lvcreate failed before creating the LV. No
+    // removing anything when lvcreate failed before creating the LV. The tag
+    // is the only target: the VG is a selection that narrows it, never a
+    // target, because a VG named as a target stands for every LV in it. No
     // co_await inside a catch block, hence the rollback here.
-    std::vector<std::string> remove_argv = {"lvremove", "--config",
-                                            lvm_config, "-f",
-                                            _vg_name,   "@" + attempt_tag};
+    std::vector<std::string> remove_argv = {"lvremove",
+                                            "--config",
+                                            lvm_config,
+                                            "-f",
+                                            "-S",
+                                            "vg_name=" + _vg_name,
+                                            "@" + attempt_tag};
     try {
         co_await rawstor::run_command(_queue, std::move(remove_argv));
     } catch (const std::system_error& e) {
