@@ -46,9 +46,7 @@ inline int validate_response(const RawstorFrameResponse* response) noexcept {
     }
 
     if (response->body.res < 0) {
-        int error = -response->body.res;
-        rawstd_error("Server error: %s\n", strerror(error));
-        return error;
+        return -response->body.res;
     }
 
     return 0;
