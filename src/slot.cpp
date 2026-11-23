@@ -51,10 +51,12 @@ constexpr auto sync_state_transitions =
 // Moves the copy's own state on `be` from `from` to `to` if it still holds
 // `from`; a move outside the copy state table is a bug of the caller.
 rawstd::Task<void> transition_state(
-    rawstor::Backend& be, const RawstdUUID& id, uint64_t offset,
-    RawstorObjectSyncStateValue from, RawstorObjectSyncStateValue to
+    rawstor::Backend& be, rawstor::MetaCache* meta_cache, const RawstdUUID& id,
+    uint64_t offset, RawstorObjectSyncStateValue from,
+    RawstorObjectSyncStateValue to
 ) {
     sync_state_transitions.require(from, to);
+    rawstor::MetaCache::Write write(meta_cache, id, offset);
     co_await be.set_state(id, offset, from, to);
 }
 
@@ -629,7 +631,10 @@ public:
     }
 };
 
-Slot::Slot(Private, rawio::Queue& queue, std::shared_ptr<Backend> backend) :
+Slot::Slot(
+    Private, rawio::Queue& queue, std::shared_ptr<Backend> backend,
+    std::shared_ptr<MetaCache> meta_cache
+) :
     _queue(queue),
     _wrote(false),
     _left(false),
@@ -639,6 +644,7 @@ Slot::Slot(Private, rawio::Queue& queue, std::shared_ptr<Backend> backend) :
     _version_id{},
     _session_id{},
     _backend(std::move(backend)),
+    _meta_cache(std::move(meta_cache)),
     _reconnecting(false),
     _reconnects(0) {
 }
@@ -707,7 +713,7 @@ rawstd::Task<void> Slot::_mark_dirty() {
     }
     std::shared_ptr<Backend> be = _get_backend();
     co_await transition_state(
-        *be, id, offset, RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
+        *be, _meta_cache.get(), id, offset, RAWSTOR_OBJECT_SYNC_STATE_CLEAN,
         RAWSTOR_OBJECT_SYNC_STATE_DIRTY
     );
     member->dirty.store(true, std::memory_order_release);
@@ -757,7 +763,8 @@ rawstd::Task<void> Slot::_depart(std::shared_ptr<Backend> be) {
         _left ? RAWSTOR_OBJECT_SYNC_STATE_CLEAN
               : RAWSTOR_OBJECT_SYNC_STATE_LOST;
     co_await transition_state(
-        *be, id, offset, RAWSTOR_OBJECT_SYNC_STATE_DIRTY, state
+        *be, _meta_cache.get(), id, offset, RAWSTOR_OBJECT_SYNC_STATE_DIRTY,
+        state
     );
     member->dirty.store(!_left, std::memory_order_release);
 }
@@ -800,7 +807,7 @@ rawstd::Task<void> Slot::_expire_departure(
     member->orphans.erase(orphan);
     --member->writers;
     co_await transition_state(
-        *be, id, offset, RAWSTOR_OBJECT_SYNC_STATE_DIRTY,
+        *be, _meta_cache.get(), id, offset, RAWSTOR_OBJECT_SYNC_STATE_DIRTY,
         RAWSTOR_OBJECT_SYNC_STATE_LOST
     );
 }
@@ -817,21 +824,25 @@ rawstd::Task<void> Slot::_lose_backend(std::shared_ptr<Backend> be) {
     co_await member->record.lock(_queue);
     RecordLockGuard guard{member->record};
     co_await transition_state(
-        *be, id, offset, RAWSTOR_OBJECT_SYNC_STATE_DIRTY,
+        *be, _meta_cache.get(), id, offset, RAWSTOR_OBJECT_SYNC_STATE_DIRTY,
         RAWSTOR_OBJECT_SYNC_STATE_LOST
     );
     _left = false;
 }
 
-rawstd::Task<std::unique_ptr<Slot>>
-Slot::create(rawio::Queue& queue, const rawstd::URI& location) {
+rawstd::Task<std::unique_ptr<Slot>> Slot::create(
+    rawio::Queue& queue, const rawstd::URI& location,
+    std::shared_ptr<MetaCache> meta_cache
+) {
     // A single attempt, same as Backend::create() -- retrying a broken
     // connect (or a set_object() done afterwards by a caller, e.g.
     // Chunk's constructor) is each caller's own job, not this one's.
     std::shared_ptr<Backend> backend =
         co_await Backend::create(queue, location);
 
-    auto slot = std::make_unique<Slot>(Private(), queue, std::move(backend));
+    auto slot = std::make_unique<Slot>(
+        Private(), queue, std::move(backend), std::move(meta_cache)
+    );
     co_return slot;
 }
 
@@ -1188,6 +1199,7 @@ rawstd::Task<void> Slot::set_owner(
         std::shared_ptr<CopyState> member = _copy_state(id, offset);
         co_await member->record.lock(_queue);
         RecordLockGuard guard{member->record};
+        MetaCache::Write write(_meta_cache.get(), id, offset);
         co_await _with_retry(
             func_name, trace_event, &Backend::set_owner, new_idempotency_key(),
             id, offset, owner
@@ -1354,6 +1366,7 @@ rawstd::Task<void> Slot::create(
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
     try {
+        MetaCache::Write write(_meta_cache.get(), id, offset);
         co_await _with_retry(
             func_name, trace_event, &Backend::create, new_idempotency_key(), id,
             offset, sp, member_role, owner
@@ -1374,6 +1387,7 @@ rawstd::Task<void> Slot::remove(const RawstdUUID& id, uint64_t offset) {
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
     try {
+        MetaCache::Write write(_meta_cache.get(), id, offset);
         co_await _with_retry(
             func_name, trace_event, &Backend::remove, new_idempotency_key(), id,
             offset
@@ -1543,8 +1557,8 @@ rawstd::Task<RawstorObjectMeta> Slot::open(
             // transition to its server leaves it to the server's own
             // writer sessions, which do the same.
             co_await transition_state(
-                *_get_backend(), id, offset, RAWSTOR_OBJECT_SYNC_STATE_DIRTY,
-                RAWSTOR_OBJECT_SYNC_STATE_LOST
+                *_get_backend(), _meta_cache.get(), id, offset,
+                RAWSTOR_OBJECT_SYNC_STATE_DIRTY, RAWSTOR_OBJECT_SYNC_STATE_LOST
             );
         }
         ++member->writers;
@@ -1927,9 +1941,27 @@ rawstd::Task<std::vector<RawstorObjectMeta>> Slot::meta(
     rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
 
     try {
-        std::vector<RawstorObjectMeta> result = co_await _with_retry(
-            func_name, trace_event, &Backend::meta, id, offset, version_id
-        );
+        // Only the record of the live copy is cached, and only as the
+        // backend reports it: the writers of this process are added below
+        // on every call.
+        const bool cacheable =
+            _meta_cache != nullptr && rawstd_uuid_is_nil(&version_id);
+        MetaCache::Ticket ticket;
+        std::vector<RawstorObjectMeta> result;
+        std::optional<std::vector<RawstorObjectMeta>> cached;
+        if (cacheable) {
+            cached = _meta_cache->find(id, offset, ticket);
+        }
+        if (cached) {
+            result = std::move(*cached);
+        } else {
+            result = co_await _with_retry(
+                func_name, trace_event, &Backend::meta, id, offset, version_id
+            );
+            if (cacheable) {
+                _meta_cache->fill(id, offset, ticket, result);
+            }
+        }
         if (rawstd_uuid_is_nil(&version_id)) {
             std::shared_ptr<CopyState> member = _copy_state(id, offset);
             if (member) {
@@ -1986,6 +2018,7 @@ rawstd::Task<bool> Slot::_sync_prepare(
         meta.promised = ballot_to(state.promised());
     }
     meta.writers = std::max(meta.writers, member->writers.load());
+    MetaCache::Write write(_meta_cache.get(), id, offset);
     bool accepted = co_await be->sync_prepare(id, offset, ballot, ok, meta);
     meta.writers = std::max(meta.writers, member->writers.load());
     member->learn_epoch(meta.config.epoch);
@@ -2063,6 +2096,7 @@ rawstd::Task<bool> Slot::_sync_accept(
         meta.config = state.value();
     }
     meta.writers = std::max(meta.writers, member->writers.load());
+    MetaCache::Write write(_meta_cache.get(), id, offset);
     bool accepted = co_await be->sync_accept(
         id, offset, member_index, ballot, next, config, ok, meta
     );
@@ -2081,7 +2115,8 @@ rawstd::Task<bool> Slot::_sync_accept(
                          ? RAWSTOR_OBJECT_SYNC_STATE_CLEAN
                          : RAWSTOR_OBJECT_SYNC_STATE_DIRTY;
         co_await transition_state(
-            *be, id, offset, RAWSTOR_OBJECT_SYNC_STATE_LOST, meta.state
+            *be, _meta_cache.get(), id, offset, RAWSTOR_OBJECT_SYNC_STATE_LOST,
+            meta.state
         );
         // Recheck the persisted state before the next first write.
         member->dirty.store(false, std::memory_order_release);
