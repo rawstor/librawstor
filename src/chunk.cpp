@@ -65,6 +65,18 @@ bool same_spec(
            a.chunk_size == b.chunk_size;
 }
 
+// A bound version holds no witness copy: it is made of the data members of
+// its chunk, but its records are the chunk's as of the version, with the
+// witness among the roles. They are read as the records of the members that
+// are opened, which is what every comparison against the member count means.
+void drop_version_witness(RawstorObjectMeta& meta, size_t members) noexcept {
+    RawstorObjectConfig& config = meta.config;
+    if (members == meta.spec.width && has_witness(meta.spec, config.nroles)) {
+        --config.nroles;
+        config.roles[config.nroles] = RAWSTOR_OBJECT_MEMBER_UNKNOWN;
+    }
+}
+
 bool member_has_config(
     const RawstorObjectMeta& member, const RawstorObjectConfig& config,
     size_t members
@@ -1453,6 +1465,9 @@ rawstd::Task<std::unique_ptr<Chunk>> Chunk::create(
         bool unavailable = false;
         try {
             metas[i] = co_await *open_tasks[i];
+            if (!rawstd_uuid_is_nil(&version_id)) {
+                drop_version_witness(metas[i], locations.size());
+            }
         } catch (const std::system_error& e) {
             rawstd_warning(
                 "Mirror member unavailable: %s: %s\n",

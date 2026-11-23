@@ -108,13 +108,13 @@ ssize_t target_create_from_target(
 
 ssize_t target_export(
     rawio::Queue& queue, const std::string& target, const std::string& path,
-    std::vector<ssize_t>* calls = nullptr
+    std::vector<ssize_t>* calls = nullptr, int flags = 0
 ) {
     return image_run(
         queue,
         [&](auto cb, void* data) {
             return rawstor_target_export(
-                &queue, target.c_str(), path.c_str(), cb, data
+                &queue, target.c_str(), path.c_str(), flags, cb, data
             );
         },
         calls
@@ -217,6 +217,38 @@ TEST(ImageTest, file_to_object_to_object_to_file) {
 
     EXPECT_EQ(target_remove(*queue, first), 0);
     EXPECT_EQ(target_remove(*queue, second), 0);
+}
+
+// A mirror short of its quorum is not exported, unless the export is forced:
+// then the reachable member is read as it is.
+TEST(ImageTest, a_forced_export_reads_a_mirror_below_quorum) {
+    rawstor::tests::TmpDir dir, first, second;
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+
+    std::string data = pattern(chunk_size / 4);
+    write_file(dir.path() / "in.img", data);
+    std::string uuid = "018f4e2a-4000-7000-8000-000000000003";
+    std::string target =
+        first.uri() + "/" + uuid + "," + second.uri() + "/" + uuid;
+    RawstorObjectSpec spec{};
+    spec.width = 2;
+    ASSERT_EQ(
+        target_create_from_file(
+            *queue, target, (dir.path() / "in.img").string(), spec
+        ),
+        0
+    );
+
+    std::filesystem::path offline = second.path().string() + "-offline";
+    std::filesystem::rename(second.path(), offline);
+    std::string out = (dir.path() / "out.img").string();
+    EXPECT_EQ(target_export(*queue, target, out), -ENOTCONN);
+    EXPECT_EQ(target_export(*queue, target, out, nullptr, RAWSTOR_FORCE), 0);
+    EXPECT_EQ(read_file(out), data);
+    EXPECT_EQ(
+        target_export(*queue, target, out, nullptr, RAWSTOR_READONLY), -EINVAL
+    );
+    std::filesystem::rename(offline, second.path());
 }
 
 // The object may be larger than the file; the tail reads back as zero.

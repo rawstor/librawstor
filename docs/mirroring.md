@@ -26,7 +26,7 @@ numbers its stages separately.
 | Several writer processes (multi-attach) | — | ✅ | [Multi-attach](multiattach.md): stage 1 (protocol, member side) and stage 2 (several processes and machines) |
 | `rawstor object chunks` / `rawstor object slots` per-chunk / per-slot state | — | ✅ | `cli/chunks.c`, `cli/slots.c` |
 | `rawstor object resolve TARGET --winner=N` | — | ✅ | `cli/resolve.c` |
-| Force-open below quorum, read-only (`RAWSTOR_FORCE \| RAWSTOR_READONLY`; `--force` with `--readonly` in the exporters) | 2 | ✅ | `src/chunk.cpp` |
+| Force-open below quorum, read-only (`RAWSTOR_FORCE \| RAWSTOR_READONLY`; `--force` in `rawstor object export` and `rawstor version export`, `--force` with `--readonly` in the vhost and vduse backends) | 2 | ✅ | `src/chunk.cpp` |
 | Force-open below quorum for writing (CLI / opts) | — | ❌ | — |
 | Heal of copies a vanished writer may have left different (F5) | 3 | ✅ | `src/chunk.cpp` (`_heal_maybe_start()`) |
 | Heal of a copy a vanished writer left `LOST` while other writers go on: exclusion and resync, one copy at a time | 3 | ✅ | `src/chunk.cpp` (`_lost_watch()`) |

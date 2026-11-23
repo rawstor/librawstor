@@ -900,13 +900,16 @@ visible once the orchestrator has verified its barrier:
   `ost://…/<uuid>/0/<version_id>` for a physical chunk member), `version_id` a UUID
   string; the wire carries it in SET_OBJECT's/RESOLVE's own
   `version_id[16]` field (`RawstorFrameBasicPayload`), and META answers
-  about that version's own copy the same way. Opening a
-  version **bypasses the mirror state machine
-  entirely** — no metadata compare, no quorum, no barriers, no resync, no
-  probe. That is not just an optimization: the frozen copy state is DIRTY
-  (versions are taken mid-session), which the live open logic would
-  treat as a crash to recover from. Immutability is what makes the bypass
-  sound: one reachable member serves, writes fail with EROFS.
+  about that version's own copy the same way. A version opens read-only
+  only, and **never takes part in the mirror's live state machine**: no
+  barriers, no resync, no probe, no state recorded. Its members are the
+  data copies of the chunk. The witness takes no snapshot, so a version has
+  none, and the records of its copies (the live chunk's as of the version,
+  roles of the witness included) are read as the records of the data members
+  that are opened. They agree on a sync set like those of a live read-only
+  open, which needs the quorum of its members unless `RAWSTOR_FORCE` lifts
+  it, and the version's frozen state, DIRTY because versions are taken
+  mid-session, is never recovered from.
 - **The id can never alias a leftover of a crashed attempt**, without any
   reservation step: `version_id` is a client-generated UUID (like every
   other id in this design), not a monotonic counter with a "next" value
