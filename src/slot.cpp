@@ -753,12 +753,6 @@ rawstd::Task<void> Slot::_depart(std::shared_ptr<Backend> be) {
     if (!(_left ? remaining == 0 : _wrote.load())) {
         co_return;
     }
-    if (_left &&
-        member->writes_flushed.load() != member->writes_issued.load()) {
-        // This durability barrier completes already admitted writes while
-        // the record lock excludes configuration changes.
-        co_await be->flush(0);
-    }
     const RawstorObjectSyncStateValue state =
         _left ? RAWSTOR_OBJECT_SYNC_STATE_CLEAN
               : RAWSTOR_OBJECT_SYNC_STATE_LOST;
@@ -2156,7 +2150,24 @@ rawstd::Task<void> Slot::leave() {
     while (_operations > 0) {
         co_await _drained.at_least(_drained.value() + 1);
     }
-    co_await _get_backend()->leave();
+    std::shared_ptr<Backend> be = _get_backend();
+    if (std::shared_ptr<CopyState> member = _member;
+        member &&
+        member->writes_flushed.load() != member->writes_issued.load()) {
+        // The durability barrier of a clean departure: it has to precede
+        // LEAVE, as the server drops the session on it and answers any
+        // later request with EBADF. The record lock excludes configuration
+        // changes while it completes the already admitted writes.
+        co_await member->record.lock(_queue);
+        RecordLockGuard guard{member->record};
+        // A copy that has a record refuses a flush that carries no epoch.
+        uint64_t epoch = 0;
+        if (_id) {
+            epoch = (co_await be->meta(*_id, _offset)).front().config.epoch;
+        }
+        co_await be->flush(epoch);
+    }
+    co_await be->leave();
     _left = true;
 }
 
