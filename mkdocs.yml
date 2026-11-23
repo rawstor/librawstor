@@ -1,4 +1,4 @@
-site_name: Rawstor
+site_name: RawStor
 site_description: Raw object storage exposed as block devices
 site_url: https://rawstor.github.io/librawstor/
 repo_url: https://github.com/rawstor/librawstor
