@@ -394,7 +394,8 @@ certificate does not prove global ownership of a UUID when the requested OST
 member has no local metadata. A manager can occupy another account's future
 member key. See the [allocation namespace plan](accounts.md#planned-allocation-namespace-isolation)
 for the impact, architectural alternatives and acceptance criteria. This is
-separate from intentional direct OST access and resource quotas.
+separate from intentional direct OST access; [OST account quotas](quotas.md#ost-side)
+bound how much of a node it can take but do not close it.
 
 ## Accounts
 
@@ -425,7 +426,7 @@ Stage 1 is in place ([Accounts](accounts.md), [Protocol](protocol.md)):
   `META` of every OST and rebuilds the objects of all accounts at once,
   restoring their owners and registering the accounts.
 
-Quotas, rate limits and noisy-neighbour control are a separate task.
+Quotas are designed in [Quotas](quotas.md); rate limits and noisy-neighbour control are a separate task.
 
 ## The cost of TLS on the hot path
 

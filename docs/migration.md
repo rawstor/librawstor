@@ -718,8 +718,8 @@ every client, and is not downgraded afterwards.
 - **Capacity.** Adding mirrors multiplies the space an object takes; copied
   versions take their full size on the new member ([Versions](#versions)), and
   a migration holds the space of the added members until the release frees the
-  old ones. Account quotas are separate, not yet designed work
-  ([Security](security.md)); when they exist, the added members count against
+  old ones. Account quotas are planned work
+  ([Quotas](quotas.md)); when they exist, the added members count against
   the owner and a change that would exceed the quota is refused before
   `OBJ_RECONFIGURE_BEGIN`.
 
