@@ -40,7 +40,7 @@ Environment=LOCATION=file:///var/lib/rawstor/ost/%i
 # rawstor-ost's own --queue-size/--workers/--meta-cache-ttl (see its --help).
 Environment=QUEUE_SIZE=4096
 Environment=WORKERS=12
-Environment=META_CACHE_TTL=5000
+Environment=META_CACHE_TTL=60000
 # librawstor client/server tuning knobs (see README.md's "Environment
 # Variables" section for what each one does); set them in
 # /etc/rawstor/ost/<uuid>.conf below to override a default.

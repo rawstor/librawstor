@@ -19,7 +19,7 @@
 | `LOCATION` | Comma‑separated list of backend locations (e.g., `file:///path`, `ost://host:port`). |
 | `-b, --bind ADDR` | Bind address in `<ip>[:<port>]` format (e.g., `127.0.0.1:7777`); the port defaults to 7777. |
 | `-w, --workers N` | Number of worker threads, each with its own client connections and I/O queue, all accepting on the same listening socket (default: `12`). |
-| `--meta-cache-ttl MS` | How long, in milliseconds, the member records of a `file://`, `lvm://` or `zfs://` store stay in memory ([Member record cache](#member-record-cache)); `0` reads the store every time (default: `5000`). |
+| `--meta-cache-ttl MS` | How long, in milliseconds, the member records of a `file://`, `lvm://` or `zfs://` store stay in memory ([Member record cache](#member-record-cache)); `0` reads the store every time (default: `60000`). |
 
 ## Examples
 
@@ -65,7 +65,10 @@ The cache is sound only where the OST is the sole writer of its store, which
 is how an instance is deployed (each instance has its own store). A change
 made behind it -- `lvchange --addtag` or an edit of the meta file by hand, a
 second `rawstor-ost` on the same store -- shows after the time to live at the
-latest. The cache is off for an `ost://` location (the records are the other
+latest. The time to live is not what keeps the records right, the erasing is;
+it only bounds how long such a change goes unseen, so it should be well above
+`mirror_probe_interval` (5 s), or the records expire between two polls. The
+cache is off for an `ost://` location (the records are the other
 server's) and with `--meta-cache-ttl 0`.
 
 ## systemd instances
@@ -85,7 +88,7 @@ The config is an environment file (`KEY=VALUE` lines):
 | `LOCATION` | `file:///var/lib/rawstor/ost/<uuid>` | Backing store this instance serves. |
 | `QUEUE_SIZE` | `4096` | `--queue-size`. |
 | `WORKERS` | `12` | `--workers`. |
-| `META_CACHE_TTL` | `5000` | `--meta-cache-ttl`. |
+| `META_CACHE_TTL` | `60000` | `--meta-cache-ttl`. |
 | `RAWSTOR_TLS_*` | | TLS settings, see [Configuration](configuration.md#tls). |
 | `RAWSTOR_OPTS_*` | | Tuning knobs, see [Configuration](configuration.md). |
 
