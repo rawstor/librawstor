@@ -586,7 +586,12 @@ static void command_export_usage(enum TargetType type) {
         "  FILE                  Destination file.\n"
         "\n"
         "command options:\n"
-        "  -h, --help            Show this help message and exit\n",
+        "  -h, --help            Show this help message and exit\n"
+        "  -f, --force           Read from the reachable mirror members even "
+        "below\n"
+        "                        quorum, as they are: the result may miss "
+        "writes an\n"
+        "                        unreachable member took.\n",
         type == TARGET_VERSION ? "version" : "object",
         type == TARGET_VERSION ? "a version of an object" : "an object",
         type == TARGET_VERSION ? "A target naming a bound version, "
@@ -598,12 +603,14 @@ static void command_export_usage(enum TargetType type) {
 static int command_export(int argc, char** argv, enum TargetType type) {
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
+        {"force", no_argument, NULL, 'f'},
         {},
     };
 
+    int force = 0;
     optind = 0;
     while (1) {
-        int c = getopt_long(argc, argv, "h", longopts, NULL);
+        int c = getopt_long(argc, argv, "hf", longopts, NULL);
         if (c == -1) {
             break;
         }
@@ -612,6 +619,10 @@ static int command_export(int argc, char** argv, enum TargetType type) {
         case 'h':
             command_export_usage(type);
             return EXIT_SUCCESS;
+
+        case 'f':
+            force = 1;
+            break;
 
         default:
             return EX_USAGE;
@@ -644,7 +655,7 @@ static int command_export(int argc, char** argv, enum TargetType type) {
         return checked;
     }
 
-    return rawstor_cli_export(target, path);
+    return rawstor_cli_export(target, path, force);
 }
 
 /* `object import TARGET FILE` and `object copy SOURCE TARGET` create an

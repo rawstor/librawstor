@@ -36,7 +36,7 @@ void rawstor_cli_progress_end(int result) {
     progress_last = -1;
 }
 
-int rawstor_cli_export(const char* target, const char* path) {
+int rawstor_cli_export(const char* target, const char* path, int force) {
     fprintf(stderr, "Exporting %s to %s\n", target, path);
 
     RawstorCliOp op;
@@ -48,7 +48,8 @@ int rawstor_cli_export(const char* target, const char* path) {
 
     op.on_progress = rawstor_cli_progress;
     int sres = rawstor_target_export(
-        op.queue, target, path, rawstor_cli_op_progress_cb, &op
+        op.queue, target, path, force ? RAWSTOR_FORCE : 0,
+        rawstor_cli_op_progress_cb, &op
     );
     ssize_t result = rawstor_cli_op_wait(&op, sres);
     rawstor_cli_op_destroy(&op);

@@ -1687,7 +1687,8 @@ PyObject* py_rawstor_object_export(PyObject* Py_UNUSED(self), PyObject* args) {
     const char* target;
     const char* path;
     PyObject* progress = NULL;
-    if (!PyArg_ParseTuple(args, "ss|O", &target, &path, &progress)) {
+    int force = 0;
+    if (!PyArg_ParseTuple(args, "ss|Op", &target, &path, &progress, &force)) {
         return NULL;
     }
 
@@ -1701,7 +1702,8 @@ PyObject* py_rawstor_object_export(PyObject* Py_UNUSED(self), PyObject* args) {
         return NULL;
     }
     int sres = rawstor_target_export(
-        image.op.queue, target, path, image_op_cb, &image
+        image.op.queue, target, path, force ? RAWSTOR_FORCE : 0, image_op_cb,
+        &image
     );
     ssize_t res = rawstor_sync_op_wait(&image.op, sres);
     return image_op_result(&image, res);
