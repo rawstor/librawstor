@@ -1,4 +1,4 @@
-# Rawstor MDS design (block storage)
+# RawStor MDS design (block storage)
 
 ## Status
 

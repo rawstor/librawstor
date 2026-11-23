@@ -23,7 +23,7 @@ Legend: ✅ implemented · 🟡 partial · ❌ not implemented yet.
 
 ## Overview
 
-Rawstor addresses data through six related concepts, each with its own
+RawStor addresses data through six related concepts, each with its own
 URI form: **Location**, **Target**, **Object**, **Chunk**, **Slot**, and
 **Version**. A Location names a backend store; a Target names one
 specific object within it; Object/Chunk/Slot are the layers a Target

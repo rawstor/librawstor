@@ -1,6 +1,6 @@
-# Rawstor
+# RawStor
 
-Rawstor is a raw object storage system: a network-addressable object,
+RawStor is a raw object storage system: a network-addressable object,
 identified by a UUID, that you read and write like a raw block device. It is
 a client library plus a small family of servers and backends.
 
@@ -15,7 +15,7 @@ object stored on the network.
   client, and a stale or missing copy is resynced by the client too.
 - **You choose the layout.** An object is a single chunk on one server, or
   many chunks spread across a cluster, with a chunk size, stripe width and
-  failure domain of your choosing. Rawstor sits between local storage and a
+  failure domain of your choosing. RawStor sits between local storage and a
   fully distributed one.
 - **Simple addressing.** A *Location* (`ost://host`, `file:///path`) names a
   backend store, and a *Target* adds an object UUID. Comma-separated lists
@@ -56,7 +56,7 @@ flowchart TD
 The [Quick start](quickstart.md) sets up a mirrored virtual machine disk
 from packages on four hosts, every service run by systemd. To build from a
 checkout instead, see [Building from source](building.md); before relying on
-Rawstor, read the [known limitations](limitations.md).
+RawStor, read the [known limitations](limitations.md).
 
 ## Where to go next
 
@@ -74,6 +74,6 @@ Rawstor, read the [known limitations](limitations.md).
 - [Building from source](building.md): for developers.
 - [Known limitations](limitations.md): what is not implemented yet.
 - [Troubleshooting](troubleshooting.md): `io_uring` problems.
-- [Authors](authors.md): who develops Rawstor.
+- [Authors](authors.md): who develops RawStor.
 
 Source code: [rawstor/librawstor](https://github.com/rawstor/librawstor).

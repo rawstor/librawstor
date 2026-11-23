@@ -1,6 +1,6 @@
 # Authors
 
-Rawstor is developed by:
+RawStor is developed by:
 
 - **George Melikov** (mail@gmelikov.ru) -- author of the first design draft
   (now the [Architecture](architecture.md) page, originally in
