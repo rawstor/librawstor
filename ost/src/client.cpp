@@ -66,13 +66,15 @@ int validate_result(int fd, size_t size, size_t result) noexcept {
 
 template <typename F>
 rawstd::Task<void> with_slot(
-    RawIOQueue* queue, const std::vector<rawstd::URI>& locations, F operation
+    RawIOQueue* queue, const std::vector<rawstd::URI>& locations,
+    std::shared_ptr<rawstor::MetaCache> meta_cache, F operation
 ) {
     if (locations.size() != 1) {
         RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
     }
     auto slot = co_await rawstor::Slot::create(
-        *static_cast<rawio::Queue*>(queue), locations.front()
+        *static_cast<rawio::Queue*>(queue), locations.front(),
+        std::move(meta_cache)
     );
     std::exception_ptr error;
     try {
@@ -212,7 +214,7 @@ rawstd::Task<int> Client::_authorize(
     memcpy(id.bytes, object, sizeof(id.bytes));
     try {
         co_await with_slot(
-            _queue, _server.locations(),
+            _queue, _server.locations(), _server.meta_cache(),
             [&](rawstor::Slot& slot) -> rawstd::Task<void> {
                 std::vector<RawstorObjectMeta> records;
                 try {
@@ -1006,6 +1008,7 @@ rawstd::DetachedTask Client::_list(
         }
         co_await with_slot(
             client->_queue, client->_server.locations(),
+            client->_server.meta_cache(),
             [&](rawstor::Slot& slot) -> rawstd::Task<void> {
                 co_await slot.list_chunks(
                     {}, payload.limit, groups, token, account
@@ -1089,6 +1092,7 @@ rawstd::DetachedTask Client::_allocate(
         }
         co_await with_slot(
             client->_queue, client->_server.locations(),
+            client->_server.meta_cache(),
             [&](rawstor::Slot& slot) -> rawstd::Task<void> {
                 co_await slot.create(
                     uuid, payload.chunk_offset, spec, role, account
@@ -1135,6 +1139,7 @@ rawstd::DetachedTask Client::_release(
     try {
         co_await with_slot(
             client->_queue, client->_server.locations(),
+            client->_server.meta_cache(),
             [&](rawstor::Slot& slot) -> rawstd::Task<void> {
                 if (rawstd_uuid_is_nil(&version_id)) {
                     co_await slot.remove(uuid, payload.offset);
@@ -1189,6 +1194,7 @@ rawstd::DetachedTask Client::_set_owner(
         }
         co_await with_slot(
             client->_queue, client->_server.locations(),
+            client->_server.meta_cache(),
             [&](rawstor::Slot& slot) -> rawstd::Task<void> {
                 co_await slot.set_owner(uuid, payload.offset, owner);
             }
@@ -1247,6 +1253,7 @@ rawstd::DetachedTask Client::_create_version(
             own_freeze = true;
             co_await with_slot(
                 client->_queue, client->_server.locations(),
+                client->_server.meta_cache(),
                 [&](rawstor::Slot& slot) -> rawstd::Task<void> {
                     co_await slot.flush_member(uuid, payload.offset);
                 }
@@ -1254,6 +1261,7 @@ rawstd::DetachedTask Client::_create_version(
         }
         co_await with_slot(
             client->_queue, client->_server.locations(),
+            client->_server.meta_cache(),
             [&](rawstor::Slot& slot) -> rawstd::Task<void> {
                 co_await slot.create_version(uuid, payload.offset, version_id);
             }
@@ -1270,6 +1278,7 @@ rawstd::DetachedTask Client::_create_version(
             try {
                 co_await with_slot(
                     client->_queue, client->_server.locations(),
+                    client->_server.meta_cache(),
                     [&](rawstor::Slot& slot) -> rawstd::Task<void> {
                         co_await slot.remove_version(
                             uuid, payload.offset, version_id
@@ -1334,6 +1343,7 @@ rawstd::DetachedTask Client::_freeze_thaw(
             frozen = true;
             co_await with_slot(
                 client->_queue, client->_server.locations(),
+                client->_server.meta_cache(),
                 [&](rawstor::Slot& slot) -> rawstd::Task<void> {
                     co_await slot.flush_member(uuid, payload.offset);
                 }
@@ -1383,6 +1393,7 @@ rawstd::DetachedTask Client::_meta(
     try {
         co_await with_slot(
             client->_queue, client->_server.locations(),
+            client->_server.meta_cache(),
             [&](rawstor::Slot& slot) -> rawstd::Task<void> {
                 auto records =
                     co_await slot.meta(uuid, payload.offset, version_id);
@@ -1443,6 +1454,7 @@ rawstd::DetachedTask Client::_list_versions(
     try {
         co_await with_slot(
             client->_queue, client->_server.locations(),
+            client->_server.meta_cache(),
             [&](rawstor::Slot& slot) -> rawstd::Task<void> {
                 auto versions =
                     co_await slot.list_versions(uuid, payload.offset);
@@ -1514,7 +1526,9 @@ rawstd::DetachedTask Client::_sync(
             }
             rawio::Queue& queue = *static_cast<rawio::Queue*>(client->_queue);
             std::unique_ptr<rawstor::Slot> slot;
-            slot = co_await rawstor::Slot::create(queue, locations.front());
+            slot = co_await rawstor::Slot::create(
+                queue, locations.front(), client->_server.meta_cache()
+            );
             std::exception_ptr error;
             try {
                 if (head.cmd == RAWSTOR_CMD_SYNC_PREPARE) {
@@ -1612,6 +1626,7 @@ Client::_info(std::weak_ptr<Client> weak, RawstorFrameHead head) {
     try {
         co_await with_slot(
             client->_queue, client->_server.locations(),
+            client->_server.meta_cache(),
             [&](rawstor::Slot& slot) -> rawstd::Task<void> {
                 info = co_await slot.info();
             }
@@ -1649,6 +1664,7 @@ rawstd::DetachedTask Client::_set_object(
     RawIOQueue* queue;
     const bool* server_stopping;
     std::vector<rawstd::URI> locations;
+    std::shared_ptr<rawstor::MetaCache> meta_cache;
     RawstdUUID id;
     memcpy(id.bytes, payload.object_id, sizeof(payload.object_id));
     RawstdUUID version_id;
@@ -1663,6 +1679,7 @@ rawstd::DetachedTask Client::_set_object(
         queue = client->_queue;
         server_stopping = &client->_server._stop;
         locations = client->_server.locations();
+        meta_cache = client->_server.meta_cache();
     }
 
     std::shared_ptr<rawstor::Slot> slot;
@@ -1673,7 +1690,7 @@ rawstd::DetachedTask Client::_set_object(
             RAWSTD_THROW_SYSTEM_ERROR(EOPNOTSUPP);
         }
         slot = co_await rawstor::Slot::create(
-            *static_cast<rawio::Queue*>(queue), locations.front()
+            *static_cast<rawio::Queue*>(queue), locations.front(), meta_cache
         );
         slot->set_departure_grace(departure_grace, [server_stopping]() {
             return *server_stopping;
