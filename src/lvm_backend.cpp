@@ -76,11 +76,8 @@ const char* const attempt_tag_prefix = "rawstor.attempt=";
 // device (every '-' doubled, 127 characters at most) within its limit.
 const char version_prefix = 's';
 
-// Size of a version snapshot's preallocated copy-on-write area, as a share
-// of its origin.
-const char* const snapshot_cow_size = "20%ORIGIN";
-
-// Share of a VG that create() leaves free for version snapshots.
+// Share of a VG that create() leaves free for version snapshots: a classic
+// snapshot preallocates a copy-on-write area as large as its origin.
 constexpr uint64_t snapshot_reserve_percent = 20;
 
 // Suffix a staging LV carries between lvcreate and the lvrename that
@@ -1045,9 +1042,10 @@ rawstd::Task<void> Backend::create_version(
         std::string(attempt_tag_prefix) + std::string(attempt_str);
 
     // A classic (non-thin) snapshot has a preallocated copy-on-write area
-    // that is invalidated, together with the version, once it fills up:
-    // snapshot_cow_size bounds how much of the origin may be rewritten while
-    // the version is kept. Read-only, like every version device.
+    // that is invalidated, together with the version, once it fills up.
+    // 100%ORIGIN sizes it to hold every block of the origin being
+    // rewritten (plus the exception-store metadata), so a version is never
+    // lost to overflow. Read-only, like every version device.
     //
     // See create()'s own comment on this GCC 13 ICE workaround.
     std::vector<std::string> argv = {
@@ -1057,7 +1055,7 @@ rawstd::Task<void> Backend::create_version(
         "--yes",
         "--snapshot",
         "-l",
-        snapshot_cow_size,
+        "100%ORIGIN",
         "--permission",
         "r",
         "-n",

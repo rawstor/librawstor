@@ -485,7 +485,7 @@ those locations.
 The copy writes whole versions, not differences, and the live resync after it
 rewrites every block again. On `zfs://` that breaks block sharing between the
 snapshots and the live volume: every version costs its full size on the new
-member. On `lvm://` (classic snapshots, each `-l 20%ORIGIN`) the cost is the
+member. On `lvm://` (classic snapshots, each `-l 100%ORIGIN`) the cost is the
 same as for any version. A native transfer for a move between two locations of the
 same backend (`zfs send -i` between snapshots) avoids it and is an optimization
 for later; it is the one place where a backend-specific mover pays off.

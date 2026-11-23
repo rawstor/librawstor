@@ -9,7 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `lvm://`: a version snapshot's copy-on-write area is 20% of its chunk, not the whole chunk; a version is invalidated once more than that is rewritten.
 - `lvm://`: creating a chunk leaves 20% of the volume group free for version snapshots and fails with `ENOSPC` otherwise.
 
 ### Fixed

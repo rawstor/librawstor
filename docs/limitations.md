@@ -70,9 +70,7 @@ deciding how to deploy.
 - **Very large objects can outlast the lease.** The barrier lease is capped
   at 10 minutes and is not renewed in flight; an object whose copy-on-write
   takes longer fails with `-ESTALE` and its version is removed.
-- **No thin LVM backend.** `lvm://` versions are classic snapshots, each with
-  a copy-on-write area of 20% of its origin: once more than that is rewritten
-  while the version exists, the version is invalidated and unreadable.
+- **No thin LVM backend.** `lvm://` versions are classic snapshots.
 - **Confirming a version** after the fact is not implemented, and a
   reconstruct of the chunk map skips version records.
 

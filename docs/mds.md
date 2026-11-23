@@ -877,11 +877,11 @@ visible once the orchestrator has verified its barrier:
   is the snapshot's origin, which open, meta and remove check against the
   requested object (`ENOENT` otherwise); the name stays short because LVM
   refuses a device-mapper name over 127 characters, and the snapshot's `-cow`
-  device doubles every `-`. It is created with `-l 20%ORIGIN`: the
-  preallocated COW area holds a fifth of the origin's blocks, so the version
-  is invalidated, and unreadable, once more than that is rewritten while it
-  exists. Chunk creation leaves 20% of the VG free for such areas and fails
-  with `ENOSPC` otherwise; the check and the
+  device doubles every `-`. It is created with `-l 100%ORIGIN`: the
+  preallocated COW area holds every block of the origin being rewritten, so a
+  version is never invalidated by overflow, at the price of reserving the
+  origin's full size in the VG per version. Chunk creation leaves 20% of the
+  VG free for them and fails with `ENOSPC` otherwise; the check and the
   allocation run under one per-VG lock, so it holds between the creates of one
   process, not between processes sharing a VG. A snapshot whose `lvcreate`
   failed halfway is removed, but only an LV that carries the attempt's own
