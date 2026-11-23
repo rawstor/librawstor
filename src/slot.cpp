@@ -2160,7 +2160,12 @@ rawstd::Task<void> Slot::leave() {
         // changes while it completes the already admitted writes.
         co_await member->record.lock(_queue);
         RecordLockGuard guard{member->record};
-        co_await be->flush(0);
+        // A copy that has a record refuses a flush that carries no epoch.
+        uint64_t epoch = 0;
+        if (_id) {
+            epoch = (co_await be->meta(*_id, _offset)).front().config.epoch;
+        }
+        co_await be->flush(epoch);
     }
     co_await be->leave();
     _left = true;
