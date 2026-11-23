@@ -139,6 +139,54 @@ TEST(MetaCacheTest, a_read_that_overlaps_a_write_is_not_stored) {
     EXPECT_TRUE(cache.find(id, 0, ticket));
 }
 
+// A read that begins and ends inside a write holds what the backend has in
+// the middle of the change: it is not stored, and nothing is answered from
+// the cache until the write ends.
+TEST(MetaCacheTest, a_record_is_neither_found_nor_stored_during_a_write) {
+    rawstor::MetaCache cache(long_ttl);
+    const RawstdUUID id = new_id();
+    rawstor::MetaCache::Ticket ticket;
+
+    {
+        rawstor::MetaCache::Write write(&cache, id, 0);
+        EXPECT_FALSE(cache.find(id, 0, ticket));
+        cache.fill(id, 0, ticket, {record(RAWSTOR_OBJECT_SYNC_STATE_CLEAN)});
+        EXPECT_FALSE(cache.find(id, 0, ticket));
+    }
+    EXPECT_FALSE(cache.find(id, 0, ticket));
+}
+
+TEST(MetaCacheTest, overlapping_writes_of_a_record_hold_it_until_the_last) {
+    rawstor::MetaCache cache(long_ttl);
+    const RawstdUUID id = new_id();
+    rawstor::MetaCache::Ticket ticket;
+
+    auto first = std::make_unique<rawstor::MetaCache::Write>(&cache, id, 0);
+    auto second = std::make_unique<rawstor::MetaCache::Write>(&cache, id, 0);
+    first.reset();
+    EXPECT_FALSE(cache.find(id, 0, ticket));
+    EXPECT_FALSE(ticket.fillable);
+    second.reset();
+
+    // Nothing holds it now.
+    EXPECT_FALSE(cache.find(id, 0, ticket));
+    EXPECT_TRUE(ticket.fillable);
+    cache.fill(id, 0, ticket, {record(RAWSTOR_OBJECT_SYNC_STATE_CLEAN)});
+    EXPECT_TRUE(cache.find(id, 0, ticket));
+}
+
+TEST(MetaCacheTest, a_write_of_one_chunk_does_not_hold_the_others) {
+    rawstor::MetaCache cache(long_ttl);
+    const RawstdUUID id = new_id();
+    rawstor::MetaCache::Ticket ticket;
+
+    rawstor::MetaCache::Write write(&cache, id, 0);
+    EXPECT_FALSE(cache.find(id, 4096, ticket));
+    EXPECT_TRUE(ticket.fillable);
+    cache.fill(id, 4096, ticket, {record(RAWSTOR_OBJECT_SYNC_STATE_CLEAN)});
+    EXPECT_TRUE(cache.find(id, 4096, ticket));
+}
+
 TEST(MetaCacheTest, a_record_expires_after_its_time_to_live) {
     rawstor::MetaCache cache(30ms);
     const RawstdUUID id = new_id();

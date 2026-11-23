@@ -41,6 +41,8 @@ public:
     // What a reader holds between the miss and the fill.
     struct Ticket {
         uint64_t epoch = 0;
+        // False if a Write of the record was running at the miss.
+        bool fillable = true;
     };
 
 private:
@@ -90,10 +92,14 @@ private:
     std::unordered_map<Key, Entry, KeyHash> _entries;
     // Most recently used first.
     std::list<Key> _lru;
+    // The Writes running now, by record. A record with one is neither
+    // answered nor filled: what the backend holds in the middle of a change
+    // is not what it will hold after it.
+    std::unordered_map<Key, unsigned int, KeyHash> _writing;
     // Changes whenever any record starts or ends changing. A fill is
     // accepted only if it has not moved since the read began: a read that
-    // overlaps a change, in whatever order, would otherwise store the
-    // record from before it.
+    // began before a change began, or ended after it ended, would otherwise
+    // store the record from before it.
     uint64_t _epoch = 0;
 
 public:
@@ -115,6 +121,10 @@ public:
         Key key = _key(id, offset);
         std::lock_guard<std::mutex> lock(_mutex);
         ticket.epoch = _epoch;
+        ticket.fillable = _writing.find(key) == _writing.end();
+        if (!ticket.fillable) {
+            return std::nullopt;
+        }
         auto it = _entries.find(key);
         if (it == _entries.end()) {
             return std::nullopt;
@@ -133,7 +143,7 @@ public:
     ) {
         Key key = _key(id, offset);
         std::lock_guard<std::mutex> lock(_mutex);
-        if (ticket.epoch != _epoch) {
+        if (!ticket.fillable || ticket.epoch != _epoch) {
             return;
         }
         _erase_locked(key);
@@ -150,19 +160,31 @@ public:
     }
 
     /**
-     * A change of the record of (id, offset) in the backend: erases the
-     * record on both sides of it. Kept around the call that changes the
-     * backend, whether it succeeds or throws -- after a failure the
-     * record on the disk is not known.
+     * A change of the record of (id, offset) in the backend. Kept around
+     * the call that changes the backend, whether it succeeds or throws --
+     * after a failure the record on the disk is not known. While it lives
+     * the record is neither answered from the cache nor stored in it, and
+     * what was stored is erased on both sides of it.
      */
     class Write final {
     private:
         MetaCache* _cache;
         Key _key;
 
-        void _invalidate() {
+        void _begin() {
             std::lock_guard<std::mutex> lock(_cache->_mutex);
             ++_cache->_epoch;
+            ++_cache->_writing[_key];
+            _cache->_erase_locked(_key);
+        }
+
+        void _end() {
+            std::lock_guard<std::mutex> lock(_cache->_mutex);
+            ++_cache->_epoch;
+            auto it = _cache->_writing.find(_key);
+            if (--it->second == 0) {
+                _cache->_writing.erase(it);
+            }
             _cache->_erase_locked(_key);
         }
 
@@ -171,7 +193,7 @@ public:
             _cache(cache) {
             if (_cache != nullptr) {
                 _key = MetaCache::_key(id, offset);
-                _invalidate();
+                _begin();
             }
         }
 
@@ -180,7 +202,7 @@ public:
 
         ~Write() {
             if (_cache != nullptr) {
-                _invalidate();
+                _end();
             }
         }
     };
