@@ -1832,6 +1832,13 @@ uint64_t ObjectStore::commit_version(
 
     tx.commit();
 
+    std::vector<RawstdUUID> touched;
+    touched.reserve(members.size());
+    for (const VersionMember& m : members) {
+        touched.push_back(m.ost_id);
+    }
+    _notify_space_change(std::move(touched));
+
     return map_version;
 }
 
@@ -1895,6 +1902,13 @@ std::vector<VersionMember> ObjectStore::remove_version(
     );
 
     tx.commit();
+
+    std::vector<RawstdUUID> touched;
+    touched.reserve(ret.size());
+    for (const VersionMember& m : ret) {
+        touched.push_back(m.ost_id);
+    }
+    _notify_space_change(std::move(touched));
 
     return ret;
 }
