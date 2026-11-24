@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.5] - Unreleased
 
+### Changed
+
+- An I/O operation that fails with `ENOSPC` is not retried: the backend stays full until space is freed, and each retry reconnected first.
+
 ### Fixed
 
 - `rawstor location info` kept showing the space a version had taken for up to five minutes after the version was created or removed: the MDS now probes the OSTs holding its copies, as it does after creating or resizing an object.

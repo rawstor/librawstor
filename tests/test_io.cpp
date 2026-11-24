@@ -741,6 +741,12 @@ TEST(OstIOTest, write_access_denied_is_not_retried) {
     expect_write_refused_without_retry(EACCES);
 }
 
+// A full backend stays full: retrying (and reconnecting before each retry)
+// only delays the failure.
+TEST(OstIOTest, write_no_space_is_not_retried) {
+    expect_write_refused_without_retry(ENOSPC);
+}
+
 TEST(OstIOTest, write_busy_retries_without_reconnect) {
     Queue queue(16);
     rawstor::tests::Server server(8753, 256);
@@ -789,7 +795,7 @@ TEST(OstIOTest, write_busy_retries_without_reconnect) {
 }
 
 // Same shape as write_hash_mismatch_reconnects below, but with a generic
-// (non-EBUSY) backend rejection -- ENOSPC here, retryable since it's not
+// (non-EBUSY) backend rejection -- EIO here, retryable since it's not
 // in Slot::_with_retry()'s is_permanent_backend_error() list.
 // Confirms reconnect-before-every-retry is the general behavior now, not
 // something special-cased to a hash mismatch/dropped connection alone:
@@ -824,7 +830,7 @@ TEST(OstIOTest, write_backend_error_retries_with_reconnect) {
         s.cmd_set_object(RAWSTOR_MAGIC, 0, 0);
         s.cmd_meta(RAWSTOR_MAGIC, 1, 0, clean_meta_1mb);
         s.cmd_write_request(4);
-        s.cmd_write_response(RAWSTOR_MAGIC, 2, -ENOSPC);
+        s.cmd_write_response(RAWSTOR_MAGIC, 2, -EIO);
     }
 
     {
