@@ -28,7 +28,7 @@ extern "C" {
  * A small certificate authority for installations that have none: a directory
  * with the CA certificate, `ca.crt`, which every process lists as
  * RAWSTOR_TLS_CA, its private key, `ca.key`, readable by its owner only, and
- * the trust domain of the cluster it serves. It issues the certificates a
+ * the trust domain of the deployment it serves. It issues the certificates a
  * process needs for RAWSTOR_TLS_CERT and RAWSTOR_TLS_KEY, see
  * docs/configuration.md, always in that trust domain.
  *

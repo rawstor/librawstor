@@ -37,13 +37,13 @@ Every connection between rawstor processes -- a client to an OST or an MDS, an
 OST to another OST -- runs over TLS 1.3 with mutual authentication; see the
 [Security design](security.md). A process needs the first four of these, and
 refuses to start with `EX_CONFIG` if it has none of them or only some.
-[`rawstor pki`](#issuing-certificates) makes them for a cluster that has no CA.
+[`rawstor pki`](#issuing-certificates) makes them for a deployment that has no CA.
 The one way to run without TLS is to say so, with `--insecure`: see
 [Without TLS](#without-tls).
 
 | Variable | Description |
 |----------|-------------|
-| `RAWSTOR_TLS_TRUST_DOMAIN` | The trust domain of the cluster, the host part of every SPIFFE ID in it (`cluster.example` in `spiffe://cluster.example/ost/<uuid>`). A peer whose ID is in another trust domain is refused, whoever signed its certificate. |
+| `RAWSTOR_TLS_TRUST_DOMAIN` | The trust domain of the deployment, the host part of every SPIFFE ID in it (`cluster.example` in `spiffe://cluster.example/ost/<uuid>`). A peer whose ID is in another trust domain is refused, whoever signed its certificate. |
 | `RAWSTOR_TLS_CERT` | This process's certificate, PEM, with the chain to the CA if it is not the CA itself. It must have exactly one URI SAN, the process's SPIFFE ID, and the extended key usages `serverAuth` and `clientAuth`. |
 | `RAWSTOR_TLS_KEY` | The private key of the certificate, PEM. |
 | `RAWSTOR_TLS_CA` | The CAs a peer's certificate must chain to, PEM; several may be listed. |
@@ -80,7 +80,7 @@ Session tickets are off, so each connection makes a full handshake.
 
 ### Issuing certificates
 
-A cluster that has no CA of its own can make one with `rawstor pki`, which
+A deployment that has no CA of its own can make one with `rawstor pki`, which
 needs no TLS settings itself. The CA is a directory with its certificate,
 `ca.crt` (what every process lists as `RAWSTOR_TLS_CA`), and its private key,
 `ca.key`, which stays on the machine that issues certificates:
@@ -100,7 +100,7 @@ The `vm-1` example grants a virtual machine access only to its disk object:
 replace `<account-uuid>` and `<object-uuid>` with the account and disk UUIDs.
 Mask `3` permits reading, writing and discarding data.
 
-A CA is made for the trust domain of one cluster and keeps it, so every
+A CA is made for the trust domain of one deployment and keeps it, so every
 certificate it issues is in it. `issue` writes a certificate and a new key
 (mode 0600) for a process, replacing the files. The process is `ost [ID]` (the
 id is the one in the MDS topology, a UUID), `mds [ID]` (the id of the MDS, a UUID
