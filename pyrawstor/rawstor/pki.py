@@ -46,7 +46,8 @@ def init(
     validity: Validity = CA_VALIDITY,
 ) -> None:
     """Creates ``directory`` (mode 0700) with a new CA for ``trust_domain``:
-    ``ca.crt``, ``ca.key`` and ``trust_domain``."""
+    ``ca.crt`` (with the trust domain as its URI SAN, ``spiffe://<trust_domain>``)
+    and ``ca.key``."""
     libpki.init(os.fspath(directory), trust_domain, _seconds(validity))
 
 

@@ -124,10 +124,12 @@ spiffe://<trust_domain>/admin/<name>               operator / control plane
 spiffe://<trust_domain>/account/<account_id>/client/<name>   an account's client
 ```
 
-- `<trust_domain>` names the cluster or cloud (lowercase letters, digits,
-  `.`, `-`, `_`, at most 255 bytes). A service accepts only IDs of its own
-  trust domain, so a certificate from another cluster is rejected even if the
-  same CA signed it.
+- `<trust_domain>` is the trust boundary of one CA, in practice a cluster or a
+  cloud: all of its OSTs, MDSs, operators and account clients are under one
+  trust domain. It is a label, not a DNS name (lowercase letters, digits, `.`,
+  `-`, `_`, at most 255 bytes). A service accepts only IDs of its own trust
+  domain, so a certificate from another cluster is rejected even if the same
+  CA signed it.
 - Path segments are letters, digits, `.`, `-`, `_`, case-sensitive; the whole
   ID is at most 2048 bytes. Ids (of an OST, an MDS and an account) are UUIDs in
   their canonical text form.
