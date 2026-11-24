@@ -156,14 +156,13 @@ static void renew_usage(void) {
 static void show_usage(void) {
     fprintf(
         stdout,
-        "usage: rawstor pki show --cert FILE [--ca DIR]\n"
+        "usage: rawstor pki show [--ca DIR] FILE\n"
         "\n"
         "Shows what the certificate of a process says, whoever issued it, and "
         "changes\n"
         "nothing. With --ca it also tells whether that CA signed it.\n"
         "\n"
         "options:\n"
-        "  --cert FILE           The certificate\n"
         "  --ca DIR              A CA made by `pki init`: fills the issued "
         "column (yes or no)\n" RAWSTOR_CLI_OUTPUT_USAGE "\n"
         "Columns are those of `pki issue`; issued is empty without --ca.\n"
@@ -665,14 +664,12 @@ static int command_show(int argc, char** argv) {
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
         {"ca", required_argument, NULL, 'c'},
-        {"cert", required_argument, NULL, 'C'},
         {"format", required_argument, NULL, RAWSTOR_CLI_OPT_FORMAT},
         {"column", required_argument, NULL, RAWSTOR_CLI_OPT_COLUMN},
         {},
     };
     RawstorCliOutput output = {};
     const char* ca = NULL;
-    const char* cert = NULL;
     optind = 0;
     int c;
     while ((c = getopt_long(argc, argv, "h", longopts, NULL)) != -1) {
@@ -682,9 +679,6 @@ static int command_show(int argc, char** argv) {
             return EXIT_SUCCESS;
         case 'c':
             ca = optarg;
-            break;
-        case 'C':
-            cert = optarg;
             break;
         case RAWSTOR_CLI_OPT_FORMAT:
             if (rawstor_cli_output_set_format(&output, optarg) != 0) {
@@ -702,10 +696,11 @@ static int command_show(int argc, char** argv) {
             return EX_USAGE;
         }
     }
-    if (cert == NULL) {
-        fprintf(stderr, "--cert is required\n");
+    if (optind == argc) {
+        fprintf(stderr, "The certificate FILE is required\n");
         return EX_USAGE;
     }
+    const char* cert = argv[optind++];
     if (optind != argc) {
         fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
         return EX_USAGE;

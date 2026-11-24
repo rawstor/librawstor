@@ -93,7 +93,7 @@ rawstor pki issue --ca ca --cert hv1.crt --key hv1.key admin hv1
 rawstor pki issue --ca ca --cert vm.crt --key vm.key \
   --role none --object-permissions <object-uuid>:3 client <account-uuid> vm-1
 rawstor pki renew --ca ca --cert ost.crt --key ost.key
-rawstor pki show --cert ost.crt                                  # what it says
+rawstor pki show ost.crt                                        # what it says
 ```
 
 The `vm-1` example grants a virtual machine access only to its disk object:
@@ -226,7 +226,7 @@ rawstor pki issue --ca ca --cert restricted-manager.crt --key restricted-manager
   --object-permissions 018f4e2a-2222-7000-8000-000000000002:1 \
   --object-permissions 018f4e2a-2222-7000-8000-000000000003:0 \
   client 018f4e2a-2222-7000-8000-000000000001 restricted-manager
-rawstor pki show --cert restricted-manager.crt
+rawstor pki show restricted-manager.crt
 ```
 
 For a vhost that may access only one object, use `none` and grant that UUID
