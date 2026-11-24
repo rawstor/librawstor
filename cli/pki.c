@@ -28,15 +28,15 @@ static void pki_usage(void) {
         "\n"
         "usage: rawstor pki <subcommand> [command_options]\n"
         "\n"
-        "A small certificate authority for a cluster that has none: init makes "
-        "it for\n"
-        "the trust domain of the cluster, issue gives a process its "
-        "certificate and key,\n"
-        "renew replaces them before they expire. The files are what a process "
-        "lists as\n"
-        "RAWSTOR_TLS_CA, RAWSTOR_TLS_CERT and RAWSTOR_TLS_KEY. The CA's own "
-        "key,\n"
-        "DIR/ca.key, must not leave the machine that issues certificates.\n"
+        "A small certificate authority for a deployment that has none: init "
+        "makes it\n"
+        "for the trust domain of the deployment, issue gives a process its\n"
+        "certificate and key, renew replaces them before they expire. The "
+        "files are\n"
+        "what a process lists as RAWSTOR_TLS_CA, RAWSTOR_TLS_CERT and "
+        "RAWSTOR_TLS_KEY.\n"
+        "The CA's own key, DIR/ca.key, must not leave the machine that issues\n"
+        "certificates.\n"
         "\n"
         "subcommand:\n"
         "  init                  Create a CA in a directory\n"
@@ -57,14 +57,14 @@ static void init_usage(void) {
         "\n"
         "Creates the directory DIR (mode 0700) with a new CA for DOMAIN: "
         "DIR/ca.crt,\n"
-        "DIR/ca.key and DIR/trust_domain. It is the CA of one cluster, and "
-        "every certificate\n"
-        "it issues is in DOMAIN.\n"
+        "DIR/ca.key. DOMAIN is the URI SAN of ca.crt. It is the CA of one\n"
+        "deployment, and every certificate it issues is in DOMAIN.\n"
         "\n"
         "options:\n"
-        "  --trust-domain DOMAIN The trust domain of the cluster, lowercase "
-        "letters, digits,\n"
-        "                        '.', '-' and '_' (RAWSTOR_TLS_TRUST_DOMAIN)\n"
+        "  --trust-domain DOMAIN The trust domain of the deployment: "
+        "lowercase letters,\n"
+        "                        digits, '.', '-' and '_' "
+        "(RAWSTOR_TLS_TRUST_DOMAIN)\n"
         "  --validity DURATION   How long the CA is valid (default: 3650d)\n"
         "\n"
         "DURATION is a number with an optional unit: s, m, h or d (seconds "
@@ -156,14 +156,13 @@ static void renew_usage(void) {
 static void show_usage(void) {
     fprintf(
         stdout,
-        "usage: rawstor pki show --cert FILE [--ca DIR]\n"
+        "usage: rawstor pki show [--ca DIR] FILE\n"
         "\n"
         "Shows what the certificate of a process says, whoever issued it, and "
         "changes\n"
         "nothing. With --ca it also tells whether that CA signed it.\n"
         "\n"
         "options:\n"
-        "  --cert FILE           The certificate\n"
         "  --ca DIR              A CA made by `pki init`: fills the issued "
         "column (yes or no)\n" RAWSTOR_CLI_OUTPUT_USAGE "\n"
         "Columns are those of `pki issue`; issued is empty without --ca.\n"
@@ -665,14 +664,12 @@ static int command_show(int argc, char** argv) {
     struct option longopts[] = {
         {"help", no_argument, NULL, 'h'},
         {"ca", required_argument, NULL, 'c'},
-        {"cert", required_argument, NULL, 'C'},
         {"format", required_argument, NULL, RAWSTOR_CLI_OPT_FORMAT},
         {"column", required_argument, NULL, RAWSTOR_CLI_OPT_COLUMN},
         {},
     };
     RawstorCliOutput output = {};
     const char* ca = NULL;
-    const char* cert = NULL;
     optind = 0;
     int c;
     while ((c = getopt_long(argc, argv, "h", longopts, NULL)) != -1) {
@@ -682,9 +679,6 @@ static int command_show(int argc, char** argv) {
             return EXIT_SUCCESS;
         case 'c':
             ca = optarg;
-            break;
-        case 'C':
-            cert = optarg;
             break;
         case RAWSTOR_CLI_OPT_FORMAT:
             if (rawstor_cli_output_set_format(&output, optarg) != 0) {
@@ -702,10 +696,11 @@ static int command_show(int argc, char** argv) {
             return EX_USAGE;
         }
     }
-    if (cert == NULL) {
-        fprintf(stderr, "--cert is required\n");
+    if (optind == argc) {
+        fprintf(stderr, "The certificate FILE is required\n");
         return EX_USAGE;
     }
+    const char* cert = argv[optind++];
     if (optind != argc) {
         fprintf(stderr, "Unexpected argument: %s\n", argv[optind]);
         return EX_USAGE;

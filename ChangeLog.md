@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `rawstor pki show` takes the certificate as an argument, `rawstor pki show FILE`, not as `--cert FILE`.
+- The trust domain of a CA made by `rawstor pki init` is the URI SAN `spiffe://<trust_domain>` of its `ca.crt`, not a separate `trust_domain` file. A CA made by an earlier build is not opened: make it again.
 - An I/O operation that fails with `ENOSPC` is not retried: the backend stays full until space is freed, and each retry reconnected first.
 
 ### Fixed
