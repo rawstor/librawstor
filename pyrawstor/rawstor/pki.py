@@ -1,8 +1,8 @@
-"""A small certificate authority for a cluster that has none.
+"""A small certificate authority for a deployment that has none.
 
 It makes the files a process needs to speak TLS: ``ca.crt`` of the CA, which
 the process lists as ``RAWSTOR_TLS_CA``, and a certificate and a key of its own
-for ``RAWSTOR_TLS_CERT`` and ``RAWSTOR_TLS_KEY``. A CA serves one cluster, whose
+for ``RAWSTOR_TLS_CERT`` and ``RAWSTOR_TLS_KEY``. A CA serves one deployment, whose
 trust domain (``RAWSTOR_TLS_TRUST_DOMAIN``) it is made for, and every certificate
 it issues is in that trust domain. Importing this module does not start rawstor,
 so it can run before the settings it makes are in place.
@@ -46,7 +46,8 @@ def init(
     validity: Validity = CA_VALIDITY,
 ) -> None:
     """Creates ``directory`` (mode 0700) with a new CA for ``trust_domain``:
-    ``ca.crt``, ``ca.key`` and ``trust_domain``."""
+    ``ca.crt`` (with the trust domain as its URI SAN, ``spiffe://<trust_domain>``)
+    and ``ca.key``."""
     libpki.init(os.fspath(directory), trust_domain, _seconds(validity))
 
 

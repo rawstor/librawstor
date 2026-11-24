@@ -32,14 +32,15 @@ CertInfo inspect(const std::string& cert_file, const std::string& ca_file = "");
  * A small certificate authority for installations that have none: a directory
  * with the CA certificate (`ca.crt`, what every process lists in
  * RAWSTOR_TLS_CA), its private key (`ca.key`, readable by its owner only, and
- * the one file that never leaves the machine that issues certificates) and the
- * trust domain of the cluster it serves (`trust_domain`).
+ * the one file that never leaves the machine that issues certificates). The
+ * certificate has one URI SAN, `spiffe://<trust_domain>`: the trust domain of
+ * the deployment the CA serves.
  *
  * It issues what rawtls::Context expects of a process: an EC P-256 key and a
  * certificate with exactly one URI SAN, the SPIFFE ID, the key usage
  * `digitalSignature` and the extended key usages `serverAuth` and
  * `clientAuth`. The ID is built from a role and a name, and always in the trust
- * domain of the CA, so a certificate cannot be made for another cluster.
+ * domain of the CA, so a certificate cannot be made for another deployment.
  * Certificates are short-lived: the caller says for how long.
  *
  * Every failure is a std::system_error: EEXIST for an `init` over an existing

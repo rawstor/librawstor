@@ -151,7 +151,7 @@ TEST_F(CATest, init_makes_a_ca_whose_key_is_private) {
          fs::directory_iterator(dir.path("ca"))) {
         ++files;
     }
-    EXPECT_EQ(files, 3u);
+    EXPECT_EQ(files, 2u);
 
     auto cert = load(dir.path("ca/ca.crt"));
     EXPECT_EQ(X509_check_ca(cert.get()), 1);
@@ -342,8 +342,7 @@ TEST_F(CATest, a_planted_symlink_is_not_followed) {
         fclose(f);
     }
     for (const char* name :
-         {"ca.key.tmp", "ca.crt.tmp", ".ca.key.tmp", ".ca.key.XXXXXX",
-          "trust_domain.tmp"}) {
+         {"ca.key.tmp", "ca.crt.tmp", ".ca.key.tmp", ".ca.key.XXXXXX"}) {
         fs::create_symlink(victim, dir.path(std::string("ca/") + name));
     }
     init();
@@ -441,16 +440,6 @@ TEST_F(CATest, issued_tells_whose_certificate_it_is) {
     options.uris = {ost_uri};
     EXPECT_FALSE(ca.issued(foreign_pki.issue("foreign", options).cert_file));
     expect_errno(ENOENT, [&] { ca.issued(dir.path("none.crt")); });
-}
-
-TEST_F(CATest, init_can_retry_after_a_domain_publish_failure) {
-    fs::create_directories(dir.path("ca/trust_domain"));
-    EXPECT_THROW(init(), std::system_error);
-    EXPECT_FALSE(fs::exists(dir.path("ca/ca.key")));
-    EXPECT_FALSE(fs::exists(dir.path("ca/ca.crt")));
-    fs::remove(dir.path("ca/trust_domain"));
-    EXPECT_NO_THROW(init());
-    EXPECT_EQ(rawtls::CA(dir.path("ca")).trust_domain(), "cluster.example");
 }
 
 TEST_F(CATest, a_failed_certificate_publish_restores_the_old_key) {

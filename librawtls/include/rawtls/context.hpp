@@ -11,7 +11,7 @@ struct ssl_ctx_st;
 namespace rawtls {
 
 struct Config {
-    // The trust domain of this cluster: a peer whose SPIFFE ID is in another
+    // The trust domain of this deployment: a peer whose SPIFFE ID is in another
     // trust domain is rejected, whoever signed its certificate.
     std::string trust_domain;
     // This process's certificate (with the chain that leads to the CA, if
