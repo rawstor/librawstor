@@ -411,7 +411,8 @@ void CA::init(
     }
     Key key = new_key();
     Cert cert = build(
-        Profile{true, "rawstor CA", "spiffe://" + trust_domain}, key.get(), nullptr, nullptr, validity
+        Profile{true, "rawstor CA", "spiffe://" + trust_domain}, key.get(),
+        nullptr, nullptr, validity
     );
     Staged key_file = stage_key(join(dir, "ca.key"), key.get());
     Staged cert_file = stage_cert(join(dir, "ca.crt"), cert.get());
