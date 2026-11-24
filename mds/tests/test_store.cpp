@@ -472,6 +472,41 @@ TEST_F(ObjectStoreTest, remove_rejects_while_version_exists) {
     store.remove(RawstdUUID{}, id);
 }
 
+TEST_F(ObjectStoreTest, version_commit_and_remove_notify_space_change) {
+    ObjectStore store = make_store();
+    std::vector<RawstdUUID> notified;
+    store.set_space_change_listener(
+        [&notified](const std::vector<RawstdUUID>& osts) {
+            notified.insert(notified.end(), osts.begin(), osts.end());
+        }
+    );
+
+    RawstdUUID id = make_id();
+    store.create(
+        RawstdUUID{}, RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1)
+    );
+    RawstdUUID version_id = make_id();
+    ObjectMap map = store.open(id, RawstdUUID{});
+    std::vector<VersionMember> members;
+    for (size_t index = 0; index < map.chunks.size(); ++index) {
+        for (const auto& slot : map.chunks[index]) {
+            members.push_back(VersionMember{index, slot.ost_id});
+        }
+    }
+    ASSERT_FALSE(members.empty());
+
+    // The members' copies are what a version takes and gives back.
+    notified.clear();
+    store.commit_version(RawstdUUID{}, id, version_id, members);
+    ASSERT_EQ(notified.size(), 1u);
+    EXPECT_EQ(memcmp(notified[0].bytes, members[0].ost_id.bytes, 16), 0);
+
+    notified.clear();
+    store.remove_version(RawstdUUID{}, id, version_id);
+    ASSERT_EQ(notified.size(), 1u);
+    EXPECT_EQ(memcmp(notified[0].bytes, members[0].ost_id.bytes, 16), 0);
+}
+
 TEST_F(ObjectStoreTest, commit_version_and_open_round_trip) {
     ObjectStore store = make_store();
     RawstdUUID id = make_id();
