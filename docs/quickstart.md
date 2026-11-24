@@ -48,7 +48,7 @@ environment file in `/etc/rawstor/`.
 
 A certificate names the process it belongs to by a SPIFFE ID,
 `spiffe://<trust domain>/<role>/<name>`, and a peer is accepted only if its ID
-is in the trust domain of the cluster and has the role it is expected to have:
+is in the trust domain of the deployment and has the role it is expected to have:
 an OST's is `ost/<its id>`, an MDS's `mds/<name>`. `rawstor pki` builds the ID
 from the role and the name, in the trust domain the CA was made for. Make the CA, and every
 certificate, on one machine of yours that is not a storage host (it needs only

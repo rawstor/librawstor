@@ -157,10 +157,11 @@ Cert build(
         add_extension(raw, signer, NID_basic_constraints, "critical,CA:FALSE");
         add_extension(raw, signer, NID_key_usage, "critical,digitalSignature");
         add_extension(raw, signer, NID_ext_key_usage, "serverAuth,clientAuth");
-        add_extension(
-            raw, signer, NID_subject_alt_name, ("URI:" + profile.uri).c_str()
-        );
     }
+    // The SPIFFE ID of a process, or the trust domain of a CA.
+    add_extension(
+        raw, signer, NID_subject_alt_name, ("URI:" + profile.uri).c_str()
+    );
     rawtls::certificate_permissions(raw, permissions);
     check(
         X509_sign(raw, issuer_key != nullptr ? issuer_key : key, EVP_sha256()) >
@@ -289,30 +290,6 @@ Staged stage_key(const std::string& file, EVP_PKEY* key) {
     });
 }
 
-Staged stage_text(const std::string& file, const std::string& text) {
-    return Staged(file, 0644, [&](FILE* f) {
-        return fwrite(text.data(), 1, text.size(), f) == text.size();
-    });
-}
-
-std::string read_text(const std::string& file) {
-    FILE* f = fopen(file.c_str(), "r");
-    if (f == nullptr) {
-        raise(errno, "Cannot open " + file);
-    }
-    std::string text;
-    char buffer[256];
-    size_t n;
-    while ((n = fread(buffer, 1, sizeof(buffer), f)) > 0) {
-        text.append(buffer, n);
-    }
-    fclose(f);
-    while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) {
-        text.pop_back();
-    }
-    return text;
-}
-
 Cert read_cert(const std::string& file) {
     FILE* f = fopen(file.c_str(), "r");
     if (f == nullptr) {
@@ -434,25 +411,18 @@ void CA::init(
     }
     Key key = new_key();
     Cert cert = build(
-        Profile{true, "rawstor CA", ""}, key.get(), nullptr, nullptr, validity
+        Profile{true, "rawstor CA", "spiffe://" + trust_domain}, key.get(),
+        nullptr, nullptr, validity
     );
     Staged key_file = stage_key(join(dir, "ca.key"), key.get());
-    Staged domain_file =
-        stage_text(join(dir, "trust_domain"), trust_domain + "\n");
     Staged cert_file = stage_cert(join(dir, "ca.crt"), cert.get());
-    // Publish the certificate last and remove incomplete initialization files
-    // on failure so initialization can be retried.
+    // Publish the certificate last and remove the key on failure so
+    // initialization can be retried.
     key_file.commit();
-    bool domain_committed = false;
     try {
-        domain_file.commit();
-        domain_committed = true;
         cert_file.commit();
     } catch (...) {
         unlink(join(dir, "ca.key").c_str());
-        if (domain_committed) {
-            unlink(join(dir, "trust_domain").c_str());
-        }
         throw;
     }
 }
@@ -462,7 +432,14 @@ CA::CA(const std::string& dir) : _dir(dir) {
     if (access(join(dir, "ca.crt").c_str(), R_OK) != 0) {
         raise(errno, "No CA in " + dir);
     }
-    _trust_domain = read_text(join(dir, "trust_domain"));
+    // The trust domain is the one URI SAN of the CA certificate.
+    const std::string file = join(dir, "ca.crt");
+    const std::string scheme = "spiffe://";
+    std::string uri = identity_of(read_cert(file).get(), file);
+    if (uri.compare(0, scheme.size(), scheme) != 0) {
+        raise(EINVAL, file + " has not a trust domain");
+    }
+    _trust_domain = uri.substr(scheme.size());
     check_trust_domain(_trust_domain);
 }
 
