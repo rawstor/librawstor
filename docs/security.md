@@ -337,8 +337,9 @@ OST commands:
 | Command | Account principal: certificate permission | `mds` | `admin` |
 |---|---|---|---|
 | `HANDSHAKE` | any | any | any |
-| `SET_OBJECT` | `RAWSTOR_READONLY` needs `read`, a read-write open needs `write` | yes | yes |
-| `READ`, `META`, `LIST_VERSIONS` | `read` | yes | yes |
+| `SET_OBJECT` | `RAWSTOR_READONLY` needs `read`, a read-write open needs `write` | — | — |
+| `READ`, `LIST_VERSIONS` | `read` | — | — |
+| `META` | `read` | yes | yes |
 | `WRITE`, `FLUSH`, `LEAVE` | `write` | — | — |
 | `SYNC_PREPARE`, `SYNC_ACCEPT` (the chunk membership register, including witnesses) | `write` | — | yes |
 | `DISCARD`, `WRITE_ZEROES` with `UNMAP` | `write` | — | — |
@@ -364,7 +365,10 @@ MDS commands:
 | `OBJ_TRANSFER` (changes the owner of an object) | — | — | yes |
 
 Provider admins also use the membership register to initialize newly created
-objects and manage their copies. This grants metadata control, not data writes.
+objects and manage their copies. This grants metadata control, not data access:
+a provider never opens an object, so neither `admin` nor `mds` reads or writes
+data. Reading an account's data takes a client certificate of that account,
+issued for it.
 
 `SYNC_PREPARE` and `SYNC_ACCEPT` are how a writer records which copies are in
 sync, excludes one and takes it back, so every writer needs them and a

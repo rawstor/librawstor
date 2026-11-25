@@ -99,10 +99,8 @@ bool provider_member(Type type, RawstorCommandType command) {
     switch (command) {
     case RAWSTOR_CMD_HANDSHAKE:
         return true;
-    case RAWSTOR_CMD_SET_OBJECT:
-    case RAWSTOR_CMD_READ:
+    // Metadata only: a provider never opens an object, so it reads no data.
     case RAWSTOR_CMD_META:
-    case RAWSTOR_CMD_LIST_VERSIONS:
     case RAWSTOR_CMD_LIST:
     case RAWSTOR_CMD_LOCATION_INFO:
         return type == Type::admin || type == Type::mds;

@@ -69,6 +69,28 @@ TEST(
     }
 }
 
+TEST(AuthorizationTest, providers_read_metadata_but_no_data) {
+    for (auto type : {rawtls::Type::admin, rawtls::Type::mds}) {
+        for (auto command :
+             {RAWSTOR_CMD_META, RAWSTOR_CMD_LIST, RAWSTOR_CMD_LOCATION_INFO}) {
+            EXPECT_TRUE(rawtls::provider_member(type, command));
+        }
+        for (auto command :
+             {RAWSTOR_CMD_SET_OBJECT, RAWSTOR_CMD_READ,
+              RAWSTOR_CMD_LIST_VERSIONS}) {
+            EXPECT_FALSE(rawtls::provider_member(type, command));
+        }
+    }
+    Connection connection;
+    rawtls::Authorization authorization;
+    connection.identity =
+        rawtls::SpiffeId("spiffe://cluster.example/admin/operator");
+    EXPECT_EQ(
+        authorization.check(connection, RAWSTOR_CMD_READ, nullptr, nullptr),
+        EACCES
+    );
+}
+
 TEST(AuthorizationTest, object_masks_override_role_defaults) {
     Connection connection;
     rawtls::Authorization authorization;
