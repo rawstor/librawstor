@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `rawstor pki show` prints object permissions as `rwx` (`UUID:rw-`), not as a number.
+- `rawstor pki issue --object-permissions` takes `UUID:rwx` (`UUID:rw-`, `UUID:---` to deny), not a numeric mask, and `rawstor pki show` prints object permissions the same way.
 
 ## [0.3.5] - 2026-11-25
 
