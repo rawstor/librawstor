@@ -9,7 +9,7 @@
 
 namespace rawtls {
 
-// Certificate policy: the role supplies defaults; object masks override them.
+// Certificate policy: the account role supplies defaults; object masks override them.
 struct Permissions {
     uint32_t role = 0;
     std::map<std::string, uint32_t> objects;
@@ -17,7 +17,7 @@ struct Permissions {
     uint32_t mask(const uint8_t* object = nullptr) const;
 };
 
-enum class Role {
+enum class Type {
     ost,
     mds,
     admin,
@@ -41,7 +41,7 @@ enum class Role {
 class SpiffeId final {
 private:
     rawstd::URI _uri;
-    Role _role;
+    Type _type;
     std::string _account;
     std::string _name;
     Permissions _permissions;
@@ -56,21 +56,21 @@ public:
 
     const std::string& trust_domain() const noexcept { return _uri.hostname(); }
 
-    Role role() const noexcept { return _role; }
+    Type type() const noexcept { return _type; }
 
-    // The account of a client, empty for every other role.
+    // The account of a client, empty for every other type.
     const std::string& account() const noexcept { return _account; }
 
-    // The OST id of an ost, the MDS id of an mds, the name of every other role.
+    // The OST id of an ost, the MDS id of an mds, the name of every other type.
     const std::string& name() const noexcept { return _name; }
 
     const Permissions& permissions() const noexcept { return _permissions; }
 
     void permissions(Permissions value) { _permissions = std::move(value); }
 
-    // True for the roles that may serve a connection: an OST or an MDS.
+    // True for the types that may serve a connection: an OST or an MDS.
     bool is_server() const noexcept {
-        return _role == Role::ost || _role == Role::mds;
+        return _type == Type::ost || _type == Type::mds;
     }
 };
 

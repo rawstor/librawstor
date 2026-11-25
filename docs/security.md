@@ -107,7 +107,7 @@ flowchart LR
 
 ## Identity: mTLS
 
-Every connection, whatever the role at the other end, is TLS 1.3 with mutual
+Every connection, whatever the process at the other end, is TLS 1.3 with mutual
 authentication, implemented with OpenSSL. This gives transport encryption and
 peer authentication in one mechanism and avoids a home-made handshake.
 
@@ -163,7 +163,7 @@ the wrong host but cannot make that host pass as the expected identity. Servers 
 the account and role rules of stage 3.
 
 Services verify the peer chain against a configured CA bundle, check
-`extendedKeyUsage`, and take the identity from the URI SAN. A server role
+`extendedKeyUsage`, and take the identity from the URI SAN. A server type
 (`/ost/`, `/mds/` in the path) is what stops a client from impersonating an
 OST.
 
@@ -195,7 +195,7 @@ published pages, to be re-checked when the choice is made):
   deployment tool already knows which process gets which account.
 - The project's own `rawstor pki` for installations with none of the above:
   `init` makes a CA for the trust domain of a deployment in a directory, `issue`
-  makes the certificate and key of one process from its role and name (`ost`,
+  makes the certificate and key of one process from its type and name (`ost`,
   `mds`, `admin` or `client`), `renew` replaces them before they expire. The CA is the one
   place that holds a signing key, and the helper runs on that one machine; it
   is a small tool, not an enrolment service, so getting the files to the hosts
@@ -327,41 +327,41 @@ Two kinds of principals, told apart by the path of their SPIFFE ID:
   freeze). Explicit object permissions override these defaults. A `none` client
   has no account-wide listing permission and may access only its named objects.
 - **Provider principals**: `mds` (`/mds/...`), `admin` (`/admin/...`). They
-  are not account-scoped and authorize by their certificate role.
+  are not account-scoped and authorize by their type.
 
 The list is closed: a command that is not in the table is refused with
-`-EACCES`. `—` means the role may not use the command.
+`-EACCES`. `yes` means the type may use the command, `—` that it may not.
 
 OST commands:
 
 | Command | Account principal: certificate permission | `mds` | `admin` |
 |---|---|---|---|
 | `HANDSHAKE` | any | any | any |
-| `SET_OBJECT` | `RAWSTOR_READONLY` needs `read`, a read-write open needs `write` | role | role |
-| `READ`, `META`, `LIST_VERSIONS` | `read` | role | role |
+| `SET_OBJECT` | `RAWSTOR_READONLY` needs `read`, a read-write open needs `write` | yes | yes |
+| `READ`, `META`, `LIST_VERSIONS` | `read` | yes | yes |
 | `WRITE`, `FLUSH`, `LEAVE` | `write` | — | — |
-| `SYNC_PREPARE`, `SYNC_ACCEPT` (the chunk membership register, including witnesses) | `write` | — | role |
+| `SYNC_PREPARE`, `SYNC_ACCEPT` (the chunk membership register, including witnesses) | `write` | — | yes |
 | `DISCARD`, `WRITE_ZEROES` with `UNMAP` | `write` | — | — |
 | `WRITE_ZEROES` without `UNMAP` | `write` | — | — |
-| `ALLOCATE`, `RELEASE`, `CREATE_VERSION`, `FREEZE`, `THAW` | `manage` | — | role |
-| `SET_OWNER` (records the owner in one member; `rawstor object transfer` sends it to every member) | — | — | role |
-| `LIST` | `read`, filtered to the certificate account and readable objects | role | role |
-| `LOCATION_INFO` | — | role | role |
+| `ALLOCATE`, `RELEASE`, `CREATE_VERSION`, `FREEZE`, `THAW` | `manage` | — | yes |
+| `SET_OWNER` (records the owner in one member; `rawstor object transfer` sends it to every member) | — | — | yes |
+| `LIST` | `read`, filtered to the certificate account and readable objects | yes | yes |
+| `LOCATION_INFO` | — | yes | yes |
 
 MDS commands:
 
 | Command | Account principal: role | `mds` | `admin` |
 |---|---|---|---|
 | `HANDSHAKE` | any | any | any |
-| `SET_OBJECT` (binds nothing on an MDS) | any nonzero default or object permissions | — | role |
-| `RESOLVE` | any nonzero permissions on the object | — | role |
-| `LIST_VERSIONS` | `reader` | — | role |
-| `LIST` | default role grants `read`; answers only the certificate account | — | role: any account or all |
-| `OBJ_CREATE`, `OBJ_RESIZE`, `OBJ_REMOVE`, `OBJ_COMMIT_VERSION`, `OBJ_REMOVE_VERSION` | `manager` | — | role |
+| `SET_OBJECT` (binds nothing on an MDS) | any nonzero default or object permissions | — | yes |
+| `RESOLVE` | any nonzero permissions on the object | — | yes |
+| `LIST_VERSIONS` | `reader` | — | yes |
+| `LIST` | default role grants `read`; answers only the certificate account | — | yes: any account or all |
+| `OBJ_CREATE`, `OBJ_RESIZE`, `OBJ_REMOVE`, `OBJ_COMMIT_VERSION`, `OBJ_REMOVE_VERSION` | `manager` | — | yes |
 | `ALLOCATE`, `RELEASE`, `META`, `SYNC_PREPARE`, `SYNC_ACCEPT` on a witness hosted by the MDS | as the same command on an OST (`SYNC_*`: `write`), by certificate | — | as on an OST |
-| `LOCATION_INFO`, `LIST_LOCATIONS` | — | — | role |
-| `LIST_ACCOUNTS`, `ACCOUNT_CREATE`, `ACCOUNT_REMOVE` | — | — | role |
-| `OBJ_TRANSFER` (changes the owner of an object) | — | — | role |
+| `LOCATION_INFO`, `LIST_LOCATIONS` | — | — | yes |
+| `LIST_ACCOUNTS`, `ACCOUNT_CREATE`, `ACCOUNT_REMOVE` | — | — | yes |
+| `OBJ_TRANSFER` (changes the owner of an object) | — | — | yes |
 
 Provider admins also use the membership register to initialize newly created
 objects and manage their copies. This grants metadata control, not data writes.
@@ -384,7 +384,7 @@ Rules that apply to every row:
 - An object of another account is `-ENOENT`, in every command, so an account
   cannot probe for ids. A known object of its own account that the role does
   not allow is `-EACCES`.
-- Provider roles come from the SPIFFE identity; account roles and masks come
+- The type of a principal comes from the SPIFFE identity; account roles and masks come
   from the signed policy. `LIST` on an OST filters account clients to their
   own readable objects. Only providers may inspect location-wide statistics.
 - Accounts own objects and nothing else: only an `admin` changes the owner of

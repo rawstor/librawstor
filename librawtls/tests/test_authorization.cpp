@@ -57,8 +57,8 @@ TEST(
         EXPECT_EQ(
             authorization.check(connection, command, nullptr, nullptr), 0
         );
-        EXPECT_FALSE(rawtls::provider_member(rawtls::Role::mds, command));
-        EXPECT_FALSE(rawtls::provider_member(rawtls::Role::ost, command));
+        EXPECT_FALSE(rawtls::provider_member(rawtls::Type::mds, command));
+        EXPECT_FALSE(rawtls::provider_member(rawtls::Type::ost, command));
     }
     for (auto command :
          {RAWSTOR_CMD_WRITE, RAWSTOR_CMD_DISCARD, RAWSTOR_CMD_WRITE_ZEROES,

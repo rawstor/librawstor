@@ -467,7 +467,7 @@ std::string CA::issue_id(
             id + " is not in the trust domain " + _trust_domain + " of this CA"
         );
     }
-    if (parsed->role() != Role::client &&
+    if (parsed->type() != Type::client &&
         (permissions.role || !permissions.objects.empty())) {
         raise(EINVAL, "Only a client has permissions");
     }
@@ -491,28 +491,28 @@ std::string CA::issue_id(
 }
 
 std::string CA::issue(
-    Role role, const std::string& account, const std::string& name,
+    Type type, const std::string& account, const std::string& name,
     std::chrono::seconds validity, const std::string& cert_file,
     const std::string& key_file, const Permissions& permissions
 ) const {
     ERR_clear_error();
     std::string id = "spiffe://" + _trust_domain;
-    if (role != Role::client && !account.empty()) {
+    if (type != Type::client && !account.empty()) {
         raise(EINVAL, "Only a client has an account");
     }
-    switch (role) {
-    case Role::ost:
-    case Role::mds:
-        id += (role == Role::ost ? "/ost/" : "/mds/") +
+    switch (type) {
+    case Type::ost:
+    case Type::mds:
+        id += (type == Type::ost ? "/ost/" : "/mds/") +
               (name.empty() ? new_id() : name);
         break;
-    case Role::admin:
+    case Type::admin:
         if (name.empty()) {
             raise(EINVAL, "A name is required");
         }
         id += "/admin/" + name;
         break;
-    case Role::client:
+    case Type::client:
         if (account.empty() || name.empty()) {
             raise(EINVAL, "A client needs an account and a name");
         }

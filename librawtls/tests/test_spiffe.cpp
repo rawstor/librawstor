@@ -25,7 +25,7 @@ void expect_rejected(const std::string& uri) {
 TEST(SpiffeTest, Ost) {
     rawtls::SpiffeId id =
         rawtls::SpiffeId("spiffe://cluster.example/ost/" + uuid_a);
-    EXPECT_EQ(id.role(), rawtls::Role::ost);
+    EXPECT_EQ(id.type(), rawtls::Type::ost);
     EXPECT_EQ(id.trust_domain(), "cluster.example");
     EXPECT_EQ(id.name(), uuid_a);
     EXPECT_TRUE(id.account().empty());
@@ -35,7 +35,7 @@ TEST(SpiffeTest, Ost) {
 TEST(SpiffeTest, Mds) {
     rawtls::SpiffeId id =
         rawtls::SpiffeId("spiffe://cluster.example/mds/" + uuid_a);
-    EXPECT_EQ(id.role(), rawtls::Role::mds);
+    EXPECT_EQ(id.type(), rawtls::Type::mds);
     EXPECT_EQ(id.name(), uuid_a);
     EXPECT_TRUE(id.is_server());
 }
@@ -43,7 +43,7 @@ TEST(SpiffeTest, Mds) {
 TEST(SpiffeTest, Admin) {
     rawtls::SpiffeId id =
         rawtls::SpiffeId("spiffe://cluster.example/admin/ops_2");
-    EXPECT_EQ(id.role(), rawtls::Role::admin);
+    EXPECT_EQ(id.type(), rawtls::Type::admin);
     EXPECT_EQ(id.name(), "ops_2");
     EXPECT_FALSE(id.is_server());
 }
@@ -52,7 +52,7 @@ TEST(SpiffeTest, Client) {
     std::string uri =
         "spiffe://cluster.example/account/" + uuid_b + "/client/vm42.disk0";
     rawtls::SpiffeId id(uri);
-    EXPECT_EQ(id.role(), rawtls::Role::client);
+    EXPECT_EQ(id.type(), rawtls::Type::client);
     EXPECT_EQ(id.account(), uuid_b);
     EXPECT_EQ(id.name(), "vm42.disk0");
     EXPECT_EQ(id.uri().str(), uri);

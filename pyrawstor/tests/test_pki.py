@@ -120,12 +120,12 @@ class TestPki(unittest.TestCase):
         pki.issue_client(self.ca, ACCOUNT, "vm", crt, key,
                          role="manager", object_permissions=permissions)
         before = pki.show(crt)
-        self.assertEqual(before.access_role, "manager")
+        self.assertEqual(before.role, "manager")
         self.assertEqual(before.object_permissions, permissions)
         pki.renew(self.ca, crt, key)
         after = pki.show(crt)
         self.assertEqual(after.identity, before.identity)
-        self.assertEqual(after.access_role, before.access_role)
+        self.assertEqual(after.role, before.role)
         self.assertEqual(after.object_permissions, permissions)
         with self.assertRaises((OSError, ValueError)):
             pki.issue_client(self.ca, ACCOUNT, "vm", crt, key,
@@ -137,17 +137,17 @@ class TestPki(unittest.TestCase):
         crt, key = self.dir / "vhost.crt", self.dir / "vhost.key"
         pki.issue_client(self.ca, ACCOUNT, "vhost", crt, key,
                          role="none", object_permissions={OST: 3})
-        self.assertEqual(pki.show(crt).access_role, "none")
+        self.assertEqual(pki.show(crt).role, "none")
         self.assertEqual(pki.show(crt).object_permissions, {OST: 3})
         pki.renew(self.ca, crt, key)
-        self.assertEqual(pki.show(crt).access_role, "none")
+        self.assertEqual(pki.show(crt).role, "none")
         self.assertEqual(pki.show(crt).object_permissions, {OST: 3})
         pki.issue_client(self.ca, ACCOUNT, "empty", crt, key, role="none")
-        self.assertEqual(pki.show(crt).access_role, "none")
+        self.assertEqual(pki.show(crt).role, "none")
         self.assertEqual(pki.show(crt).object_permissions, {})
         admin = self.dir / "admin.crt"
         pki.issue_admin(self.ca, "operator", admin, key)
-        self.assertIsNone(pki.show(admin).access_role)
+        self.assertIsNone(pki.show(admin).role)
 
     def test_missing_ca(self):
         with self.assertRaises(FileNotFoundError):
