@@ -95,17 +95,15 @@ uint32_t member_permission(RawstorCommandType command, uint64_t flags) {
     }
 }
 
-bool provider_member(Role role, RawstorCommandType command) {
+bool provider_member(Type type, RawstorCommandType command) {
     switch (command) {
     case RAWSTOR_CMD_HANDSHAKE:
         return true;
-    case RAWSTOR_CMD_SET_OBJECT:
-    case RAWSTOR_CMD_READ:
+    // Metadata only: a provider never opens an object, so it reads no data.
     case RAWSTOR_CMD_META:
-    case RAWSTOR_CMD_LIST_VERSIONS:
     case RAWSTOR_CMD_LIST:
     case RAWSTOR_CMD_LOCATION_INFO:
-        return role == Role::admin || role == Role::mds;
+        return type == Type::admin || type == Type::mds;
     case RAWSTOR_CMD_SYNC_PREPARE:
     case RAWSTOR_CMD_SYNC_ACCEPT:
     case RAWSTOR_CMD_ALLOCATE:
@@ -114,7 +112,7 @@ bool provider_member(Role role, RawstorCommandType command) {
     case RAWSTOR_CMD_FREEZE:
     case RAWSTOR_CMD_THAW:
     case RAWSTOR_CMD_SET_OWNER:
-        return role == Role::admin;
+        return type == Type::admin;
     default:
         return false;
     }
@@ -246,7 +244,7 @@ int Authorization::owner(
     const Transport& connection, const uint8_t* account
 ) const {
     auto peer = connection.peer();
-    if (!peer || peer->role() != Role::client) {
+    if (!peer || peer->type() != Type::client) {
         return 0;
     }
     RawstdUUID expected{};
@@ -268,8 +266,8 @@ int Authorization::check(
     if (connection.peer_expiry() <= static_cast<uint64_t>(time(nullptr))) {
         return EACCES;
     }
-    if (peer->role() != Role::client) {
-        return provider_member(peer->role(), command) ? 0 : EACCES;
+    if (peer->type() != Type::client) {
+        return provider_member(peer->type(), command) ? 0 : EACCES;
     }
     uint32_t required = member_permission(command, flags),
              mask = peer->permissions().mask(id);

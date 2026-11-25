@@ -70,30 +70,30 @@ int rawstor_pki_init(
 }
 
 int rawstor_pki_issue(
-    const char* dir, enum RawstorPkiRole role, const char* account,
+    const char* dir, enum RawstorPkiType type, const char* account,
     const char* name, unsigned long validity, const char* cert_file,
     const char* key_file, char* identity, size_t size,
     const RawstorPkiPermissions* permissions
 ) {
     return guarded([&] {
         check_room(identity, size);
-        rawtls::Role r;
-        switch (role) {
+        rawtls::Type r;
+        switch (type) {
         case RAWSTOR_PKI_OST:
-            r = rawtls::Role::ost;
+            r = rawtls::Type::ost;
             break;
         case RAWSTOR_PKI_MDS:
-            r = rawtls::Role::mds;
+            r = rawtls::Type::mds;
             break;
         case RAWSTOR_PKI_ADMIN:
-            r = rawtls::Role::admin;
+            r = rawtls::Type::admin;
             break;
         case RAWSTOR_PKI_CLIENT:
-            r = rawtls::Role::client;
+            r = rawtls::Type::client;
             break;
         default:
             throw std::system_error(
-                EINVAL, std::generic_category(), "Unknown role"
+                EINVAL, std::generic_category(), "Unknown type"
             );
         }
         rawtls::Permissions policy;

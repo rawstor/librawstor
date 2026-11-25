@@ -111,7 +111,7 @@ TEST_F(PkiTest, an_mds_without_a_name_gets_an_id) {
     );
 }
 
-TEST_F(PkiTest, every_role_has_its_shape) {
+TEST_F(PkiTest, every_type_has_its_shape) {
     std::string ca = path("ca");
     ASSERT_EQ(rawstor_pki_init(ca.c_str(), "cluster.example", 86400), 0);
     std::string cert = path("x.crt");
@@ -201,7 +201,7 @@ TEST_F(PkiTest, failures_are_errno_and_a_message) {
     );
     EXPECT_EQ(
         rawstor_pki_issue(
-            ca.c_str(), static_cast<RawstorPkiRole>(99), nullptr, "x", 3600,
+            ca.c_str(), static_cast<RawstorPkiType>(99), nullptr, "x", 3600,
             cert.c_str(), key.c_str(), nullptr, 0, nullptr
         ),
         -EINVAL

@@ -381,9 +381,9 @@ TEST_F(TransportTest, HandshakeNamesThePeers) {
     ASSERT_NE(server, nullptr);
     ASSERT_NE(client->peer(), nullptr);
     ASSERT_NE(server->peer(), nullptr);
-    EXPECT_EQ(client->peer()->role(), rawtls::Role::ost);
+    EXPECT_EQ(client->peer()->type(), rawtls::Type::ost);
     EXPECT_EQ(client->peer()->name(), ost_id);
-    EXPECT_EQ(server->peer()->role(), rawtls::Role::client);
+    EXPECT_EQ(server->peer()->type(), rawtls::Type::client);
     EXPECT_EQ(server->peer()->account(), account);
 }
 
@@ -695,16 +695,16 @@ int finish(
 class HandshakeTest : public TransportTest {
 protected:
     // Opens the two ends of `fds`, a client that expects `expected` (or a
-    // server of `role`) against a server.
+    // server of `type`) against a server.
     Opened open_both(
         Pair& fds, rawtls::Context& client_context,
         rawtls::Context& server_context, const std::string& expected,
-        std::optional<rawtls::Role> role = std::nullopt
+        std::optional<rawtls::Type> type = std::nullopt
     ) {
         Opened result;
         rawstd::Task<std::unique_ptr<Transport>> c = Transport::tls(
             *queue, fds.fds[0], client_context, rawtls::Mode::client, expected,
-            role
+            type
         );
         rawstd::Task<std::unique_ptr<Transport>> s = Transport::tls(
             *queue, fds.fds[1], server_context, rawtls::Mode::server
@@ -1038,12 +1038,12 @@ TEST_F(HandshakeTest, ClientNeedsAnExpectedServerIdentity) {
     );
 }
 
-TEST_F(HandshakeTest, ClientMayExpectOnlyTheRoleOfTheServer) {
+TEST_F(HandshakeTest, ClientMayExpectOnlyTheTypeOfTheServer) {
     rawtls::Context client_context(config(pki, client_identity));
     rawtls::Context server_context(config(pki, server_identity));
     {
         Opened r = open_both(
-            pair, client_context, server_context, "", rawtls::Role::ost
+            pair, client_context, server_context, "", rawtls::Type::ost
         );
         EXPECT_EQ(r.client_error, 0);
         ASSERT_NE(r.client, nullptr);
@@ -1052,15 +1052,15 @@ TEST_F(HandshakeTest, ClientMayExpectOnlyTheRoleOfTheServer) {
     {
         Pair second;
         Opened r = open_both(
-            second, client_context, server_context, "", rawtls::Role::mds
+            second, client_context, server_context, "", rawtls::Type::mds
         );
         EXPECT_EQ(r.client_error, EACCES);
     }
-    // Only the roles of a server can be expected of one.
+    // Only the types of a server can be expected of one.
     EXPECT_THROW(
         Transport::tls(
             *queue, pair.fds[0], client_context, rawtls::Mode::client, "",
-            rawtls::Role::admin
+            rawtls::Type::admin
         )
             .get(),
         std::system_error

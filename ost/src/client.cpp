@@ -199,7 +199,7 @@ rawstd::Task<int> Client::_authorize(
     int error =
         _authorization.check(*_transport, command, object, version, flags);
     if (error || !_transport->peer() ||
-        _transport->peer()->role() != rawtls::Role::client || !object) {
+        _transport->peer()->type() != rawtls::Type::client || !object) {
         co_return error;
     }
     bool bound = command == RAWSTOR_CMD_READ || command == RAWSTOR_CMD_WRITE ||
@@ -448,8 +448,8 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                     break;
                 }
                 if (client->_transport->peer() &&
-                    client->_transport->peer()->role() ==
-                        rawtls::Role::client &&
+                    client->_transport->peer()->type() ==
+                        rawtls::Type::client &&
                     client->_authorization.owner(
                         *client->_transport, spec.account_id
                     )) {
@@ -576,8 +576,8 @@ rawstd::DetachedTask Client::_recv_pump(std::weak_ptr<Client> weak, int fd) {
                     break;
                 }
                 if (client->_transport->peer() &&
-                    client->_transport->peer()->role() ==
-                        rawtls::Role::client) {
+                    client->_transport->peer()->type() ==
+                        rawtls::Type::client) {
                     RawstdUUID account{}, requested{};
                     rawstd_uuid_from_string(
                         &account, client->_transport->peer()->account().c_str()
@@ -1018,7 +1018,7 @@ rawstd::DetachedTask Client::_list(
         std::vector<RawstorFrameListEntry> entries;
         for (const auto& group : groups) {
             if (client->_transport->peer() &&
-                client->_transport->peer()->role() == rawtls::Role::client &&
+                client->_transport->peer()->type() == rawtls::Type::client &&
                 !(client->_transport->peer()->permissions().mask(
                       group.id.bytes
                   ) &

@@ -111,7 +111,7 @@ void initialize() {
         // Only the name of an MDS in this trust domain makes an identity.
         bool valid = false;
         try {
-            valid = rawtls::SpiffeId(mds).role() == rawtls::Role::mds;
+            valid = rawtls::SpiffeId(mds).type() == rawtls::Type::mds;
         } catch (const std::system_error&) {
         }
         if (!valid) {
@@ -124,7 +124,7 @@ void initialize() {
     std::lock_guard<std::mutex> lock(mutex);
     rawtls::SpiffeId own(rawtls::inspect(config.cert_file).identity);
     client_account = {};
-    if (own.role() == rawtls::Role::client) {
+    if (own.type() == rawtls::Type::client) {
         rawstd_uuid_from_string(&client_account, own.account().c_str());
     }
     process_context = std::move(context);
@@ -183,17 +183,17 @@ rawstd::Task<std::unique_ptr<rawtls::Transport>> connect(
     if (c == nullptr) {
         co_return rawtls::Transport::plain(queue, fd);
     }
-    std::optional<rawtls::Role> role;
+    std::optional<rawtls::Type> type;
     std::string expected_peer;
     if (scheme == "ost") {
         std::lock_guard<std::mutex> lock(mutex);
         if (mds_hosts.count(host) != 0) {
             // The MDS's own witness: the server is the MDS this process was
             // configured with, not an OST the MDS named.
-            role = rawtls::Role::mds;
+            type = rawtls::Type::mds;
             expected_peer = mds_identity;
         } else {
-            role = rawtls::Role::ost;
+            type = rawtls::Type::ost;
             std::map<std::string, std::string>::const_iterator it =
                 ost_identities.find(host);
             if (it != ost_identities.end()) {
@@ -201,7 +201,7 @@ rawstd::Task<std::unique_ptr<rawtls::Transport>> connect(
             }
         }
     } else if (scheme == "mds") {
-        role = rawtls::Role::mds;
+        type = rawtls::Type::mds;
         std::lock_guard<std::mutex> lock(mutex);
         expected_peer = mds_identity;
     } else {
@@ -209,11 +209,11 @@ rawstd::Task<std::unique_ptr<rawtls::Transport>> connect(
     }
     std::unique_ptr<rawtls::Transport> transport =
         co_await rawtls::Transport::tls(
-            queue, fd, *c, rawtls::Mode::client, expected_peer, role
+            queue, fd, *c, rawtls::Mode::client, expected_peer, type
         );
     if (scheme == "mds") {
         // Only an address that has answered as an MDS is one: a refused
-        // handshake, or a server of another role, does not make it so.
+        // handshake, or a server of another type, does not make it so.
         std::lock_guard<std::mutex> lock(mutex);
         mds_hosts.insert(host);
     }
