@@ -214,7 +214,9 @@ adds writes and discards, and `manager` adds creation, deletion and version
 management. The role is that of a client in its account; the `type` column of
 `pki show` tells a client from the processes that have no role. Provider
 `admin` certificates manage accounts, objects and ownership; `mds` certificates
-scan OST metadata. Neither provider type may open an object, read or write data, and OST certificates grant no provider permissions.
+scan OST metadata and probe the space of OSTs. Neither provider type may open
+an object, read or write data, and OST certificates grant no provider
+permissions.
 
 To set explicit object permissions, repeat `--object-permissions UUID:rwx` when
 issuing the certificate (at most 128 entries). The permissions override the role's defaults:
