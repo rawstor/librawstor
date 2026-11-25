@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <getopt.h>
 #include <limits.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -101,11 +102,11 @@ static void issue_usage(void) {
         "  --ca DIR              The CA made by `pki init`\n"
         "  --cert FILE           Where the certificate goes\n"
         "  --key FILE            Where the private key goes\n"
-        "  --object-permissions UUID:MASK\n"
+        "  --object-permissions UUID:rwx\n"
         "                        Set permissions for one object and its "
         "versions "
         "(repeat up to 128 times)\n"
-        "                        read=1, write=2, manage=4; 0 "
+        "                        r=read, w=write, x=manage, - or --- "
         "denies access.\n"
         "                        The mask overrides the role; other objects "
         "keep role permissions.\n"
@@ -122,7 +123,8 @@ static void issue_usage(void) {
         "apply are empty,\n"
         "null in json. access_role and object_permissions show the signed "
         "client "
-        "permissions.\n"
+        "permissions\n"
+        "(object_permissions as UUID:rwx, - for a missing bit).\n"
         "`--format value --column id` prints just an OST's or "
         "an MDS's id.\n"
     );
@@ -443,7 +445,10 @@ static RawstorCliTable* identity_table(const struct RawstorPkiInfo* info) {
             &info->permissions.objects[i];
         used += (size_t)snprintf(
             object_permissions + used, sizeof(object_permissions) - used,
-            "%s%s:%u", i ? "," : "", entry->object_id, entry->permissions
+            "%s%s:%c%c%c", i ? "," : "", entry->object_id,
+            entry->permissions & RAWSTOR_PERM_READ ? 'r' : '-',
+            entry->permissions & RAWSTOR_PERM_WRITE ? 'w' : '-',
+            entry->permissions & RAWSTOR_PERM_MANAGE ? 'x' : '-'
         );
     }
     RawstorCliCell cells[] = {
@@ -564,27 +569,37 @@ static int command_issue(int argc, char** argv, int renew) {
             break;
         case 'o': {
             const char* separator = strchr(optarg, ':');
-            char* end = NULL;
             if (renew || !separator || separator - optarg != 36 ||
                 permissions.count == RAWSTOR_PKI_MAX_OBJECT_PERMISSIONS) {
                 fprintf(
                     stderr,
-                    "--object-permissions requires UUID:MASK (at most 128 "
+                    "--object-permissions requires UUID:rwx (at most 128 "
                     "entries); use issue to change permissions\n"
                 );
                 return EX_USAGE;
             }
-            errno = 0;
-            unsigned long mask = strtoul(separator + 1, &end, 10);
-            if (!separator[1] || *end || errno || mask > RAWSTOR_PERM_ALL) {
-                fprintf(stderr, "MASK must be 0..7\n");
+            unsigned int mask = 0;
+            bool valid = separator[1] != '\0';
+            for (const char* c = separator + 1; valid && *c; ++c) {
+                unsigned int bit = *c == 'r'   ? RAWSTOR_PERM_READ
+                                   : *c == 'w' ? RAWSTOR_PERM_WRITE
+                                   : *c == 'x' ? RAWSTOR_PERM_MANAGE
+                                               : 0;
+                if (*c == '-') {
+                    continue;
+                }
+                valid = bit != 0 && !(mask & bit);
+                mask |= bit;
+            }
+            if (!valid) {
+                fprintf(stderr, "Permissions must be rwx, e.g. rw- or ---\n");
                 return EX_USAGE;
             }
             struct RawstorPkiObjectPermissions* entry =
                 &permissions.objects[permissions.count++];
             memcpy(entry->object_id, optarg, 36);
             entry->object_id[36] = '\0';
-            entry->permissions = (unsigned int)mask;
+            entry->permissions = mask;
             break;
         }
         case 'V': {

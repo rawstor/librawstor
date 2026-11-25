@@ -91,7 +91,7 @@ rawstor pki issue --ca ca --cert ost.crt --key ost.key ost       # a new id
 rawstor pki issue --ca ca --cert mds.crt --key mds.key mds       # a new id
 rawstor pki issue --ca ca --cert hv1.crt --key hv1.key admin hv1
 rawstor pki issue --ca ca --cert vm.crt --key vm.key \
-  --role none --object-permissions <object-uuid>:3 client <account-uuid> vm-1
+  --role none --object-permissions <object-uuid>:rw- client <account-uuid> vm-1
 rawstor pki renew --ca ca --cert ost.crt --key ost.key
 rawstor pki show ost.crt                                        # what it says
 ```
@@ -214,34 +214,35 @@ management. The process role shown as `role=client` is separate from the
 objects and ownership; `mds` certificates scan OST metadata. Neither provider
 role may write data, and OST certificates grant no provider permissions.
 
-To set explicit object permissions, repeat `--object-permissions UUID:MASK` when
-issuing the certificate (at most 128 entries). The mask overrides the role's defaults:
-`read=1`, `write=2`, `manage=4`; write includes discard and zeroing. Combine bits by addition, or use
-zero to deny the object. Other objects retain the role's defaults. Object permissions
+To set explicit object permissions, repeat `--object-permissions UUID:rwx` when
+issuing the certificate (at most 128 entries). The permissions override the role's defaults:
+`r` reads, `w` writes (including discard and zeroing), `x` manages; write them
+in any order and use `-` as a placeholder, e.g. `rw-` or `rw`. `---` denies the
+object. `pki show` prints them as `UUID:rwx`. Other objects retain the role's defaults. Object permissions
 apply to the object and all its versions; snapshots remain read-only.
 
 ```sh
 rawstor pki issue --ca ca --cert restricted-manager.crt --key restricted-manager.key \
   --role manager \
-  --object-permissions 018f4e2a-2222-7000-8000-000000000002:1 \
-  --object-permissions 018f4e2a-2222-7000-8000-000000000003:0 \
+  --object-permissions 018f4e2a-2222-7000-8000-000000000002:r-- \
+  --object-permissions 018f4e2a-2222-7000-8000-000000000003:--- \
   client 018f4e2a-2222-7000-8000-000000000001 restricted-manager
 rawstor pki show restricted-manager.crt
 ```
 
 For a vhost that may access only one object, use `none` and grant that UUID
-read/write/discard (`3`):
+read/write/discard (`rw-`):
 
 ```sh
 rawstor pki issue --ca ca --cert vhost.crt --key vhost.key \
   --role none \
-  --object-permissions 018f4e2a-2222-7000-8000-000000000002:3 \
+  --object-permissions 018f4e2a-2222-7000-8000-000000000002:rw- \
   client 018f4e2a-2222-7000-8000-000000000001 vhost-1
 ```
 
 All other objects, including ones created later, are denied. The same grant
-covers the object's versions, whose data remains read-only. Use mask `1` and `rawstor-vhost --readonly` for
-a read-only vhost. Mask `3` grants ordinary data I/O, not allocation, removal,
+covers the object's versions, whose data remains read-only. Use `r--` and `rawstor-vhost --readonly` for
+a read-only vhost. `rw-` grants ordinary data I/O, not allocation, removal,
 version management or repair that needs to allocate a replacement member.
 A `none` client uses the supplied object target; account-wide `list` is denied.
 MDS control connections may open to resolve an explicitly permitted object.
