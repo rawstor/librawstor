@@ -9,7 +9,8 @@
 
 namespace rawtls {
 
-// Certificate policy: the account role supplies defaults; object masks override them.
+// Certificate policy: the account role supplies defaults; object masks override
+// them.
 struct Permissions {
     uint32_t role = 0;
     std::map<std::string, uint32_t> objects;

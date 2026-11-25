@@ -375,11 +375,8 @@ static int parse_process(
 }
 
 static const char* const identity_columns[] = {
-    "identity",     "type",
-    "trust_domain", "id",
-    "name",         "account_id",
-    "not_after",    "issued",
-    "role",         "object_permissions",
+    "identity",   "type",      "trust_domain", "id",   "name",
+    "account_id", "not_after", "issued",       "role", "object_permissions",
 };
 static const enum RawstorCliColumnType identity_types[] = {
     RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
