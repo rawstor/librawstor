@@ -39,7 +39,7 @@ CertInfo inspect(const std::string& cert_file, const std::string& ca_file = "");
  * It issues what rawtls::Context expects of a process: an EC P-256 key and a
  * certificate with exactly one URI SAN, the SPIFFE ID, the key usage
  * `digitalSignature` and the extended key usages `serverAuth` and
- * `clientAuth`. The ID is built from a role and a name, and always in the trust
+ * `clientAuth`. The ID is built from a type and a name, and always in the trust
  * domain of the CA, so a certificate cannot be made for another deployment.
  * Certificates are short-lived: the caller says for how long.
  *
@@ -78,7 +78,7 @@ public:
     std::string ca_file() const;
 
     /*
-     * Issues a certificate for an identity of `role` with a new key, writing
+     * Issues a certificate for an identity of `type` with a new key, writing
      * both as PEM and replacing what is there; the key is written with mode
      * 0600. Returns the SPIFFE ID.
      *
@@ -93,7 +93,7 @@ public:
      * the error reports the backup path for recovery.
      */
     std::string issue(
-        Role role, const std::string& account, const std::string& name,
+        Type type, const std::string& account, const std::string& name,
         std::chrono::seconds validity, const std::string& cert_file,
         const std::string& key_file, const Permissions& permissions = {}
     ) const;

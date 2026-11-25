@@ -628,8 +628,8 @@ rawstd::Task<void> Client::_dispatch(
             );
             for (const auto& record : records) {
                 if (client->_transport->peer() &&
-                    client->_transport->peer()->role() ==
-                        rawtls::Role::client &&
+                    client->_transport->peer()->type() ==
+                        rawtls::Type::client &&
                     !(client->_transport->peer()->permissions().mask(
                           record.id.bytes
                       ) &

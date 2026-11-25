@@ -151,7 +151,7 @@ int raw_handshake(
     rawstd::Task<std::unique_ptr<rawtls::Transport>> task =
         rawtls::Transport::tls(
             *queue, fd, context, rawtls::Mode::client, expected_peer,
-            rawtls::Role::ost, 5000
+            rawtls::Type::ost, 5000
         );
     std::chrono::steady_clock::time_point deadline =
         std::chrono::steady_clock::now() + std::chrono::seconds(10);

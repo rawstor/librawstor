@@ -25,7 +25,7 @@ Validity = Union[datetime.timedelta, int]
 CA_VALIDITY = datetime.timedelta(days=3650)
 VALIDITY = datetime.timedelta(days=7)
 
-# RawstorPkiRole in <rawstor/pki.h>.
+# RawstorPkiType in <rawstor/pki.h>.
 _OST = 0
 _MDS = 1
 _ADMIN = 2
@@ -58,24 +58,24 @@ def ca_file(directory: Path) -> str:
 
 def _issue(
     directory: Path,
-    role: int,
+    type_: int,
     account: Optional[str],
     name: Optional[str],
     cert_file: Path,
     key_file: Path,
     validity: Validity,
-    access_role: int = 0,
+    role: int = 0,
     object_permissions: Optional[Mapping[str, int]] = None,
 ) -> str:
     return libpki.issue(
         os.fspath(directory),
-        role,
+        type_,
         account,
         name,
         _seconds(validity),
         os.fspath(cert_file),
         os.fspath(key_file),
-        access_role,
+        role,
         None if object_permissions is None else dict(object_permissions),
     )
 
@@ -150,7 +150,10 @@ class Info(NamedTuple):
     not_after: datetime.datetime
     #: Whether the CA given to ``show()`` signed it, None without a CA.
     issued: Optional[bool]
-    access_role: Optional[str]
+    #: The account role of a client: none, reader, writer or manager; None for
+    #: every other type.
+    role: Optional[str]
+    #: The signed object masks of a client.
     object_permissions: Dict[str, int]
 
 
@@ -159,7 +162,7 @@ def show(cert_file: Path, directory: Optional[Path] = None) -> Info:
     changes nothing. With ``directory``, a CA, ``issued`` tells whether that CA
     signed it, without needing its private key. Raises ``OSError`` (``errno.EINVAL``) for a file that is not a
     certificate that names a process of rawstor."""
-    identity, not_after, issued, access_role, object_permissions = libpki.show(
+    identity, not_after, issued, role, object_permissions = libpki.show(
         os.fspath(cert_file),
         None if directory is None else os.fspath(directory),
     )
@@ -167,7 +170,7 @@ def show(cert_file: Path, directory: Optional[Path] = None) -> Info:
         identity,
         datetime.datetime.fromtimestamp(not_after, datetime.timezone.utc),
         issued,
-        ({0: "none", 1: "reader", 2: "writer", 3: "manager"}[access_role]
+        ({0: "none", 1: "reader", 2: "writer", 3: "manager"}[role]
          if "/account/" in identity else None),
         object_permissions,
     )

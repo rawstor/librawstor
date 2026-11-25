@@ -736,7 +736,7 @@ ObjectStore::Access ObjectStore::authorize(
     if (!peer) {
         return result;
     }
-    if (peer->role() == rawtls::Role::admin) {
+    if (peer->type() == rawtls::Type::admin) {
         switch (command) {
         case RAWSTOR_CMD_SET_OBJECT:
         case RAWSTOR_CMD_RESOLVE:
@@ -762,7 +762,7 @@ ObjectStore::Access ObjectStore::authorize(
             RAWSTD_THROW_SYSTEM_ERROR(EACCES);
         }
     }
-    if (peer->role() != rawtls::Role::client) {
+    if (peer->type() != rawtls::Type::client) {
         RAWSTD_THROW_SYSTEM_ERROR(EACCES);
     }
     rawstd_uuid_from_string(&result.account, peer->account().c_str());
@@ -855,8 +855,8 @@ ObjectStore::Access ObjectStore::authorize_witness(
     if (!peer) {
         return result;
     }
-    if (peer->role() != rawtls::Role::client) {
-        if (!rawtls::provider_member(peer->role(), command)) {
+    if (peer->type() != rawtls::Type::client) {
+        if (!rawtls::provider_member(peer->type(), command)) {
             RAWSTD_THROW_SYSTEM_ERROR(EACCES);
         }
         return result;

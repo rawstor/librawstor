@@ -79,7 +79,7 @@ std::vector<std::string> split(std::string_view path) {
 
 namespace rawtls {
 
-SpiffeId::SpiffeId(const std::string& uri) : _uri(uri), _role(Role::ost) {
+SpiffeId::SpiffeId(const std::string& uri) : _uri(uri), _type(Type::ost) {
     const std::string& trust_domain = _uri.hostname();
     const std::string& path = _uri.path().str();
     // URI drops what it cannot read as a port or a password, so the ID must
@@ -97,18 +97,18 @@ SpiffeId::SpiffeId(const std::string& uri) : _uri(uri), _role(Role::ost) {
     }
 
     if (segments.size() == 2 && segments[0] == "ost" && is_uuid(segments[1])) {
-        _role = Role::ost;
+        _type = Type::ost;
         _name = segments[1];
     } else if (segments.size() == 2 && segments[0] == "mds" &&
                is_uuid(segments[1])) {
-        _role = Role::mds;
+        _type = Type::mds;
         _name = segments[1];
     } else if (segments.size() == 2 && segments[0] == "admin") {
-        _role = Role::admin;
+        _type = Type::admin;
         _name = segments[1];
     } else if (segments.size() == 4 && segments[0] == "account" &&
                is_uuid(segments[1]) && segments[2] == "client") {
-        _role = Role::client;
+        _type = Type::client;
         _account = segments[1];
         _name = segments[3];
     } else {
