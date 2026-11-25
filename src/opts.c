@@ -31,6 +31,8 @@
 #define RAWSTOR_OPTS_IO_RETRY_BACKOFF_JITTER 50
 #define RAWSTOR_OPTS_MIRROR_PROBE_INTERVAL 5000
 #define RAWSTOR_OPTS_MIRROR_RESYNC_LEASE 30000
+// No limit.
+#define RAWSTOR_OPTS_MIRROR_RESYNC_RATE 0
 // Far above what the clients and OSTs of a cluster open at once (a handshake
 // is ~2 ms of CPU and some tens of KiB), far below the descriptors a process
 // has.
@@ -209,6 +211,9 @@ int rawstor_opts_initialize(const struct RawstorOpts* opts) {
         {given.mirror_resync_lease, "RAWSTOR_OPTS_MIRROR_RESYNC_LEASE", 0,
          RAWSTOR_OPTS_MIRROR_RESYNC_LEASE, 1, RAWSTOR_OPTS_MAX_MS,
          &resolved.mirror_resync_lease},
+        {given.mirror_resync_rate, "RAWSTOR_OPTS_MIRROR_RESYNC_RATE", 1,
+         RAWSTOR_OPTS_MIRROR_RESYNC_RATE, 0, UINT_MAX,
+         &resolved.mirror_resync_rate},
         {given.tls_handshake_limit, "RAWSTOR_OPTS_TLS_HANDSHAKE_LIMIT", 0,
          RAWSTOR_OPTS_TLS_HANDSHAKE_LIMIT, 1, UINT_MAX,
          &resolved.tls_handshake_limit},
@@ -306,6 +311,10 @@ unsigned int rawstor_opts_mirror_probe_interval(void) {
 
 unsigned int rawstor_opts_mirror_resync_lease(void) {
     return _rawstor_opts.mirror_resync_lease;
+}
+
+unsigned int rawstor_opts_mirror_resync_rate(void) {
+    return _rawstor_opts.mirror_resync_rate;
 }
 
 unsigned int rawstor_opts_tls_handshake_limit(void) {

@@ -49,6 +49,8 @@ TEST(OptsTest, invalid_environment_fails_and_keeps_current_options) {
              Case{"RAWSTOR_OPTS_MIRROR_PROBE_INTERVAL", "0"},
              Case{"RAWSTOR_OPTS_WRITE_BACKLOG_CAPACITY", "256X"},
              Case{"RAWSTOR_OPTS_TLS_HANDSHAKE_LIMIT", "0"},
+             Case{"RAWSTOR_OPTS_MIRROR_RESYNC_RATE", "100X"},
+             Case{"RAWSTOR_OPTS_MIRROR_RESYNC_RATE", "4G"},
          }) {
         ScopedEnv env(c.name, c.value);
         EXPECT_EQ(rawstor_opts_initialize(nullptr), -EINVAL)
@@ -62,6 +64,25 @@ TEST(OptsTest, zero_disables_timeouts) {
     ScopedEnv env("RAWSTOR_OPTS_SO_RCVTIMEO", "0");
     EXPECT_EQ(rawstor_opts_initialize(nullptr), 0);
     EXPECT_EQ(rawstor_opts_so_rcvtimeo(), 0u);
+}
+
+TEST(OptsTest, mirror_resync_rate_is_unlimited_by_default) {
+    EXPECT_EQ(rawstor_opts_initialize(nullptr), 0);
+    EXPECT_EQ(rawstor_opts_mirror_resync_rate(), 0u);
+}
+
+TEST(OptsTest, mirror_resync_rate_takes_a_size) {
+    ScopedEnv env("RAWSTOR_OPTS_MIRROR_RESYNC_RATE", "50M");
+    EXPECT_EQ(rawstor_opts_initialize(nullptr), 0);
+    EXPECT_EQ(rawstor_opts_mirror_resync_rate(), 50u * 1024 * 1024);
+}
+
+TEST(OptsTest, mirror_resync_rate_from_the_struct_wins) {
+    ScopedEnv env("RAWSTOR_OPTS_MIRROR_RESYNC_RATE", "50M");
+    RawstorOpts opts{};
+    opts.mirror_resync_rate = 4096;
+    EXPECT_EQ(rawstor_opts_initialize(&opts), 0);
+    EXPECT_EQ(rawstor_opts_mirror_resync_rate(), 4096u);
 }
 
 TEST(OptsTest, tls_settings_come_together_or_not_at_all) {

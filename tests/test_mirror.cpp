@@ -683,6 +683,64 @@ TEST(MirrorQuorumTest, stale_arm_resynced_zero_blocks) {
     EXPECT_EQ(object_close(queue, member), 0);
 }
 
+// With a rate set, the copy of a resync takes at least what its bytes take at
+// that rate, and still ends with the member equal to the fresh one.
+TEST(MirrorResyncTest, resync_copies_no_faster_than_its_rate) {
+    Queue queue(16);
+    Members members(2, "00000000-0000-7000-8000-0000000000c1");
+
+    const size_t regions = 6;
+    const size_t size = regions << 20;
+    RawstorObjectSpec spec{
+        .size = size,
+        .width = 2,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObjectConfig fresh{};
+    fresh.epoch = 2;
+    fresh.sync_id = 0x1111111111111111ull;
+    fresh.sync_id_history[0] = 0x2222222222222222ull;
+    ASSERT_EQ(target_set_config(queue, members.target(0), fresh), 0);
+
+    RawstorObjectConfig stale{};
+    stale.epoch = 1;
+    stale.sync_id = 0x2222222222222222ull;
+    ASSERT_EQ(target_set_config(queue, members.target(1), stale), 0);
+
+    std::string content(size, 'a');
+    object_write_single(
+        queue, members.target(0), content.data(), content.size(), 0
+    );
+
+    // 4 MiB/s: each of the regions takes a quarter of a second.
+    RawstorOpts opts{};
+    opts.mirror_resync_rate = 4u << 20;
+    ASSERT_EQ(rawstor_opts_initialize(&opts), 0);
+
+    auto begin = std::chrono::steady_clock::now();
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    bool synced =
+        wait_member_config_synced(queue, members.target(0), members.target(1));
+    auto elapsed = std::chrono::steady_clock::now() - begin;
+    object_close_clean(queue, object);
+    rawstor_opts_initialize(nullptr);
+
+    EXPECT_TRUE(synced);
+    EXPECT_GE(elapsed, std::chrono::milliseconds(1400));
+
+    RawstorObject* member = nullptr;
+    ASSERT_EQ(target_open(queue, members.target(1), &member), 0);
+    std::string data(size, 'y');
+    object_read(queue, member, data.data(), data.size(), 0);
+    EXPECT_TRUE(data == content);
+    EXPECT_EQ(object_close(queue, member), 0);
+}
+
 TEST(MirrorQuorumTest, split_brain_refused) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a3");

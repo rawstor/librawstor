@@ -23,6 +23,7 @@ extern "C" {
 //     unsigned int mirror_resync_lease;
 //     unsigned int insecure;
 //     unsigned int tls_handshake_limit;
+//     unsigned int mirror_resync_rate;
 // };
 
 int rawstor_opts_initialize(const struct RawstorOpts* opts);
@@ -66,6 +67,10 @@ unsigned int rawstor_opts_mirror_probe_interval(void);
 // How long, in milliseconds, a resync that another writer runs may go
 // without a sign of life before the member it brings back is excluded.
 unsigned int rawstor_opts_mirror_resync_lease(void);
+
+// The most bytes per second the copy of a resync or a heal sends, over all the
+// objects of the process; 0 is no limit.
+unsigned int rawstor_opts_mirror_resync_rate(void);
 
 // Whether this process runs without TLS, from RawstorOpts only. It is the only
 // way to run without it, and it excludes the TLS settings:
