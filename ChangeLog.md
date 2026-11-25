@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.6] - Unreleased
 
+### Added
+
+- `RAWSTOR_OPTS_MIRROR_RESYNC_RATE` (`mirror_resync_rate` in `RawstorOpts`) limits the bytes per second the copy of a mirror resync or heal sends, over all the objects of the process; the default is no limit.
+
 ### Changed
 
 - `rawstor pki issue --object-permissions` takes `UUID:rwx` (`UUID:rw-`, `UUID:---` to deny), not a numeric mask, and `rawstor pki show` prints object permissions the same way.

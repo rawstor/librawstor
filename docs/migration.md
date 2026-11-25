@@ -565,8 +565,9 @@ mechanism.
   most 65,536 disjoint ones; a write needing another is refused `-ENOBUFS` and
   the member is excluded ([Resync across processes](multiattach.md#resync-across-processes)).
   A slow sweep under random writes reaches that limit sooner, so throttling the
-  fill makes it fail and start over. The fill therefore runs unthrottled, as
-  resync does; throttling needs a coarser record (ranges merged into fixed
+  fill makes it fail and start over. The fill therefore runs unthrottled:
+  `RAWSTOR_OPTS_MIRROR_RESYNC_RATE` ([Resync rate](mirroring.md#resync-rate))
+  paces a resync and a heal, not the fill; throttling it needs a coarser record (ranges merged into fixed
   blocks once the limit nears) and is not part of this design.
 
 ## Idempotency
