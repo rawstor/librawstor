@@ -548,20 +548,26 @@ loop runs the resync of a returning member and the heal of F5, so one rate
 covers both.
 
 - **Pacing by deadline, not a bucket.** A region is at most `RESYNC_CHUNK`, so
-  the limiter (`RatePacer`, shared with the other copies the process paces: [Rate of a copy](#rate-of-a-copy)) keeps one deadline, when the copy it paces last
-  allowed ends. A sweeper that copied a region reserves the stretch
-  `len / rate` from the later of that deadline and the start of its copy, with
-  a compare-and-swap, and waits on its own queue (`queue.timeout()`, as the
-  retry backoff does) until the stretch ends. The time the copy took counts:
-  a region that took longer than its stretch is not waited for. An idle time
-  is not saved up, so there is no burst after it. No mutex, no thread blocked.
+  the limiter (`RatePacer`, shared with the other copies the process paces:
+  [Rate of a copy](#rate-of-a-copy)) keeps one deadline, when the regions
+  asked for so far are paid for. The sweeper asks for a region with
+  `acquire()` before it copies it: the call takes the stretch `len / rate`
+  from the later of the deadline and now, with a compare-and-swap, and waits
+  on the sweeper's own queue (`queue.timeout()`, as the retry backoff does)
+  until the stretch begins. A region that fits the rate goes at once, so the
+  first one never waits; the time a copy takes counts, and an idle time is
+  not saved up, so there is no burst after it. No mutex, no thread blocked.
 - **One limiter for the process.** Several chunks resync at once (a vhost with
   many objects, a drain); a limit per sweeper would send as many times the
-  rate as there are sweepers. Every sweeper reserves from the shared deadline.
-- **The pause is taken with no region claimed**, after a copy and before the
-  next claim: a region claimed is a region client writes park on (step 4). It
-  is made in steps of 100 ms, so close and the abort of the resync end it
-  within one.
+  rate as there are sweepers. The sweepers that run together share one
+  pacer, made with the rate the option has when the first of them starts and
+  gone with the last.
+- **The pause comes with no region claimed**, before the claim: a region
+  claimed is a region client writes park on (step 4). It is raced against the
+  resync ending (`rawstd::any()`, the pause on one side and a wait on the
+  resync's condition on the other), and the loser is cancelled with
+  `Task::cancel()`, so close and the abort of the resync, which come from
+  other threads, end it at once however long it is.
 - **A zero region counts** by its length, like any other: it costs the source
   a read.
 - **A slow copy runs into the record of a syncing member**: it keeps the
@@ -573,18 +579,17 @@ covers both.
 ### Rate of a copy
 
 `RatePacer` (`src/rate_pacer.hpp`) is not specific to a resync: it paces any
-copy that moves data in blocks to a byte rate. Each kind of copy has a pacer
-of its own and a rate of its own, so a slow export does not slow a resync:
+copy that moves data in blocks to a byte rate, given to its constructor. Each
+kind of copy has a rate of its own, so a slow export does not slow a resync:
 
 | Copy | Option | Pacer |
 |---|---|---|
-| Resync and heal of a mirror | `RAWSTOR_OPTS_MIRROR_RESYNC_RATE` | `resync_pacer`, `src/chunk.cpp` |
-| `rawstor_target_export()` | `RAWSTOR_OPTS_EXPORT_RATE` | `export_pacer`, `src/image.cpp` |
+| Resync and heal of a mirror | `RAWSTOR_OPTS_MIRROR_RESYNC_RATE` | one for all the sweepers running in the process, `src/chunk.cpp` |
+| `rawstor_target_export()` | `RAWSTOR_OPTS_EXPORT_RATE` | one for each export, `src/image.cpp` |
 
-A copy takes the start time of a block, copies it, reserves its stretch with
-`reserve()` and waits for it with `wait_until()`, which takes a predicate that
-cuts the wait short (a resync that is over). The fill of a migration is the
-next user ([Executor](migration.md#executor)).
+A copier calls `acquire(queue, bytes)` before it moves a block and moves it
+when the call returns; the call is a task that can be cancelled. The fill of a
+migration is the next user ([Executor](migration.md#executor)).
 
 ### Planned: a resync rate that follows the foreground I/O
 

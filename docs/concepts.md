@@ -369,8 +369,8 @@ the object through the ordinary `Object` path, so any backend, mirrored or
   become holes; a block device gets every block. The object is opened
   read-only; `flags` is 0 or `RAWSTOR_FORCE`, which reads a mirror below its
   quorum from the members that are reachable, as they are.
-  `RAWSTOR_OPTS_EXPORT_RATE` limits the bytes per second the exports of a
-  process read, so that an export of a live object does not take the bandwidth
+  `RAWSTOR_OPTS_EXPORT_RATE` limits the bytes per second an export
+  reads, so that an export of a live object does not take the bandwidth
   of its I/O ([Configuration](configuration.md)).
 - `rawstor_target_create_from_file(target, path, spec)` creates a new
   object and fills it from a file or block device.
