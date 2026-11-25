@@ -45,8 +45,8 @@ public:
      * verified.
      *
      * A client gives `expected_peer`, the exact SPIFFE ID it requires of the
-     * server, or leaves it empty and gives `expected_role`, ost or mds, to
-     * accept any server of that role in the trust domain; one of the two is
+     * server, or leaves it empty and gives `expected_type`, ost or mds, to
+     * accept any server of that type in the trust domain; one of the two is
      * required (std::system_error(EINVAL) otherwise). A server accepts any
      * peer the rules below allow and ignores both.
      *
@@ -54,7 +54,7 @@ public:
      * of the Context, have exactly one URI SAN holding a SPIFFE ID of the
      * Context's trust domain, carry the key usage of its end of the
      * connection and not be a CA. A client expects the exact ID of the server
-     * when it knows it, otherwise the role (an OST or an MDS) the server must
+     * when it knows it, otherwise the type (an OST or an MDS) the server must
      * have, and a server's ID must be that of an OST or an MDS either way.
      *
      * Throws std::system_error: EACCES when the peer's certificate or
@@ -67,7 +67,7 @@ public:
     static rawstd::Task<std::unique_ptr<Transport>>
     tls(rawio::Queue& queue, int fd, Context& context, Mode mode,
         const std::string& expected_peer = "",
-        std::optional<Role> expected_role = std::nullopt,
+        std::optional<Type> expected_type = std::nullopt,
         unsigned int handshake_timeout_ms = 10000);
 
     // Sends `buf` (or `msg`) and completes with its size: all of it went out.

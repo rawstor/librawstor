@@ -63,7 +63,7 @@ A client takes a server to be an OST or an MDS by its ID: an `ost://` address
 needs an OST and an `mds://` one an MDS. An OST the MDS has resolved must also
 present the ID the MDS named for it, so one OST cannot answer for another. The
 MDS is held to the id in `RAWSTOR_TLS_MDS_ID` when it is set; without it, as
-for an `ost://` address the MDS has not named, any server of that role in the
+for an `ost://` address the MDS has not named, any server of that type in the
 trust domain is accepted, so set it wherever a client talks to one MDS.
 
 The OST an address stands for is remembered by the address, for the life of the
@@ -115,10 +115,12 @@ process reads them again on `SIGHUP` or `SIGUSR1`.
 
 `issue`, `renew` and `show` print what a certificate says, as the other
 commands print their data (`--format table|json|value`, `--column`):
-`identity` (the SPIFFE ID), `role`, `trust_domain`, `id` (of an OST or an MDS),
-`name` (of an admin or a client), `account_id` (of a client), `not_after` (when it
-expires, UTC) and `issued` (whether the CA signed it). The ones the role does
-not have are empty, `null` in json; `--format value --column id` is how a script
+`identity` (the SPIFFE ID), `type` (`ost`, `mds`, `admin` or `client`),
+`trust_domain`, `id` (of an OST or an MDS), `name` (of an admin or a client),
+`account_id` (of a client), `not_after` (when it expires, UTC), `issued`
+(whether the CA signed it), and the signed [authorization](#authorization) of a
+client: `role` and `object_permissions`. The ones the type does not have are
+empty, `null` in json; `--format value --column id` is how a script
 gets the id of a new OST or MDS.
 
 `show` reads a certificate and changes nothing: it is how the id is read from
@@ -194,7 +196,7 @@ mode to the other.
 
 ## Authorization
 
-The client certificate carries its account (the SPIFFE identity), access role,
+The client certificate carries its account (the SPIFFE identity), role
 and optional object restrictions. Both MDS and OST authorize it directly:
 there is no client registration, permission database, or signing key on MDS.
 A client can use an OST directly while MDS is unavailable.
@@ -209,10 +211,12 @@ rawstor pki issue --ca ca --cert client.crt --key client.key \
 `--role` is required for a client: `none` grants no default permissions,
 `reader` reads and lists objects, `writer`
 adds writes and discards, and `manager` adds creation, deletion and version
-management. The process role shown as `role=client` is separate from the
-`access_role` shown by `pki show`. Provider `admin` certificates manage accounts,
-objects and ownership; `mds` certificates scan OST metadata. Neither provider
-role may write data, and OST certificates grant no provider permissions.
+management. The role is that of a client in its account; the `type` column of
+`pki show` tells a client from the processes that have no role. Provider
+`admin` certificates manage accounts, objects and ownership; `mds` certificates
+scan OST metadata and probe the space of OSTs. Neither provider type may open
+an object, read or write data, and OST certificates grant no provider
+permissions.
 
 To set explicit object permissions, repeat `--object-permissions UUID:rwx` when
 issuing the certificate (at most 128 entries). The permissions override the role's defaults:
@@ -269,7 +273,7 @@ A configured CRL is checked on new TLS connections.
 The C API in `<rawstor/pki.h>` accepts `RawstorPkiPermissions` in
 `rawstor_pki_issue()` and returns it in `RawstorPkiInfo.permissions`.
 Python `pki.issue_client(..., role="none", object_permissions={UUID: 3})` does
-the same; `pki.show()` returns `access_role` and `object_permissions`.
+the same; `pki.show()` returns `role` and `object_permissions`.
 
 An external CA must issue the [authorization extension](protocol.md#authorization)
 in addition to the SPIFFE SAN. Missing permissions grant no account access;

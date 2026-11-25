@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `rawstor pki issue --object-permissions` takes `UUID:rwx` (`UUID:rw-`, `UUID:---` to deny), not a numeric mask, and `rawstor pki show` prints object permissions the same way.
+- `rawstor pki show`, `issue` and `renew` print the process a certificate is for (`ost`, `mds`, `admin` or `client`) as `type`, and a client's account role (`none`, `reader`, `writer` or `manager`) as `role`, not as `role` and `access_role`. pyrawstor `pki.show()` returns the account role as `role`, and `<rawstor/pki.h>` names the process `enum RawstorPkiType`, not `RawstorPkiRole`.
+- `admin` and `mds` certificates no longer open objects on an OST: `SET_OBJECT`, `READ` and `LIST_VERSIONS` are refused to them, so a provider reads no account data. `rawstor object export` and `version export` need a client certificate of the object's account.
 
 ## [0.3.5] - 2026-11-25
 

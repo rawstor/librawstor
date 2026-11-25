@@ -376,7 +376,7 @@ private:
     rawtls::Mode _mode;
     std::string _trust_domain;
     std::string _expected_peer;
-    rawtls::Role _expected_role = rawtls::Role::ost;
+    rawtls::Type _expected_type = rawtls::Type::ost;
     std::optional<rawtls::SpiffeId> _peer;
     uint64_t _peer_expiration = 0;
     uint64_t _local_expiration = 0;
@@ -475,15 +475,15 @@ private:
                     "the server's SPIFFE ID is not that of an OST or an MDS"
                 );
             }
-            if (id.role() != _expected_role) {
-                refuse("the server's SPIFFE ID is not of the role expected");
+            if (id.type() != _expected_type) {
+                refuse("the server's SPIFFE ID is not of the type expected");
             }
             if (!_expected_peer.empty() && id.uri().str() != _expected_peer) {
                 refuse("the server's SPIFFE ID is not the one expected");
             }
         }
         parsed->permissions(rawtls::certificate_permissions(cert));
-        if (id.role() != rawtls::Role::client &&
+        if (id.type() != rawtls::Type::client &&
             (id.permissions().role || !id.permissions().objects.empty())) {
             refuse("only account clients may carry permissions");
         }
@@ -741,14 +741,14 @@ private:
 
 public:
     // A client gives `expected_peer`, the exact SPIFFE ID it requires of the
-    // server, or leaves it empty and gives `expected_role`, ost or mds, to
-    // accept any server of that role in the trust domain; one of the two is
+    // server, or leaves it empty and gives `expected_type`, ost or mds, to
+    // accept any server of that type in the trust domain; one of the two is
     // required (std::system_error(EINVAL) otherwise). A server accepts any
     // peer the rules allow and ignores both.
     TlsTransport(
         rawio::Queue& queue, int fd, rawtls::Context& context,
         rawtls::Mode mode, const std::string& expected_peer,
-        std::optional<rawtls::Role> expected_role
+        std::optional<rawtls::Type> expected_type
     ) :
         _queue(queue),
         _fd(fd),
@@ -764,11 +764,11 @@ public:
                 if (!id.is_server()) {
                     RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
                 }
-                _expected_role = id.role();
-            } else if (expected_role.has_value() &&
-                       (*expected_role == rawtls::Role::ost ||
-                        *expected_role == rawtls::Role::mds)) {
-                _expected_role = *expected_role;
+                _expected_type = id.type();
+            } else if (expected_type.has_value() &&
+                       (*expected_type == rawtls::Type::ost ||
+                        *expected_type == rawtls::Type::mds)) {
+                _expected_type = *expected_type;
             } else {
                 RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
             }
@@ -1101,11 +1101,11 @@ std::unique_ptr<Transport> Transport::plain(rawio::Queue& queue, int fd) {
 
 rawstd::Task<std::unique_ptr<Transport>> Transport::tls(
     rawio::Queue& queue, int fd, Context& context, Mode mode,
-    const std::string& expected_peer, std::optional<Role> expected_role,
+    const std::string& expected_peer, std::optional<Type> expected_type,
     unsigned int handshake_timeout_ms
 ) {
     std::unique_ptr<TlsTransport> transport = std::make_unique<TlsTransport>(
-        queue, fd, context, mode, expected_peer, expected_role
+        queue, fd, context, mode, expected_peer, expected_type
     );
     co_await transport->handshake(handshake_timeout_ms);
     co_return transport;

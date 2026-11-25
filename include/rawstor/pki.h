@@ -13,7 +13,8 @@
 extern "C" {
 #endif
 
-/** Permissions and account roles signed into client certificates. */
+/** Permissions and account roles signed into client certificates: the role
+ * gives an account-wide default, object permissions override it. */
 #define RAWSTOR_PERM_READ 1u
 #define RAWSTOR_PERM_WRITE 2u
 #define RAWSTOR_PERM_MANAGE 4u
@@ -40,8 +41,8 @@ extern "C" {
  * more.
  */
 
-/** The role of the process a certificate is for. */
-enum RawstorPkiRole {
+/** The type of the process a certificate is for. */
+enum RawstorPkiType {
     /** A rawstor-ost; `name` is its id, the one in the MDS topology, a UUID. */
     RAWSTOR_PKI_OST,
     /** A rawstor-mds; `name` is its id, a UUID like an OST's. */
@@ -83,7 +84,7 @@ struct RawstorPkiPermissions {
 };
 
 /**
- * Issues a certificate and a new private key for a process of `role`, valid
+ * Issues a certificate and a new private key for a process of `type`, valid
  * for `validity` seconds, into `cert_file` and `key_file`, replacing what is
  * there; the key is written with mode 0600. The old pair stays if the new one
  * cannot be written.
@@ -96,7 +97,7 @@ struct RawstorPkiPermissions {
  * permissions.
  */
 int rawstor_pki_issue(
-    const char* dir, enum RawstorPkiRole role, const char* account,
+    const char* dir, enum RawstorPkiType type, const char* account,
     const char* name, unsigned long validity, const char* cert_file,
     const char* key_file, char* identity, size_t size,
     const struct RawstorPkiPermissions* permissions

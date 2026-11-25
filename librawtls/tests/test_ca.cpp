@@ -191,7 +191,7 @@ TEST_F(CATest, an_ost_gets_a_certificate_a_context_takes) {
     rawtls::CA ca(dir.path("ca"));
     EXPECT_EQ(
         ca.issue(
-            rawtls::Role::ost, "", ost_id, hour, dir.path("ost.crt"),
+            rawtls::Type::ost, "", ost_id, hour, dir.path("ost.crt"),
             dir.path("ost.key")
         ),
         ost_uri
@@ -217,42 +217,42 @@ TEST_F(CATest, an_ost_or_an_mds_without_an_id_gets_a_new_one) {
     init();
     rawtls::CA ca(dir.path("ca"));
     std::string first = ca.issue(
-        rawtls::Role::ost, "", "", hour, dir.path("a.crt"), dir.path("a.key")
+        rawtls::Type::ost, "", "", hour, dir.path("a.crt"), dir.path("a.key")
     );
     std::string second = ca.issue(
-        rawtls::Role::ost, "", "", hour, dir.path("b.crt"), dir.path("b.key")
+        rawtls::Type::ost, "", "", hour, dir.path("b.crt"), dir.path("b.key")
     );
     EXPECT_NE(first, second);
-    EXPECT_EQ(rawtls::SpiffeId(first).role(), rawtls::Role::ost);
+    EXPECT_EQ(rawtls::SpiffeId(first).type(), rawtls::Type::ost);
     EXPECT_EQ(uri_of(dir.path("a.crt")), first);
 
     std::string mds = ca.issue(
-        rawtls::Role::mds, "", "", hour, dir.path("m.crt"), dir.path("m.key")
+        rawtls::Type::mds, "", "", hour, dir.path("m.crt"), dir.path("m.key")
     );
-    EXPECT_EQ(rawtls::SpiffeId(mds).role(), rawtls::Role::mds);
+    EXPECT_EQ(rawtls::SpiffeId(mds).type(), rawtls::Type::mds);
     EXPECT_EQ(uri_of(dir.path("m.crt")), mds);
 }
 
-TEST_F(CATest, every_role_gets_its_shape) {
+TEST_F(CATest, every_type_gets_its_shape) {
     init();
     rawtls::CA ca(dir.path("ca"));
     EXPECT_EQ(
         ca.issue(
-            rawtls::Role::mds, "", mds_id, hour, dir.path("m.crt"),
+            rawtls::Type::mds, "", mds_id, hour, dir.path("m.crt"),
             dir.path("m.key")
         ),
         "spiffe://cluster.example/mds/" + mds_id
     );
     EXPECT_EQ(
         ca.issue(
-            rawtls::Role::admin, "", "ops", hour, dir.path("a.crt"),
+            rawtls::Type::admin, "", "ops", hour, dir.path("a.crt"),
             dir.path("a.key")
         ),
         "spiffe://cluster.example/admin/ops"
     );
     EXPECT_EQ(
         ca.issue(
-            rawtls::Role::client, account, "vm-1", hour, dir.path("c.crt"),
+            rawtls::Type::client, account, "vm-1", hour, dir.path("c.crt"),
             dir.path("c.key")
         ),
         "spiffe://cluster.example/account/" + account + "/client/vm-1"
@@ -265,25 +265,25 @@ TEST_F(CATest, every_role_gets_its_shape) {
 TEST_F(CATest, issue_checks_what_it_is_asked) {
     init();
     rawtls::CA ca(dir.path("ca"));
-    auto issue = [&](rawtls::Role role, const std::string& t,
+    auto issue = [&](rawtls::Type type, const std::string& t,
                      const std::string& name) {
-        return [&, role, t, name] {
-            ca.issue(role, t, name, hour, dir.path("x.crt"), dir.path("x.key"));
+        return [&, type, t, name] {
+            ca.issue(type, t, name, hour, dir.path("x.crt"), dir.path("x.key"));
         };
     };
-    expect_errno(EINVAL, issue(rawtls::Role::ost, "", "not-a-uuid"));
-    expect_errno(EINVAL, issue(rawtls::Role::mds, "", "mds-1"));
-    expect_errno(EINVAL, issue(rawtls::Role::mds, "", "a/b"));
-    expect_errno(EINVAL, issue(rawtls::Role::admin, "", ""));
-    expect_errno(EINVAL, issue(rawtls::Role::admin, account, "ops"));
-    expect_errno(EINVAL, issue(rawtls::Role::client, "", "vm"));
-    expect_errno(EINVAL, issue(rawtls::Role::client, account, ""));
-    expect_errno(EINVAL, issue(rawtls::Role::client, "not-a-uuid", "vm"));
+    expect_errno(EINVAL, issue(rawtls::Type::ost, "", "not-a-uuid"));
+    expect_errno(EINVAL, issue(rawtls::Type::mds, "", "mds-1"));
+    expect_errno(EINVAL, issue(rawtls::Type::mds, "", "a/b"));
+    expect_errno(EINVAL, issue(rawtls::Type::admin, "", ""));
+    expect_errno(EINVAL, issue(rawtls::Type::admin, account, "ops"));
+    expect_errno(EINVAL, issue(rawtls::Type::client, "", "vm"));
+    expect_errno(EINVAL, issue(rawtls::Type::client, account, ""));
+    expect_errno(EINVAL, issue(rawtls::Type::client, "not-a-uuid", "vm"));
     EXPECT_FALSE(fs::exists(dir.path("x.crt")));
     EXPECT_FALSE(fs::exists(dir.path("x.key")));
     expect_errno(EINVAL, [&] {
         ca.issue(
-            rawtls::Role::ost, "", ost_id, std::chrono::seconds(-1),
+            rawtls::Type::ost, "", ost_id, std::chrono::seconds(-1),
             dir.path("x.crt"), dir.path("x.key")
         );
     });
@@ -293,7 +293,7 @@ TEST_F(CATest, renew_keeps_the_identity_and_changes_the_rest) {
     init();
     rawtls::CA ca(dir.path("ca"));
     ca.issue(
-        rawtls::Role::ost, "", ost_id, hour, dir.path("ost.crt"),
+        rawtls::Type::ost, "", ost_id, hour, dir.path("ost.crt"),
         dir.path("ost.key")
     );
     std::string serial = serial_of(dir.path("ost.crt"));
@@ -358,7 +358,7 @@ TEST_F(CATest, a_planted_symlink_is_not_followed) {
     fs::create_symlink(victim, dir.path("ost.key"));
     rawtls::CA ca(dir.path("ca"));
     ca.issue(
-        rawtls::Role::ost, "", ost_id, hour, dir.path("ost.crt"),
+        rawtls::Type::ost, "", ost_id, hour, dir.path("ost.crt"),
         dir.path("ost.key")
     );
     EXPECT_FALSE(fs::is_symlink(dir.path("ost.key")));
@@ -376,7 +376,7 @@ TEST_F(CATest, a_failed_write_leaves_the_old_pair) {
     init();
     rawtls::CA ca(dir.path("ca"));
     ca.issue(
-        rawtls::Role::ost, "", ost_id, hour, dir.path("ost.crt"),
+        rawtls::Type::ost, "", ost_id, hour, dir.path("ost.crt"),
         dir.path("ost.key")
     );
     std::string key = read_file(dir.path("ost.key"));
@@ -385,7 +385,7 @@ TEST_F(CATest, a_failed_write_leaves_the_old_pair) {
     // The certificate goes where nothing can be written.
     expect_errno(ENOENT, [&] {
         ca.issue(
-            rawtls::Role::ost, "", ost_id, hour, dir.path("nowhere/ost.crt"),
+            rawtls::Type::ost, "", ost_id, hour, dir.path("nowhere/ost.crt"),
             dir.path("ost.key")
         );
     });
@@ -398,7 +398,7 @@ TEST_F(CATest, inspect_reads_what_a_certificate_says) {
     init();
     rawtls::CA ca(dir.path("ca"));
     ca.issue(
-        rawtls::Role::ost, "", ost_id, hour, dir.path("ost.crt"),
+        rawtls::Type::ost, "", ost_id, hour, dir.path("ost.crt"),
         dir.path("ost.key")
     );
 
@@ -427,7 +427,7 @@ TEST_F(CATest, issued_tells_whose_certificate_it_is) {
     init();
     rawtls::CA ca(dir.path("ca"));
     ca.issue(
-        rawtls::Role::ost, "", ost_id, hour, dir.path("ost.crt"),
+        rawtls::Type::ost, "", ost_id, hour, dir.path("ost.crt"),
         dir.path("ost.key")
     );
     EXPECT_TRUE(ca.issued(dir.path("ost.crt")));
@@ -446,7 +446,7 @@ TEST_F(CATest, a_failed_certificate_publish_restores_the_old_key) {
     init();
     rawtls::CA ca(dir.path("ca"));
     ca.issue(
-        rawtls::Role::ost, "", ost_id, hour, dir.path("ost.crt"),
+        rawtls::Type::ost, "", ost_id, hour, dir.path("ost.crt"),
         dir.path("ost.key")
     );
     std::string key = read_file(dir.path("ost.key"));
@@ -454,7 +454,7 @@ TEST_F(CATest, a_failed_certificate_publish_restores_the_old_key) {
     fs::create_directory(dir.path("blocked.crt"));
     EXPECT_THROW(
         ca.issue(
-            rawtls::Role::ost, "", ost_id, hour, dir.path("blocked.crt"),
+            rawtls::Type::ost, "", ost_id, hour, dir.path("blocked.crt"),
             dir.path("ost.key")
         ),
         std::system_error
@@ -470,7 +470,7 @@ TEST_F(CATest, a_failed_certificate_publish_removes_a_new_key) {
     fs::create_directory(dir.path("blocked.crt"));
     EXPECT_THROW(
         ca.issue(
-            rawtls::Role::ost, "", ost_id, hour, dir.path("blocked.crt"),
+            rawtls::Type::ost, "", ost_id, hour, dir.path("blocked.crt"),
             dir.path("new.key")
         ),
         std::system_error
@@ -482,7 +482,7 @@ TEST_F(CATest, a_failed_certificate_publish_restores_a_key_symlink) {
     init();
     rawtls::CA ca(dir.path("ca"));
     ca.issue(
-        rawtls::Role::ost, "", ost_id, hour, dir.path("ost.crt"),
+        rawtls::Type::ost, "", ost_id, hour, dir.path("ost.crt"),
         dir.path("original.key")
     );
     std::string key = read_file(dir.path("original.key"));
@@ -490,7 +490,7 @@ TEST_F(CATest, a_failed_certificate_publish_restores_a_key_symlink) {
     fs::create_directory(dir.path("blocked.crt"));
     EXPECT_THROW(
         ca.issue(
-            rawtls::Role::ost, "", ost_id, hour, dir.path("blocked.crt"),
+            rawtls::Type::ost, "", ost_id, hour, dir.path("blocked.crt"),
             dir.path("ost.key")
         ),
         std::system_error
@@ -507,7 +507,7 @@ TEST_F(CATest, verification_needs_only_the_ca_certificate) {
     init();
     rawtls::CA ca(dir.path("ca"));
     ca.issue(
-        rawtls::Role::ost, "", ost_id, hour, dir.path("ost.crt"),
+        rawtls::Type::ost, "", ost_id, hour, dir.path("ost.crt"),
         dir.path("ost.key")
     );
     fs::remove(dir.path("ca/ca.key"));
@@ -535,7 +535,7 @@ TEST_F(CATest, a_forged_identity_is_not_renewed_or_reported_as_issued) {
     init();
     rawtls::CA ca(dir.path("ca"));
     ca.issue(
-        rawtls::Role::ost, "", ost_id, hour, dir.path("ost.crt"),
+        rawtls::Type::ost, "", ost_id, hour, dir.path("ost.crt"),
         dir.path("ost.key")
     );
     auto cert = load(dir.path("ost.crt"));

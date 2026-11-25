@@ -12,7 +12,7 @@ namespace rawtls {
 
 uint32_t member_permission(RawstorCommandType command, uint64_t flags = 0);
 
-bool provider_member(Role role, RawstorCommandType command);
+bool provider_member(Type type, RawstorCommandType command);
 
 uint32_t role_permissions(uint32_t role);
 
