@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.6] - Unreleased
+
+### Changed
+
+- `rawstor pki issue --object-permissions` takes `UUID:rwx` (`UUID:rw-`, `UUID:---` to deny), not a numeric mask, and `rawstor pki show` prints object permissions the same way.
+
 ## [0.3.5] - 2026-11-25
 
 ### Changed
