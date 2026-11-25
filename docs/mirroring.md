@@ -36,7 +36,7 @@ numbers its stages separately.
 | Stored checksums / scrub | 4 | ❌ | — |
 | Fastest-mirror read selection | 4 | ❌ | — |
 | Member role `HEALING`: a copy that stays in the set while it is healed | 5 | ❌ | [Planned](#planned-the-healing-role) |
-| Resync and heal pacing: a byte rate for the copy, one limiter for the process | 6 | ✅ | `src/resync_pacer.hpp`, `src/chunk.cpp` (`_resync_run()`), [Resync rate](#resync-rate) |
+| Resync and heal pacing: a byte rate for the copy, one limiter for the process | 6 | ✅ | `src/rate_pacer.hpp`, `src/chunk.cpp` (`_resync_run()`), [Resync rate](#resync-rate) |
 | Adaptive pacing: the rate follows the foreground I/O between a floor and a ceiling | 7 | ❌ | [Planned](#planned-a-resync-rate-that-follows-the-foreground-io) |
 
 ## Overview
@@ -548,7 +548,7 @@ loop runs the resync of a returning member and the heal of F5, so one rate
 covers both.
 
 - **Pacing by deadline, not a bucket.** A region is at most `RESYNC_CHUNK`, so
-  the limiter (`ResyncPacer`) keeps one deadline, when the copy it paces last
+  the limiter (`RatePacer`, shared with the other copies the process paces: [Rate of a copy](#rate-of-a-copy)) keeps one deadline, when the copy it paces last
   allowed ends. A sweeper that copied a region reserves the stretch
   `len / rate` from the later of that deadline and the start of its copy, with
   a compare-and-swap, and waits on its own queue (`queue.timeout()`, as the
@@ -569,6 +569,22 @@ covers both.
   ([Executor](migration.md#executor)), and a write that needs another is
   refused and the member excluded. With a low rate and random writes that
   happens sooner, and the resync starts over.
+
+### Rate of a copy
+
+`RatePacer` (`src/rate_pacer.hpp`) is not specific to a resync: it paces any
+copy that moves data in blocks to a byte rate. Each kind of copy has a pacer
+of its own and a rate of its own, so a slow export does not slow a resync:
+
+| Copy | Option | Pacer |
+|---|---|---|
+| Resync and heal of a mirror | `RAWSTOR_OPTS_MIRROR_RESYNC_RATE` | `resync_pacer`, `src/chunk.cpp` |
+| `rawstor_target_export()` | `RAWSTOR_OPTS_EXPORT_RATE` | `export_pacer`, `src/image.cpp` |
+
+A copy takes the start time of a block, copies it, reserves its stretch with
+`reserve()` and waits for it with `wait_until()`, which takes a predicate that
+cuts the wait short (a resync that is over). The fill of a migration is the
+next user ([Executor](migration.md#executor)).
 
 ### Planned: a resync rate that follows the foreground I/O
 

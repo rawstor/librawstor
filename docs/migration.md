@@ -565,10 +565,13 @@ mechanism.
   most 65,536 disjoint ones; a write needing another is refused `-ENOBUFS` and
   the member is excluded ([Resync across processes](multiattach.md#resync-across-processes)).
   A slow sweep under random writes reaches that limit sooner, so throttling the
-  fill makes it fail and start over. The fill therefore runs unthrottled:
-  `RAWSTOR_OPTS_MIRROR_RESYNC_RATE` ([Resync rate](mirroring.md#resync-rate))
-  paces a resync and a heal, not the fill; throttling it needs a coarser record (ranges merged into fixed
-  blocks once the limit nears) and is not part of this design.
+  fill makes it fail and start over. The fill is paced by the same limiter as
+  a resync ([Rate of a copy](mirroring.md#rate-of-a-copy)), with a pacer and a
+  rate of its own, `RAWSTOR_OPTS_RECONFIGURE_RATE`, so that a drain does not
+  take the bandwidth of the foreground I/O. The default is no limit, and a
+  rate low enough to reach the limit above is the operator's to avoid until
+  the record is coarser (ranges merged into fixed blocks once the limit
+  nears), which is not part of this design.
 
 ## Idempotency
 
@@ -786,6 +789,6 @@ Stage 1 is the substance; the rest is policy, bookkeeping and tools.
   that rewrite every record; rejected for now.
 - **Many chunks, one plan.** A plan per chunk is simple and resumable; an object
   of thousands of chunks may want a coalesced record.
-- **Coarser resync record** for a throttled fill (see *Executor*).
+- **Coarser resync record** for a fill paced to a low rate (see *Executor*).
 - **Automatic rebalancing** by weight is a consumer of `migrate`, not part of
   this design.
