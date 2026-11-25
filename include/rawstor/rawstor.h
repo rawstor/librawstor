@@ -69,6 +69,12 @@ struct RawstorOpts {
      * RAWSTOR_OPTS_MIRROR_RESYNC_RATE or its default, which is no limit.
      */
     unsigned int mirror_resync_rate;
+    /**
+     * The most bytes per second an export to a file (rawstor_target_export())
+     * reads, over all the exports of this process. Zero takes
+     * RAWSTOR_OPTS_EXPORT_RATE or its default, which is no limit.
+     */
+    unsigned int export_rate;
 };
 
 /**

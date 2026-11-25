@@ -49,7 +49,7 @@ test_all_SOURCES = main.cpp \
                    test_pagination_token.cpp \
                    test_pki.cpp \
                    test_register.cpp \
-                   test_resync_pacer.cpp \
+                   test_rate_pacer.cpp \
                    test_target.cpp
 test_all_LDADD = $(top_builddir)/src/librawstor.la
 

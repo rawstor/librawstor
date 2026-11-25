@@ -1,6 +1,8 @@
 #include "image.hpp"
 
 #include "object.hpp"
+#include "opts.h"
+#include "rate_pacer.hpp"
 #include "target.hpp"
 
 #include <rawstor/target.h>
@@ -47,6 +49,9 @@ namespace {
 
 // The unit data moves in, both directions.
 const size_t block_size = 1024 * 1024;
+
+// The rate of every export of the process (rawstor_opts_export_rate()).
+rawstor::RatePacer export_pacer;
 
 bool is_zero(const char* buf, size_t size) {
     return size == 0 || (buf[0] == 0 && memcmp(buf, buf + 1, size - 1) == 0);
@@ -172,12 +177,21 @@ rawstd::Task<void> copy_object_to_file(
 ) {
     std::vector<char> buf(block_size);
     for (uint64_t offset = 0; offset < size; offset += block_size) {
+        const uint64_t start_ns = rawstor::RatePacer::now_ns();
         size_t n = block_at(offset, size);
         co_await read_object(source, buf.data(), n, offset);
         if (!sparse || !is_zero(buf.data(), n)) {
             co_await write_file(queue, fd, buf.data(), n, offset);
         }
         progress.report(offset + n, size);
+        const uint64_t until_ns =
+            export_pacer.reserve(start_ns, n, rawstor_opts_export_rate());
+        // Nothing is left to pace after the last block.
+        if (offset + n < size) {
+            co_await rawstor::wait_until(queue, until_ns, []() {
+                return false;
+            });
+        }
     }
 }
 

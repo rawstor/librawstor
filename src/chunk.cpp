@@ -6,7 +6,7 @@
 #include "location.hpp"
 #include "opts.h"
 #include "ost_backend.hpp"
-#include "resync_pacer.hpp"
+#include "rate_pacer.hpp"
 #include "slot.hpp"
 #include "target.hpp"
 
@@ -210,19 +210,7 @@ const size_t RESYNC_CHUNK = 1ull << 20;
 
 // The rate of the copy of every resync and heal of the process
 // (rawstor_opts_mirror_resync_rate()).
-rawstor::ResyncPacer resync_pacer;
-
-// How long a paused sweeper goes before it looks whether its resync is over.
-const std::chrono::milliseconds RESYNC_PACE_STEP(100);
-
-uint64_t steady_now_ns() {
-    return static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()
-        )
-            .count()
-    );
-}
+rawstor::RatePacer resync_pacer;
 
 // Synchronously pumps `t` to completion by driving `q` -- used by
 // ~Chunk() to co_await each Slot's close() from a plain (non-
@@ -3167,7 +3155,7 @@ rawstd::DetachedTask Chunk::_resync_run(uint64_t generation) {
 
             uint64_t off = (uint64_t)k * RESYNC_CHUNK;
             size_t len = (size_t)std::min<uint64_t>(RESYNC_CHUNK, size - off);
-            const uint64_t copy_start_ns = steady_now_ns();
+            const uint64_t copy_start_ns = rawstor::RatePacer::now_ns();
 
             size_t result = 0;
             int error = 0;
@@ -3274,38 +3262,23 @@ rawstd::DetachedTask Chunk::_resync_run(uint64_t generation) {
             const uint64_t until_ns = resync_pacer.reserve(
                 copy_start_ns, len, rawstor_opts_mirror_resync_rate()
             );
-            for (;;) {
-                const uint64_t now_ns = steady_now_ns();
-                if (now_ns >= until_ns) {
-                    break;
+            try {
+                bool paced =
+                    co_await rawstor::wait_until(_queue, until_ns, [&]() {
+                        std::lock_guard<std::mutex> lock(c.mutex());
+                        return gone_locked();
+                    });
+                if (!paced) {
+                    co_return;
                 }
-                const auto step = std::min<std::chrono::nanoseconds>(
-                    std::chrono::nanoseconds(until_ns - now_ns),
-                    RESYNC_PACE_STEP
-                );
-                try {
-                    co_await _queue.timeout(
-                        static_cast<unsigned int>(
-                            std::max<std::chrono::microseconds::rep>(
-                                1, std::chrono::duration_cast<
-                                       std::chrono::microseconds>(step)
-                                       .count()
-                            )
-                        )
+            } catch (const std::system_error& e) {
+                if (e.code().value() != ECANCELED) {
+                    rawstd_warning(
+                        "Mirror resync: pacing stopped: %s\n", e.what()
                     );
-                } catch (const std::system_error& e) {
-                    if (e.code().value() != ECANCELED) {
-                        rawstd_warning(
-                            "Mirror resync: pacing stopped: %s\n", e.what()
-                        );
-                    }
-                    _resync_abort(generation, "pacing stopped");
-                    co_return;
                 }
-                std::lock_guard<std::mutex> lock(c.mutex());
-                if (gone_locked()) {
-                    co_return;
-                }
+                _resync_abort(generation, "pacing stopped");
+                co_return;
             }
         }
 

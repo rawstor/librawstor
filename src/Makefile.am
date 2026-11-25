@@ -70,7 +70,7 @@ librawstor_la_SOURCES = 3rdparty/nlohmann/json.hpp \
                         meta_cache.cpp \
                         meta_cache.hpp \
                         rawstor.cpp \
-                        resync_pacer.hpp \
+                        rate_pacer.hpp \
                         slot.cpp \
                         slot.hpp \
                         subprocess.cpp \
