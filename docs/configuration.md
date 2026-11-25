@@ -216,7 +216,7 @@ role may write data, and OST certificates grant no provider permissions.
 
 To set explicit object permissions, repeat `--object-permissions UUID:MASK` when
 issuing the certificate (at most 128 entries). The mask overrides the role's defaults:
-`read=1`, `write=2`, `manage=4`; write includes discard and zeroing. Combine bits by addition, or use
+`read=1`, `write=2`, `manage=4` (`pki show` prints them as `r`, `w`, `x`, e.g. `rw-`); write includes discard and zeroing. Combine bits by addition, or use
 zero to deny the object. Other objects retain the role's defaults. Object permissions
 apply to the object and all its versions; snapshots remain read-only.
 

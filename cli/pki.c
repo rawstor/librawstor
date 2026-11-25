@@ -122,7 +122,8 @@ static void issue_usage(void) {
         "apply are empty,\n"
         "null in json. access_role and object_permissions show the signed "
         "client "
-        "permissions.\n"
+        "permissions\n"
+        "(object_permissions as UUID:rwx, - for a missing bit).\n"
         "`--format value --column id` prints just an OST's or "
         "an MDS's id.\n"
     );
@@ -443,7 +444,10 @@ static RawstorCliTable* identity_table(const struct RawstorPkiInfo* info) {
             &info->permissions.objects[i];
         used += (size_t)snprintf(
             object_permissions + used, sizeof(object_permissions) - used,
-            "%s%s:%u", i ? "," : "", entry->object_id, entry->permissions
+            "%s%s:%c%c%c", i ? "," : "", entry->object_id,
+            entry->permissions & RAWSTOR_PERM_READ ? 'r' : '-',
+            entry->permissions & RAWSTOR_PERM_WRITE ? 'w' : '-',
+            entry->permissions & RAWSTOR_PERM_MANAGE ? 'x' : '-'
         );
     }
     RawstorCliCell cells[] = {
