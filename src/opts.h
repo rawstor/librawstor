@@ -73,8 +73,8 @@ unsigned int rawstor_opts_mirror_resync_lease(void);
 // objects of the process; 0 is no limit.
 unsigned int rawstor_opts_mirror_resync_rate(void);
 
-// The most bytes per second an export to a file reads, over all the exports of
-// the process; 0 is no limit.
+// The most bytes per second an export to a file reads, for each export; 0 is
+// no limit.
 unsigned int rawstor_opts_export_rate(void);
 
 // Whether this process runs without TLS, from RawstorOpts only. It is the only

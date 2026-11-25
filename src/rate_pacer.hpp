@@ -1,6 +1,7 @@
 #ifndef RAWSTOR_RATE_PACER_HPP
 #define RAWSTOR_RATE_PACER_HPP
 
+#include <rawio/awaitable.hpp>
 #include <rawio/queue.hpp>
 
 #include <rawstd/coro.hpp>
@@ -10,38 +11,29 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 namespace rawstor {
 
 /**
- * Paces a copy to a byte rate shared by everything that uses the same pacer,
- * whichever thread and queue it runs on. Each kind of copy (the resync of a
- * mirror, an export) has a pacer of its own and a rate of its own.
+ * Paces a copy to a byte rate. Everything that copies under one pacer shares
+ * its rate, whichever thread and queue it runs on; each kind of copy (the
+ * resync of a mirror, an export) has a pacer of its own.
  *
- * It keeps one deadline: when the copy it paces last allowed ends. A copier
- * that copied `size` bytes starting at `start_ns` reserves the next stretch of
- * `size / rate` from the later of that deadline and `start_ns` (an idle time
- * is not saved up, so there is no burst after it), and waits on its own queue
- * until the end of the stretch (wait_until()). The copy itself counts toward
- * the stretch: a block that took longer than that to copy is not waited for at
- * all. Nothing blocks.
+ * A copier calls acquire() with the size of the block it is about to move and
+ * moves it when the call returns. A call that fits the rate returns at once;
+ * one that does not waits, on the caller's own queue, for the time the blocks
+ * before it still owe. The time the copy itself takes counts, so a copier
+ * whose blocks are slow to move is not waited for at all. An idle time is not
+ * saved up: there is no burst after it.
  */
 class RatePacer final {
 private:
+    const unsigned int _rate;
+    // When the blocks acquired so far are paid for, on _now_ns()'s clock.
     std::atomic<uint64_t> _deadline;
 
-public:
-    RatePacer() : _deadline(0) {}
-
-    RatePacer(const RatePacer&) = delete;
-    RatePacer(RatePacer&&) = delete;
-    RatePacer& operator=(const RatePacer&) = delete;
-    RatePacer& operator=(RatePacer&&) = delete;
-
-    /**
-     * The clock reserve() and wait_until() count in, in nanoseconds.
-     */
-    static uint64_t now_ns() {
+    static uint64_t _now_ns() {
         return static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now().time_since_epoch()
@@ -50,60 +42,55 @@ public:
         );
     }
 
-    /**
-     * Reserves the time `size` bytes take at `rate` bytes per second for a
-     * copy that began at `start_ns`, and returns the time, in the same clock,
-     * to wait until before the next one. Zero `rate` is no limit and returns
-     * `start_ns`.
-     */
-    uint64_t reserve(uint64_t start_ns, size_t size, unsigned int rate) {
-        if (rate == 0 || size == 0) {
-            return start_ns;
-        }
+    // Takes the stretch `bytes` need and returns when it begins.
+    uint64_t _reserve(size_t bytes) {
         const uint64_t cost =
-            static_cast<uint64_t>(size) * 1000000000ull / rate;
+            static_cast<uint64_t>(bytes) * 1000000000ull / _rate;
+        const uint64_t now = _now_ns();
         uint64_t deadline = _deadline.load(std::memory_order_relaxed);
-        uint64_t next;
+        uint64_t start;
         do {
-            next = std::max(start_ns, deadline) + cost;
+            start = std::max(now, deadline);
         } while (!_deadline.compare_exchange_weak(
-            deadline, next, std::memory_order_relaxed
+            deadline, start + cost, std::memory_order_relaxed
         ));
-        return next;
+        return start;
+    }
+
+public:
+    /**
+     * @param rate  Bytes per second; zero is no limit.
+     */
+    explicit RatePacer(unsigned int rate) : _rate(rate), _deadline(0) {}
+
+    RatePacer(const RatePacer&) = delete;
+    RatePacer(RatePacer&&) = delete;
+    RatePacer& operator=(const RatePacer&) = delete;
+    RatePacer& operator=(RatePacer&&) = delete;
+
+    /**
+     * Takes the time `bytes` need at the rate and returns when the caller may
+     * move them. The wait is on `queue` and can be cancelled with
+     * Task::cancel(): it throws then, as Queue::timeout() does, and the
+     * caller is not to copy.
+     */
+    rawstd::Task<void> acquire(rawio::Queue& queue, size_t bytes) {
+        if (_rate == 0 || bytes == 0) {
+            co_return;
+        }
+        const uint64_t start = _reserve(bytes);
+        for (;;) {
+            const uint64_t now = _now_ns();
+            if (now >= start) {
+                co_return;
+            }
+            const uint64_t usec = std::clamp<uint64_t>(
+                (start - now) / 1000, 1, std::numeric_limits<unsigned>::max()
+            );
+            co_await queue.timeout(static_cast<unsigned int>(usec));
+        }
     }
 };
-
-/**
- * Waits on `queue` until `until_ns` (the clock of RatePacer::now_ns()), in
- * steps of at most `step`; `stop` is asked after each step, and when it says
- * yes the wait ends at once. Returns whether the time is up; false is a wait
- * `stop` cut short. A wait the queue cancels or fails throws, as
- * Queue::timeout() does.
- */
-template <typename Stop>
-rawstd::Task<bool> wait_until(
-    rawio::Queue& queue, uint64_t until_ns, Stop stop,
-    std::chrono::milliseconds step = std::chrono::milliseconds(100)
-) {
-    for (;;) {
-        const uint64_t now_ns = RatePacer::now_ns();
-        if (now_ns >= until_ns) {
-            co_return true;
-        }
-        const auto left = std::min<std::chrono::nanoseconds>(
-            std::chrono::nanoseconds(until_ns - now_ns), step
-        );
-        co_await queue.timeout(
-            static_cast<unsigned int>(std::max<std::chrono::microseconds::rep>(
-                1, std::chrono::duration_cast<std::chrono::microseconds>(left)
-                       .count()
-            ))
-        );
-        if (stop()) {
-            co_return false;
-        }
-    }
-}
 
 } // namespace rawstor
 

@@ -23,6 +23,7 @@
 
 namespace rawstor {
 
+class RatePacer;
 class Slot;
 
 // IN_SYNC - the member carries every acknowledged write; serves I/O.
@@ -414,6 +415,11 @@ private:
     // (_resync_finish(): the rejoin barrier, the member's record, and the
     // commit that lets it serve reads).
     rawstd::DetachedTask _resync_run(uint64_t generation);
+    // Ends when the resync `generation` is over or this Chunk closes: the
+    // other side of the race a paused sweeper runs.
+    rawstd::Task<bool> _resync_wait_gone(uint64_t generation);
+    // Waits for the pacer to let one region of the copy go: true once it does.
+    rawstd::Task<bool> _resync_paced(std::shared_ptr<rawstor::RatePacer> pacer);
     rawstd::Task<void> _resync_finish(uint64_t generation);
     // Ends the resync `generation` if it is still running and not
     // committing: the member turns STALE, and every waiter on it wakes up.

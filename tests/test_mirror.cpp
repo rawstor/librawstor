@@ -741,6 +741,50 @@ TEST(MirrorResyncTest, resync_copies_no_faster_than_its_rate) {
     EXPECT_EQ(object_close(queue, member), 0);
 }
 
+// A resync paused by its rate does not hold the writer's close for the pause:
+// at 1 KiB/s the second region would wait a thousand seconds.
+TEST(MirrorResyncTest, close_during_a_paused_resync) {
+    Queue queue(16);
+    Members members(2, "00000000-0000-7000-8000-0000000000c2");
+
+    const size_t size = 6ull << 20;
+    RawstorObjectSpec spec{
+        .size = size,
+        .width = 2,
+        .chunk_size = 0,
+        .stripe_width = 0,
+        .failure_domain = 0,
+    };
+    ASSERT_EQ(target_create(queue, members.target_all(), spec), 0);
+
+    RawstorObjectConfig fresh{};
+    fresh.epoch = 2;
+    fresh.sync_id = 0x1111111111111111ull;
+    fresh.sync_id_history[0] = 0x2222222222222222ull;
+    ASSERT_EQ(target_set_config(queue, members.target(0), fresh), 0);
+
+    RawstorObjectConfig stale{};
+    stale.epoch = 1;
+    stale.sync_id = 0x2222222222222222ull;
+    ASSERT_EQ(target_set_config(queue, members.target(1), stale), 0);
+
+    RawstorOpts opts{};
+    opts.mirror_resync_rate = 1024;
+    ASSERT_EQ(rawstor_opts_initialize(&opts), 0);
+
+    RawstorObject* object = nullptr;
+    ASSERT_EQ(target_open(queue, members.target_all(), &object), 0);
+    // The sweeper copies its first region and pauses before the second.
+    usleep(500000);
+
+    auto begin = std::chrono::steady_clock::now();
+    EXPECT_EQ(object_close(queue, object), 0);
+    auto elapsed = std::chrono::steady_clock::now() - begin;
+    rawstor_opts_initialize(nullptr);
+
+    EXPECT_LT(elapsed, std::chrono::seconds(5));
+}
+
 TEST(MirrorQuorumTest, split_brain_refused) {
     Queue queue(16);
     Members members(2, "00000000-0000-7000-8000-0000000000a3");

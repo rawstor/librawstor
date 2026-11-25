@@ -208,9 +208,22 @@ bool in_history(const RawstorObjectConfig& config, uint64_t sync_id) {
 // Online resync copy granularity (docs/mirroring.md).
 const size_t RESYNC_CHUNK = 1ull << 20;
 
-// The rate of the copy of every resync and heal of the process
-// (rawstor_opts_mirror_resync_rate()).
-rawstor::RatePacer resync_pacer;
+// The pacer of every resync and heal running in the process, at the rate
+// rawstor_opts_mirror_resync_rate() has when the first of them starts. It is
+// gone with the last of them.
+std::shared_ptr<rawstor::RatePacer> shared_resync_pacer() {
+    static std::mutex mu;
+    static std::weak_ptr<rawstor::RatePacer> slot;
+    std::lock_guard<std::mutex> lock(mu);
+    std::shared_ptr<rawstor::RatePacer> pacer = slot.lock();
+    if (!pacer) {
+        pacer = std::make_shared<rawstor::RatePacer>(
+            rawstor_opts_mirror_resync_rate()
+        );
+        slot = pacer;
+    }
+    return pacer;
+}
 
 // Synchronously pumps `t` to completion by driving `q` -- used by
 // ~Chunk() to co_await each Slot's close() from a plain (non-
@@ -3046,6 +3059,21 @@ rawstd::DetachedTask Chunk::_resync_watch() {
     }
 }
 
+rawstd::Task<bool>
+Chunk::_resync_paced(std::shared_ptr<rawstor::RatePacer> pacer) {
+    co_await pacer->acquire(_queue, RESYNC_CHUNK);
+    co_return true;
+}
+
+rawstd::Task<bool> Chunk::_resync_wait_gone(uint64_t generation) {
+    MirrorControl& c = *_control;
+    co_await c.wait_resync(_queue, [&]() {
+        MirrorResync* r = c.resync_locked();
+        return _closing || r == nullptr || r->generation() != generation;
+    });
+    co_return false;
+}
+
 /*
  * The owner's side of a resync: waits for every Chunk to attach, sweeps
  * the needs-copy regions one at a time from an in-sync source, mutually
@@ -3084,8 +3112,28 @@ rawstd::DetachedTask Chunk::_resync_run(uint64_t generation) {
         }
 
         std::vector<char> buf(RESYNC_CHUNK);
+        const std::shared_ptr<rawstor::RatePacer> pacer = shared_resync_pacer();
 
         for (;;) {
+            // The pause comes before the region is claimed: a claimed region
+            // is one client writes park on. It ends at once when the resync
+            // is over.
+            try {
+                bool paced = co_await rawstd::any(
+                    2, [&](size_t i) -> rawstd::Task<bool> {
+                        return i == 0 ? _resync_paced(pacer)
+                                      : _resync_wait_gone(generation);
+                    }
+                );
+                if (!paced) {
+                    co_return;
+                }
+            } catch (const std::system_error& e) {
+                rawstd_warning("Mirror resync: pacing stopped: %s\n", e.what());
+                _resync_abort(generation, "pacing stopped");
+                co_return;
+            }
+
             size_t k = 0;
             size_t idx = 0;
             bool done = false;
@@ -3155,7 +3203,6 @@ rawstd::DetachedTask Chunk::_resync_run(uint64_t generation) {
 
             uint64_t off = (uint64_t)k * RESYNC_CHUNK;
             size_t len = (size_t)std::min<uint64_t>(RESYNC_CHUNK, size - off);
-            const uint64_t copy_start_ns = rawstor::RatePacer::now_ns();
 
             size_t result = 0;
             int error = 0;
@@ -3255,30 +3302,6 @@ rawstd::DetachedTask Chunk::_resync_run(uint64_t generation) {
                 MirrorResync* r = c.resync_locked();
                 r->complete_copy(k);
                 c.wake_resync();
-            }
-
-            // The pause comes with no region claimed: a client write to one
-            // parks on it.
-            const uint64_t until_ns = resync_pacer.reserve(
-                copy_start_ns, len, rawstor_opts_mirror_resync_rate()
-            );
-            try {
-                bool paced =
-                    co_await rawstor::wait_until(_queue, until_ns, [&]() {
-                        std::lock_guard<std::mutex> lock(c.mutex());
-                        return gone_locked();
-                    });
-                if (!paced) {
-                    co_return;
-                }
-            } catch (const std::system_error& e) {
-                if (e.code().value() != ECANCELED) {
-                    rawstd_warning(
-                        "Mirror resync: pacing stopped: %s\n", e.what()
-                    );
-                }
-                _resync_abort(generation, "pacing stopped");
-                co_return;
             }
         }
 
