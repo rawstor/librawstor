@@ -987,7 +987,7 @@ location URI clients reach the OST's store at, such as `ost://host:port`; then
 `domain_len` bytes: its failure domain path, `[[[dc/]row/]rack/]server`. Neither
 is null-terminated. `weight` is the OST's share of new chunks. With
 `OST_SAMPLED` (bit 0) in `flags`, `used` and `total` (as `LOCATION_INFO` reports
-them) and `members`/`members_hash` (the [member digest](mds.md#member-digest))
+them) and `members`/`members_hash` (the [member digest](mds.md#space-and-the-member-digest))
 are the OST's latest sample; without it they are 0 and the MDS keeps the sample
 it has. `OST_LEAVING` (bit 1) says the OST is stopping: nothing more is placed on
 it until it registers again. `-EINVAL` for a malformed location or domain,

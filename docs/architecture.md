@@ -15,7 +15,7 @@ The table maps the page's components to what exists today.
 | MDS (object → chunks map) | ✅ | `mds/` (`rawstor-mds`) |
 | `getObj` / `getObjPart` / `getFreeOst` | ✅ | replaced by `RESOLVE` + HRW placement (`mds/src/placement.cpp`) |
 | MDS sharding / clustering | ❌ | v1 is a single instance |
-| MGS (management/config server) | ❌ | replaced by a static `topology.conf` |
+| MGS (management/config server) | ❌ | replaced by OST registration with the MDS |
 | Client library | ✅ | `src/`, `include/rawstor/` |
 | Client-side redundancy (writes to multiple OSTs) | ✅ | mirroring, `src/chunk.cpp` |
 | Parallel reads from multiple OSTs | ❌ | reads go to one IN-SYNC mirror |

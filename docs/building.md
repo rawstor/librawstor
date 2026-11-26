@@ -21,8 +21,14 @@ OST_DATADIR=/var/rawstor
 
 mkdir -p ${OST_DATADIR}
 
+# --mds and the three after it register the OST with the MDS below; without
+# them it serves only ost:// objects addressed to it directly.
 rawstor-ost \
     --bind ${OST_HOST} \
+    --id $(cat /proc/sys/kernel/random/uuid) \
+    --mds mds://${MDS_HOST} \
+    --advertise ost://${OST_HOST} \
+    --domain dc1/row1/rack1/host1 \
     file://${OST_DATADIR}
 
 ##
@@ -32,15 +38,10 @@ MDS_DATADIR=/var/lib/rawstor/mds
 
 mkdir -p ${MDS_DATADIR}
 
-# One line per OST: <uuid> <location> <weight> <role> [[[<dc>/]<row>/]<rack>/]<server>
-cat > ${MDS_DATADIR}/topology.conf <<EOF
-$(cat /proc/sys/kernel/random/uuid) ost://${OST_HOST} 100 data,witness dc1/row1/rack1/host1
-EOF
-
+# The OSTs register themselves (rawstor-ost --mds above).
 rawstor-mds \
     --bind ${MDS_HOST} \
-    --db ${MDS_DATADIR}/mds.db \
-    --topology ${MDS_DATADIR}/topology.conf
+    --db ${MDS_DATADIR}/mds.db
 
 ##
 # Client

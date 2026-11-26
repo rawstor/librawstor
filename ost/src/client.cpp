@@ -1103,6 +1103,9 @@ rawstd::DetachedTask Client::_allocate(
         result = -error.code().value();
     }
 
+    // Whatever the outcome: a failure may have changed something too.
+    client->_server.members_changed();
+
     bool send_failed = false;
     try {
         co_await client->_send_response(
@@ -1153,6 +1156,9 @@ rawstd::DetachedTask Client::_release(
     } catch (const std::system_error& error) {
         result = -error.code().value();
     }
+
+    // Whatever the outcome: a failure may have changed something too.
+    client->_server.members_changed();
 
     bool send_failed = false;
     try {
@@ -1290,6 +1296,9 @@ rawstd::DetachedTask Client::_create_version(
             }
         }
     }
+
+    // Whatever the outcome: a failure may have changed something too.
+    client->_server.members_changed();
 
     bool send_failed = false;
     try {

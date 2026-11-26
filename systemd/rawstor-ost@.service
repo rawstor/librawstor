@@ -2,8 +2,9 @@
 Description=Rawstor OST backend %i
 After=network-online.target
 Wants=network-online.target
-# One instance per OST: the instance name is the OST's id (the <uuid> the
-# MDS topology lists it under), and its configuration lives in
+# One instance per OST: the instance name is the OST's id (the <uuid> it
+# registers with the MDS under, that of its certificate), and its
+# configuration lives in
 # /etc/rawstor/ost/<uuid>.conf -- see README.md. An instance without one
 # fails to start rather than serving some default.
 AssertPathExists=/etc/rawstor/ost/%i.conf
@@ -41,6 +42,16 @@ Environment=LOCATION=file:///var/lib/rawstor/ost/%i
 Environment=QUEUE_SIZE=4096
 Environment=WORKERS=12
 Environment=META_CACHE_TTL=60000
+# Registration with the MDS of the cluster (rawstor-ost --mds/--advertise/
+# --domain/--weight, docs/mds.md "OST registration"): the MDS, mds://host:port;
+# the location the clients reach this OST's store at,
+# ost://<this host>:<port of BIND_ADDR>; its failure domain,
+# [[[dc/]row/]rack/]server; and its share of new chunks. No MDS, no
+# registration: the OST serves only ost:// targets addressed to it directly.
+Environment=MDS=
+Environment=ADVERTISE=
+Environment=DOMAIN=
+Environment=WEIGHT=100
 # librawstor client/server tuning knobs (see README.md's "Environment
 # Variables" section for what each one does); set them in
 # /etc/rawstor/ost/<uuid>.conf below to override a default.
@@ -65,7 +76,7 @@ Environment=META_CACHE_TTL=60000
 # Set in the configuration file below, e.g. EXTRA_ARGS="--insecure".
 Environment=EXTRA_ARGS=
 EnvironmentFile=/etc/rawstor/ost/%i.conf
-ExecStart=/usr/bin/rawstor-ost $EXTRA_ARGS --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --workers=${WORKERS} --meta-cache-ttl=${META_CACHE_TTL} ${LOCATION}
+ExecStart=/usr/bin/rawstor-ost $EXTRA_ARGS --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --workers=${WORKERS} --meta-cache-ttl=${META_CACHE_TTL} --id=%i --mds=${MDS} --advertise=${ADVERTISE} --domain=${DOMAIN} --weight=${WEIGHT} ${LOCATION}
 # Reads the certificate, key and CAs again for the connections made after it
 # (SIGHUP); the ones open keep what they started with. A file that cannot be
 # read is logged, and the old one stays.
@@ -75,7 +86,8 @@ RestartSec=10
 # sysexits.h codes rawstor-ost exits with when retrying won't help:
 # EX_USAGE (64) e.g. no BIND_ADDR in the instance's .conf, EX_NOINPUT (66)
 # the configured location doesn't exist, EX_NOPERM (77) permission denied
-# and EX_CONFIG (78) an invalid RAWSTOR_OPTS_* setting. Leave the unit
+# and EX_CONFIG (78) an invalid RAWSTOR_OPTS_* setting or a certificate
+# that is not for the instance's id. Leave the unit
 # failed instead of restart-looping; other exit codes (e.g.
 # EX_UNAVAILABLE for an upstream ost:// backend that's merely down right
 # now) still retry.

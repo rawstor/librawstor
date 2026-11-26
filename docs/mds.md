@@ -14,7 +14,7 @@ numbers its stages separately.
 | Explicit chunk map, client-side routing by chunk | 1 | ✅ | `src/mds_backend.cpp`, `src/object.cpp` |
 | Weighted HRW placement, `failure_domain`, `stripe_width` | 1 | ✅ | `mds/src/placement.cpp` |
 | Unsatisfiable topology hard-fails | 1 | ✅ | `mds/src/placement.cpp` |
-| Static `topology.conf`, `SIGHUP` reload, refusal to drop OSTs in use | 1 | ✅ | `mds/src/topology.cpp`, `mds/src/main.cpp` |
+| Topology in the database, entered by OST registration (`OST_REGISTER`), heartbeat lease | 1 | ✅ | `mds/src/store.cpp`, `ost/src/registrar.cpp`, [OST registration](#ost-registration) |
 | Idempotent mutations (`idempotency_key`, `applied_mutations`, 1-day expiry) | 1 | ✅ | `mds/src/store.cpp` |
 | Grow-only resize | 1 | ✅ | `mds/src/store.cpp` (shrink refused) |
 | `map_version` per object: the version of its map, not a fence | 1 | ✅ | stored and returned by `OBJ_*`; [map_version](#map_version) |
@@ -37,7 +37,7 @@ numbers its stages separately.
 | Object removal removes its versions; the MDS refuses with `-EBUSY` only for a version created meanwhile | 2 | ✅ | `src/mds_backend.cpp`, `mds/src/store.cpp` |
 | Version redundancy status surfacing | 2 | ❌ | TODO |
 | vhost/QEMU flush hook for versions | 2 | ❌ | the CLI assumes no concurrent writer |
-| Backend health / `LOCATION_INFO` collector | — | ✅ | `mds/src/monitor.cpp`, `mds/src/opts.cpp` |
+| Space samples sent by the OSTs, `LOCATION_INFO` from them | — | ✅ | `ost/src/registrar.cpp`, `mds/src/store.cpp` |
 | `LIST_LOCATIONS`: the locations of the topology, paged like `LIST`; `rawstor location list` | — | ✅ | `mds/src/client.cpp`, `src/wire_backend.cpp`, `cli/locations.c` |
 | `HANDSHAKE`: feature bits, the first request of every connection (no protocol version) | — | ✅ | [Protocol](protocol.md), `src/wire_backend.cpp`, `ost/src/client.cpp`, `mds/src/client.cpp` |
 | Unified response frame `{res, len, hash}` | — | ❌ | — |
@@ -47,7 +47,7 @@ numbers its stages separately.
 | EC policy | v2+ | ❌ | — |
 | Stored checksums / scrub, version redundancy repair | v2+ | ❌ | — |
 | Authentication and authorization (mTLS, certificate roles) | — | ✅ | [Security](security.md) |
-| Shrink, MGS as a service | open | ❌ | — |
+| Shrink | open | ❌ | — |
 
 Metadata Storage Target (**MDS/MDT**) design, specialized for the **block
 storage** use case: sparse (thin) allocation and large object chunks (1+ GiB).
@@ -66,7 +66,7 @@ never passes through it.
 flowchart TB
     Client(["Client<br/>librawstor, mds://mds:7776/U"])
     MDS[("rawstor-mds<br/>object map, versions<br/>(SQLite)")]
-    Topo[/"topology.conf<br/>OST roster, domains, weights"/]
+    Topo[/"topology table<br/>OST roster, domains, weights"/]
     subgraph OSTs ["rawstor-ost servers: the data"]
         direction LR
         A[("OST a")]
@@ -74,7 +74,8 @@ flowchart TB
         C[("OST c")]
     end
 
-    Topo -. "read at start / SIGHUP" .-> MDS
+    OSTs -. "OST_REGISTER every heartbeat:<br/>location, domain, weight, sample" .-> Topo
+    Topo --- MDS
     Client -- "control: OBJ_CREATE / RESOLVE / OBJ_RESIZE /<br/>OBJ_REMOVE / OBJ_*_VERSION*" --> MDS
     MDS -- "chunk map: slots + OST locations" --> Client
     Client == "data: READ / WRITE / ... to each chunk's OSTs<br/>(MDS not involved)" ==> OSTs
@@ -381,21 +382,12 @@ Two classes of state, by recoverability:
   rules), never correctness; re-attach is defined in *Witness*.
 
 The topology (OST roster, failure domains, weights, `ost_id -> location`) is
-neither: it is operator input, not state the MDS derives, and it lives
-**outside the MDS database** (v1: a static config file, `-t/--topology`) on
-purpose. Rebuilding the index starts from the OST roster (see *Reconstruct /
-DR*), so the roster must survive exactly the loss it is used to recover from —
-kept in the same database as the map, losing `mds.db` would also lose the
-list of OSTs to scan. Being plain operator-authored config, it is also
-versioned and deployed like any other (git, config management). The MDS
-reads it at startup and re-reads it on `SIGHUP` (`systemctl reload
-rawstor-mds`); either way it is checked against the map: a topology missing
-an OST that still holds chunks (or version members) is refused — the MDS
-won't start, or keeps its current topology on reload — since those slots
-would be left without an address. `--reconstruct` skips the check: it
-rebuilds the map from the topology's own OSTs. A dynamic
-source (see *MGS as a service* under *Open questions*) would replace the file,
-not move the topology into the MDS database.
+neither: each OST states its own entry and keeps it alive by registering
+(see [OST registration](#ost-registration)), and the MDS keeps the entries in
+its database, in the `topology` table. An entry stays as long as a slot or a
+version member is on its OST, so no slot is ever left without an address.
+Lost with the database, the roster comes back as the OSTs register again,
+which is what *Reconstruct / DR* starts from.
 
 ## MDS API
 
@@ -523,15 +515,12 @@ resp: { res, len, hash }; body:
 ```
 
 `ost_id` is an **opaque stable UUID** (not its location) — required for HRW
-stability; resolved to a location URI via topology (v1: static config, see
-MGS) and sent along with it, so clients stay zero-config. The location is
-any single rawstor location URI (normally `ost://host:port`), handed to the
-client as is: moving an OST only changes its location, never its id.
-A topology entry holds exactly one URI (several are rejected): an entry
-is one placement slot, i.e. one member with one vote in the mirror
-quorum. To back one entry with several stores, run a `rawstor-ost` over
-them (`rawstor-ost -b ADDR file:///a,file:///b`) and list that OST — it
-mirrors across them itself and still counts as one member.
+stability; resolved to a location URI via the topology and sent along with
+it, so clients stay zero-config. The location is the single rawstor location
+URI the OST registered (normally `ost://host:port`), handed to the client as
+is: moving an OST only changes its location, never its id. A topology entry
+holds exactly one URI (several are refused): an entry is one placement slot,
+i.e. one member with one vote in the mirror quorum.
 
 ## Placement function
 
@@ -546,7 +535,7 @@ generator.
   `rawstd_hash_stable()` (FNV-1a with a 64-bit finalizer), so placement is
   the same whether or not the MDS is built with libxxhash.
 - **Topology = tree**: `root -> dc -> row -> rack -> server -> ost(leaf)`
-  (a topology line's path is `[[[dc/]row/]rack/]server`, root first,
+  (an OST's `--domain` is `[[[dc/]row/]rack/]server`, root first,
   ending at the OST's server; only the server is required, and a leading
   level left out is one implicit domain shared by every entry leaving it
   out). Levels are numbered from
@@ -1237,7 +1226,7 @@ Interprocess mirror coordination is [multi-attach](multiattach.md).
 
 ## Implementation stages
 
-1. **Chunking**: `CMD_OBJ_CREATE/OPEN/RESIZE/REMOVE`, HRW placement + topology config,
+1. **Chunking**: `CMD_OBJ_CREATE/OPEN/RESIZE/REMOVE`, HRW placement + the topology the OSTs register in,
    explicit map in MDS (SQLite), client-side routing, `map_version`,
    `LIST` + per-object `META` reconstruct scan.
 2. **Versions**: `CMD_OBJ_COMMIT_VERSION/REMOVE_VERSION/LIST_VERSIONS`, client-generated UUID
@@ -1257,77 +1246,82 @@ Interprocess mirror coordination is [multi-attach](multiattach.md).
   room.
 - **Resize: shrink** — v1 is grow-only; shrink interacts with placement GC
   and versions, revisit later.
-- **MGS as a service** — v1 uses a static topology config; whether a dynamic
-  MGS role (roster + topology + MDS address) is ever needed, and how refresh
-  works, is deferred.
 
 
-## Backend health and location information
+## OST registration
 
-`rawstor location info mds://host:port` sends `LOCATION_INFO` to the MDS and reads
-cached space accounting from its SQLite database. `used` and `total` are
-sums of the latest successful INFO samples from the OSTs in the current
-topology. They are physical backend counters, without dividing by mirror
-width. An OST without a sample contributes zero; an unavailable OST keeps
-its last successful counters, so losing connectivity does not erase its
-space usage from the report. A request never polls OSTs synchronously.
-The MDS never computes the space a slot takes: that is the OST's business
-(sparse files, compression and so on). Creating, growing or removing an object
-only records the map; the client creates or deletes the chunk objects on the
-OSTs after the reply. Every OST holding a slot of that object is therefore
-probed again `RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY` after the mutation, ahead
-of its regular slot, so the report catches up well before the next regular
-probe. The delay is a heuristic: it counts from the moment the MDS replies,
-not from the moment the client is done, so a client slower than the delay, or
-a regular probe that happens to fall in between, can still sample the OST half
-done; the next probe corrects it. A further mutation touching an OST already
-waiting for its refresh restarts the wait, so a burst of mutations is sampled
-once, after the last of them; the regular slot still bounds the wait.
+An OST enters itself in the topology of the MDS of its cluster and keeps
+itself there: `rawstor-ost --mds mds://host:port` sends `OST_REGISTER`
+([Protocol](protocol.md#ostregister--64-bytes-then-the-location-and-the-domain))
+with its id, the location the clients reach its store at (`--advertise`), its
+failure domain (`--domain`, `[[[dc/]row/]rack/]server`) and its share of new
+chunks (`--weight`, 100 by default), and sends it again every heartbeat
+interval the MDS answers with. The MDS keeps no list of its own: any OST that
+registers is in the topology, and every OST is a DATA and witness candidate.
+With TLS the id is that of the OST's certificate (`spiffe://<trust
+domain>/ost/<id>`): the MDS refuses any other id from it (`-EPERM`), and an OST
+started with an `--id` that is not its certificate's does not start. Without
+TLS the MDS takes the id as sent.
 
-One collector runs for the whole MDS. It polls each configured backend
-through librawstor's `Location::info()` and `Slot`, including their existing
-connect/I/O retries, reconnects, exponential backoff and jitter. Final
-success or failure updates the database's availability and check time;
-success also replaces the space counters and sample time. Unsampled OSTs
-are unavailable. At MDS startup persisted counters are kept, but availability
-is cleared until probes succeed. Create and grow place new chunks only on
-available OSTs; existing chunk maps and version members are unchanged.
+An OST is available for new chunks for three heartbeat intervals after it
+registered last. The MDS keeps that in memory only, so a heartbeat that changes
+nothing writes nothing; after an MDS restart every OST is unavailable until it
+registers again, at most one interval later. An OST that stops registers once
+more as leaving (`OST_LEAVING`) and is unavailable at once. An entry changes
+with every registration that changes it:
+
+- **Location.** An OST moved to another address registers there; the objects
+  placed on it resolve to the new address. While an OST is available, a
+  registration of its id at another location is refused (`-EEXIST`): one id
+  is one OST.
+- **Domain, weight.** Taken as the OST sends them and logged as a warning
+  (`OST ... moved from failure domain ... to ...`). Chunks placed under the old
+  domain stay where they are, even where two copies of one chunk now share a
+  domain; only new chunks are placed under the new one.
+- **Gone.** The entry of an OST that is unavailable and holds no slot and no
+  version member is dropped: no chunk refers to it, and the OST registers
+  again if it comes back. An OST holding chunks keeps its entry, unavailable,
+  for as long as it does. One that has not registered since the MDS started
+  gets one lease to do so first.
+
+The witness the MDS hosts itself is entered by `rawstor-mds --advertise
+ost://<this host>:<port> --domain PATH [--weight N]` (and `--id`, without
+TLS): a witness candidate only, always available while the MDS runs, its id
+that of the MDS. No OST may register under it (`-EEXIST`).
+
+### Space and the member digest
+
+Every registration carries the OST's latest sample of its store: `used` and
+`total`, as `LOCATION_INFO` reports them, and the **member digest**: how many
+members the store holds and the sum, modulo 2^64, of
+`rawstd_hash_stable(object id (16 bytes) ‖ chunk offset (8 bytes,
+little-endian))` over them, as its `LIST` reports them. The sum does not depend
+on the order of the members. The MDS never computes the space a slot takes:
+that is the OST's business (sparse files, compression and so on).
+
+An OST samples its store when it starts, every `RAWSTOR_MDS_OPTS_INFO_INTERVAL`,
+and `RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY` after it created or removed a member
+or a version, so that `rawstor location info` catches up with a create, grow or
+remove well before the next regular sample. A further change before the
+sample restarts the delay, so a client's burst of them is sampled once, after
+the last. The MDS sends both values with every reply to `OST_REGISTER`.
+
+`rawstor location info mds://host:port` sends `LOCATION_INFO` to the MDS and
+reads the sums of the latest samples of the OSTs of the topology, available
+or not, from its database. They are physical backend counters, without
+dividing by mirror width. An OST that has sent no sample contributes zero, and
+so does the MDS's own witness. A request never polls an OST.
 
 | Environment variable | Default | Meaning |
 |---|---|---|
-| `RAWSTOR_MDS_OPTS_INFO_INTERVAL` | `300000` | Milliseconds between consecutive probes of one OST. Must be positive. |
-| `RAWSTOR_MDS_OPTS_INFO_CONCURRENCY` | `128` | Maximum in-flight probes, including retries (1–1024). |
-| `RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY` | `5000` | Milliseconds after a create, grow or remove before the OSTs it touched are probed again. `0` probes at once. |
+| `RAWSTOR_MDS_OPTS_HEARTBEAT_INTERVAL` | `10000` | Milliseconds between two registrations of an OST; one that has not registered for three of them is unavailable. Must be positive. |
+| `RAWSTOR_MDS_OPTS_INFO_INTERVAL` | `300000` | Milliseconds a sample is good for: an OST samples its store again this long after the last time. Must be positive. |
+| `RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY` | `5000` | Milliseconds after an OST created or removed a member or a version before it samples its store again. `0` samples at once. |
 
-The 5-minute default avoids continuous metadata/space scans while still
-refreshing availability regularly. Each OST is probed as soon as it appears
-in the topology (at startup, or after its location changes), since it stays
-unavailable until then. Later probes run at a fixed per-OST offset within the
-interval, derived from a hash of the OST's id and location, so a large
-topology is polled evenly across the interval rather than in one burst. A
-probe's next run is the first such slot at least half an interval after it
-finishes. Every OST has its own probe loop (probe, then sleep until its next
-slot), so a slow OST does not create a batch barrier. Concurrency bounds the
-probes in flight, and with them sockets, queue events and memory for large
-topologies (e.g. 5000 OSTs); a sleeping loop holds only a timer. When many
-OSTs are unavailable, retries consume probe slots and can delay the next
-probe beyond the configured interval; loops waiting for a slot get it in the
-order they asked. On shutdown the collector stops all loops and cancels the
-calls in flight, retries included, without recording their outcome.
-Retry budgets and timeouts use the `RAWSTOR_OPTS_*` knobs documented in [Configuration](configuration.md).
-OST connections start with a 32KiB receive ring. Binding an object or a
-version grows it to the data-path size; variable-sized listings also grow
-it before sending a request. INFO polling needs only the initial ring.
-
-A systemd instance (`rawstor-mds@<uuid>`) reads overrides from
-`/etc/rawstor/mds/<uuid>.conf`. The MDS logs the effective interval and concurrency
-at startup. `SIGHUP` reload also updates the collector: new OSTs are queued
-for probing immediately, removed OSTs are dropped from the database and aggregate, and
-an address change clears the old sample and availability. OSTs that stay in
-the topology but are unavailable are probed again at once rather than at
-their next slot. In-flight results
-for a removed OST or its old address are ignored. The existing refusal to
-remove an OST that still holds chunks or version members also applies.
+Sampling walks the store (`file://` sums the sizes of its files), which is why
+it runs once an interval rather than with every heartbeat. A systemd instance
+(`rawstor-mds@<uuid>`) reads overrides from `/etc/rawstor/mds/<uuid>.conf`, and
+the MDS logs the effective values at startup.
 
 ### Logical objects and physical members
 
@@ -1357,23 +1351,21 @@ members and the witness must occupy distinct domains at the requested level;
 insufficient eligible domains fail the operation instead of omitting the vote.
 Odd mirror counts do not add a witness. Existing chunk maps are not rewritten.
 
-Topology rows require five columns: `<uuid> <location> <weight> <role> <path>`.
-The `role` column is `data`, `witness`, `data,witness` or `witness,data`; role
-order has no effect. DATA placement only uses entries permitting `data`, and
-witness placement only uses entries permitting `witness`. A physical URI does
-not select the role: an MDS backend uses `ost://` with `witness`:
+DATA placement uses the OSTs, and witness placement the OSTs and the witness
+the MDS hosts itself, which takes no data. A physical URI does not select the
+role: the MDS witness is an `ost://` location at the MDS endpoint, given with
+its failure domain so that placement knows it:
 
-```text
-00000000-0000-7000-8000-000000000001 ost://host1:7777 100 data,witness dc1/row1/rack1/host1
-00000000-0000-7000-8000-000000000002 ost://host2:7777 100 data,witness dc1/row1/rack1/host2
-00000000-0000-7000-8000-000000000003 ost://host3:7776 100 witness dc1/row1/rack1/host3
+```bash
+rawstor-ost ... --id ${OST1} --mds mds://host3:7776 --advertise ost://host1:7777 --domain dc1/row1/rack1/host1 file:///srv/ost
+rawstor-ost ... --id ${OST2} --mds mds://host3:7776 --advertise ost://host2:7777 --domain dc1/row1/rack1/host2 file:///srv/ost
+rawstor-mds ... -b 0.0.0.0:7776 --advertise ost://host3:7776 --domain dc1/row1/rack1/host3
 ```
 
 Here `-m 2 --failure-domain server` places two DATA copies and a witness on
-host3. The MDS endpoint is explicit in the topology so its failure domain is
-known. It is health-probed like other candidates, but its reported aggregate
-capacity is not counted again as storage capacity. Returned physical witness
-URIs use `ost://host3:7776/UUID/OFFSET`, including in `rawstor object slots`.
+host3. The MDS witness is always available, and its capacity is not counted as
+storage capacity. Returned physical witness URIs use
+`ost://host3:7776/UUID/OFFSET`, including in `rawstor object slots`.
 
 Witness slots are last in each live chunk map and are created and removed with
 their chunk. They take part in configuration barriers and quorum, but receive

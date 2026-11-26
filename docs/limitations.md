@@ -39,10 +39,11 @@ deciding how to deploy.
   database owned by one `rawstor-mds` per cluster. It is not in the data path,
   and the map can be rebuilt from the OSTs with `rawstor-mds --reconstruct`.
   See [MDS design](mds.md#mds-server-v1-single-instance).
-- **A static topology.** OSTs are listed in a file and reloaded on `SIGHUP`;
-  there is no dynamic membership service. A reload that drops an OST still
-  holding chunks is refused. Existing chunks are never moved when an OST is
-  added.
+- **Membership by heartbeat only.** The topology is the OSTs that register
+  with the MDS; one that has not registered for three heartbeat intervals is
+  unavailable, whether it is down or only cut off from the MDS. Any holder of
+  an OST certificate of the trust domain may join. Existing chunks are never
+  moved when an OST is added, or when an OST changes its failure domain.
 - **Grow-only resize.** `rawstor object resize` can grow an object by whole chunks;
   shrinking is refused.
 - **`--insecure` has no authentication.** A service run with `--insecure`
@@ -51,13 +52,13 @@ deciding how to deploy.
   trusted network only.
 - **No protocol version.** `HANDSHAKE` negotiates feature bits only, and none
   is defined yet; see [Protocol](protocol.md).
-- **Free space is reported by sampling.** `rawstor location info mds://` shows the last
-  probe of every OST. A create, grow or remove makes the MDS probe the OSTs it
-  touched after `RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY`, but a client that is
-  still working on the OSTs by then may be seen half done until the next
-  probe. See [Configuration](configuration.md).
+- **Free space is reported by sampling.** `rawstor location info mds://` shows
+  the last sample every OST sent. An OST samples its store again
+  `RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY` after a member was created or removed
+  on it, and the MDS sees it with the next heartbeat. See
+  [Configuration](configuration.md).
 - **Host names are resolved to IPv4 only.** A host name in a location,
-  topology file or listen address is looked up (blocking) when connecting or
+  `--advertise` or listen address is looked up (blocking) when connecting or
   binding, and only its IPv4 address is used. A client-local location such as
   `file://` only makes sense on a single host.
 

@@ -101,11 +101,17 @@ EOF
 On each of the two storage hosts, start the OST whose id the certificate
 names (`OST1` here, `OST2` on the other), storing its data in
 `/var/lib/rawstor/ost/<id>` (created on start and owned by the `rawstor`
-user). The metadata host needs both ids:
+user). It registers with the MDS on the metadata host (see below): the
+location clients reach it at, and its place in the failure hierarchy, its own
+rack and server. Until the MDS runs it logs the failure and tries again.
 
 ```
 OST=${OST1}
-(echo 'BIND_ADDR=0.0.0.0'; cat tls.settings) | sudo tee /etc/rawstor/ost/${OST}.conf
+(echo 'BIND_ADDR=0.0.0.0'; cat tls.settings
+ echo 'MDS=mds://192.168.0.13'
+ echo 'ADVERTISE=ost://192.168.0.11'          # .12 on the other
+ echo 'DOMAIN=dc1/row1/rack1/host1'           # rack2/host2 on the other
+) | sudo tee /etc/rawstor/ost/${OST}.conf
 sudo systemctl enable --now rawstor-ost@${OST}
 
 set -a; . ./tls.settings; set +a              # for the rawstor CLI
@@ -115,39 +121,28 @@ journalctl -u rawstor-ost@${OST}              # log
 
 ## Metadata host
 
-The MDS decides which OSTs hold each chunk of an object. It reads a topology
-file with one line per OST: the OST's id, the location clients reach it at, a
-weight, its roles and its place in the failure hierarchy. The two storage
-hosts are `data` members. The MDS lists itself too, as a `witness`: it serves
-the witness subset of the OST protocol on its own port, so its location is an
-`ost://` one with the MDS's port, `7776`, and it needs an id of its own:
+The MDS decides which OSTs hold each chunk of an object, among those that have
+registered with it. It also hosts a witness: it serves the witness subset of
+the OST protocol on its own port, so it tells the clients an `ost://` location
+with the MDS's port, `7776`, and its own place in the failure hierarchy:
 
 ```
-# OST1 and OST2 are the ids the certificates were made with; CLUSTER names the
-# MDS instance, which has an id of its own (the one in mds.crt)
-WITNESS=$(cat /proc/sys/kernel/random/uuid)
-
-sudo tee /etc/rawstor/mds/${CLUSTER}.topology <<EOF
-${OST1} ost://192.168.0.11 100 data dc1/row1/rack1/host1
-${OST2} ost://192.168.0.12 100 data dc1/row1/rack2/host2
-${WITNESS} ost://192.168.0.13:7776 100 witness dc1/row1/rack3/host3
-EOF
-(echo 'BIND_ADDR=0.0.0.0'; cat tls.settings) | sudo tee /etc/rawstor/mds/${CLUSTER}.conf
+(echo 'BIND_ADDR=0.0.0.0'; cat tls.settings
+ echo 'ADVERTISE=ost://192.168.0.13:7776'
+ echo 'DOMAIN=dc1/row1/rack3/host3'
+) | sudo tee /etc/rawstor/mds/${CLUSTER}.conf
 sudo systemctl enable --now rawstor-mds@${CLUSTER}
 
-set -a; . ./tls.settings; set +a              # for the rawstor CLI
-rawstor location info mds://192.168.0.13               # serving?
+journalctl -u rawstor-mds@${CLUSTER} | grep registered   # both OSTs in?
 ```
 
-The witness has an id of its own in the topology, but the server at its address
-is the MDS, and a client accepts it with the MDS's certificate, `mds.crt`.
+The witness goes by the MDS's own id, the one in `mds.crt`, and a client
+accepts the server at its address with that certificate.
 
 Each member sits on its own server, so a chunk's two copies and its witness
-never share a failure domain.
-
-After editing the topology file later, apply it with
-`sudo systemctl reload rawstor-mds@${CLUSTER}`. The package also ships a
-commented example in `/usr/share/doc/rawstor-mds/topology.conf`.
+never share a failure domain. An OST added later registers the same way;
+changing an OST's domain or weight is a change to its own config and a
+restart.
 
 ## Hypervisor
 

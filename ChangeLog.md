@@ -10,11 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `rawstor-mds --advertise`, `--domain` and `--weight` enter the witness the MDS hosts in its topology.
+- `rawstor-ost --mds` registers the OST with the MDS of its cluster (`--id`, `--advertise`, `--domain`, `--weight`; `MDS`, `ADVERTISE`, `DOMAIN`, `WEIGHT` of `rawstor-ost@<uuid>`), every heartbeat, with a sample of its store, and as leaving when it stops.
 
 ### Changed
 
 - `rawstor-mds` keeps its topology in its database, entered by the OSTs that register with it (`OST_REGISTER`), not in a file: `--topology`, the instance's `TOPOLOGY_PATH` and the reload on `SIGHUP` are gone; a database of an earlier build keeps its entries.
 - An OST is available to the MDS for three heartbeats (`RAWSTOR_MDS_OPTS_HEARTBEAT_INTERVAL`) after it registers, instead of being probed; `RAWSTOR_MDS_OPTS_INFO_CONCURRENCY` is gone.
+- The space `rawstor location info mds://` reports is sampled by the OSTs themselves, every `RAWSTOR_MDS_OPTS_INFO_INTERVAL` and `RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY` after they created or removed a member or a version.
+- `rawstor-ost@<uuid>` runs with `--id=<uuid>`: with TLS, an instance whose certificate is for another id does not start.
 
 ## [0.3.6] - 2026-11-26
 

@@ -20,6 +20,11 @@
 | `-b, --bind ADDR` | Bind address in `<ip>[:<port>]` format (e.g., `127.0.0.1:7777`); the port defaults to 7777. |
 | `-w, --workers N` | Number of worker threads, each with its own client connections and I/O queue, all accepting on the same listening socket (default: `12`). |
 | `--meta-cache-ttl MS` | How long, in milliseconds, the member records of a `file://`, `lvm://` or `zfs://` store stay in memory ([Member record cache](#member-record-cache)); `0` reads the store every time (default: `60000`). |
+| `--mds LOCATION` | Register with the MDS of the cluster, `mds://host:port` ([Registration with an MDS](#registration-with-an-mds)). Empty or absent: no registration. |
+| `--id UUID` | The OST's id; required with `--mds`. With TLS it must be the id of the OST's certificate, or the OST does not start. |
+| `--advertise LOCATION` | The location the clients reach the store at, normally `ost://<this host>:<port>`; required with `--mds`. |
+| `--domain PATH` | The OST's failure domain, `[[[dc/]row/]rack/]server`; required with `--mds`. |
+| `--weight N` | The OST's share of new chunks, e.g. its capacity in GiB (default: `100`). |
 
 ## Examples
 
@@ -71,11 +76,36 @@ it only bounds how long such a change goes unseen, so it should be well above
 cache is off for an `ost://` location (the records are the other
 server's) and with `--meta-cache-ttl 0`.
 
+## Registration with an MDS
+
+With `--mds`, the OST enters itself in the topology of that MDS and keeps
+itself there (see [OST registration](mds.md#ost-registration)): it registers
+when it starts, again every heartbeat interval the MDS asks for, and as
+leaving when it stops. With each registration it sends its latest sample of
+the store -- the space `LOCATION_INFO` reports and the digest of the members
+it holds -- taken at start, every info interval the MDS asks for, and shortly
+after a member or a version was created or removed on it. A registration the
+MDS refuses, or an MDS that does not answer, is logged once and retried every
+heartbeat interval; the OST serves on meanwhile.
+
+```bash
+rawstor-ost -b 0.0.0.0:7777 --id ${OST_ID} --mds mds://mds1:7776 \
+    --advertise ost://host1:7777 --domain dc1/row1/rack1/host1 --weight 2000 \
+    file:///var/rawstor/data
+```
+
+An OST is the only one to know its domain and weight, so a change is made
+there: restart it with the new ones and the MDS takes them, logging a warning;
+the chunks already placed stay where they are. All the members of the store
+are taken to belong to the cluster of that MDS. The advertised location is any
+single location URI: one the clients reach directly, such as the `file://`
+store itself on a single host, works too.
+
 ## systemd instances
 
 The `rawstor-ost` deb/rpm package ships the `rawstor-ost@.service`
-template: one instance per OST, named after the OST's id (the `<uuid>` the
-MDS topology lists it under), configured by
+template: one instance per OST, named after the OST's id (`--id`: the
+`<uuid>` it registers under and its certificate is for), configured by
 `/etc/rawstor/ost/<uuid>.conf`. Installing the package starts nothing; an
 instance without its config refuses to start. A host runs as many
 instances as it has OSTs, each on its own port and store.
@@ -89,6 +119,10 @@ The config is an environment file (`KEY=VALUE` lines):
 | `QUEUE_SIZE` | `4096` | `--queue-size`. |
 | `WORKERS` | `12` | `--workers`. |
 | `META_CACHE_TTL` | `60000` | `--meta-cache-ttl`. |
+| `MDS` | empty | `--mds`; no registration while empty. |
+| `ADVERTISE` | empty | `--advertise`. |
+| `DOMAIN` | empty | `--domain`. |
+| `WEIGHT` | `100` | `--weight`. |
 | `RAWSTOR_TLS_*` | | TLS settings, see [Configuration](configuration.md#tls). |
 | `RAWSTOR_OPTS_*` | | Tuning knobs, see [Configuration](configuration.md). |
 
@@ -114,8 +148,11 @@ OST2=$(cat /proc/sys/kernel/random/uuid)
 tls() {
     printf 'RAWSTOR_TLS_TRUST_DOMAIN=cluster.example\nRAWSTOR_TLS_CERT=/etc/rawstor/tls/%s.crt\nRAWSTOR_TLS_KEY=/etc/rawstor/tls/%s.key\nRAWSTOR_TLS_CA=/etc/rawstor/tls/ca.crt\n' $1 $1
 }
-(echo BIND_ADDR=0.0.0.0:7777; tls ${OST1}) | sudo tee /etc/rawstor/ost/${OST1}.conf
-(echo BIND_ADDR=0.0.0.0:7778; tls ${OST2}) | sudo tee /etc/rawstor/ost/${OST2}.conf
+mds() {
+    printf 'MDS=mds://mds1:7776\nADVERTISE=ost://%s:%s\nDOMAIN=dc1/row1/rack1/%s\n' $(hostname) $1 $(hostname)
+}
+(echo BIND_ADDR=0.0.0.0:7777; tls ${OST1}; mds 7777) | sudo tee /etc/rawstor/ost/${OST1}.conf
+(echo BIND_ADDR=0.0.0.0:7778; tls ${OST2}; mds 7778) | sudo tee /etc/rawstor/ost/${OST2}.conf
 sudo systemctl enable --now rawstor-ost@${OST1} rawstor-ost@${OST2}
 
 systemctl status rawstor-ost@${OST1}       # state
