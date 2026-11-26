@@ -1,3 +1,4 @@
+#include "opts.h"
 #include "rawio_sync.hpp"
 
 #include <rawstd/gpp.hpp>
@@ -469,8 +470,8 @@ TEST(MultiqueueTest, degraded_open_recorded_by_adopting_writer) {
  * the sweeper never overwrites them with older data, and the member
  * rejoins byte-identical to the in-sync copy.
  */
-TEST(MultiqueueTest, resync_while_queues_write) {
-    Members members(3, "00000000-0000-7000-8000-0000000000c7");
+void resync_while_queues_write(const char* object_id) {
+    Members members(3, object_id);
     const size_t size = 16ull << 20;
     {
         Queue queue(16);
@@ -573,4 +574,23 @@ TEST(MultiqueueTest, resync_while_queues_write) {
     EXPECT_NE(log.find("rejoined the set"), std::string::npos);
     EXPECT_EQ(log.find("Mirror resync aborted"), std::string::npos);
     EXPECT_TRUE(members.data(0, size) == members.data(1, size));
+}
+
+TEST(MultiqueueTest, resync_while_queues_write) {
+    ASSERT_NO_FATAL_FAILURE(
+        resync_while_queues_write("00000000-0000-7000-8000-0000000000c7")
+    );
+}
+
+// The same with a rate set so high that the sweeper never has to wait: each
+// region still goes through the pause, which must not hold the sweeper up
+// while the queues write.
+TEST(MultiqueueTest, resync_while_queues_write_with_a_rate) {
+    RawstorOpts opts{};
+    opts.mirror_resync_rate = 4000u << 20;
+    ASSERT_EQ(rawstor_opts_initialize(&opts), 0);
+    ASSERT_NO_FATAL_FAILURE(
+        resync_while_queues_write("00000000-0000-7000-8000-0000000000c8")
+    );
+    rawstor_opts_initialize(nullptr);
 }

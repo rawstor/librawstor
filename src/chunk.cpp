@@ -6,6 +6,7 @@
 #include "location.hpp"
 #include "opts.h"
 #include "ost_backend.hpp"
+#include "rate_pacer.hpp"
 #include "slot.hpp"
 #include "target.hpp"
 
@@ -25,6 +26,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cassert>
+#include <chrono>
 #include <exception>
 #include <limits>
 #include <map>
@@ -205,6 +207,23 @@ bool in_history(const RawstorObjectConfig& config, uint64_t sync_id) {
 
 // Online resync copy granularity (docs/mirroring.md).
 const size_t RESYNC_CHUNK = 1ull << 20;
+
+// The pacer of every resync and heal running in the process, at the rate
+// rawstor_opts_mirror_resync_rate() has when the first of them starts. It is
+// gone with the last of them.
+std::shared_ptr<rawstor::RatePacer> shared_resync_pacer() {
+    static std::mutex mu;
+    static std::weak_ptr<rawstor::RatePacer> slot;
+    std::lock_guard<std::mutex> lock(mu);
+    std::shared_ptr<rawstor::RatePacer> pacer = slot.lock();
+    if (!pacer) {
+        pacer = std::make_shared<rawstor::RatePacer>(
+            rawstor_opts_mirror_resync_rate()
+        );
+        slot = pacer;
+    }
+    return pacer;
+}
 
 // Synchronously pumps `t` to completion by driving `q` -- used by
 // ~Chunk() to co_await each Slot's close() from a plain (non-
@@ -3040,6 +3059,29 @@ rawstd::DetachedTask Chunk::_resync_watch() {
     }
 }
 
+rawstd::Task<bool> Chunk::_resync_paced(
+    std::shared_ptr<rawstor::RatePacer> pacer, bool& pace_done
+) {
+    co_await pacer->acquire(_queue, RESYNC_CHUNK);
+    {
+        std::lock_guard<std::mutex> lock(_control->mutex());
+        pace_done = true;
+    }
+    _control->wake_resync();
+    co_return true;
+}
+
+rawstd::Task<bool>
+Chunk::_resync_wait_gone(uint64_t generation, bool& pace_done) {
+    MirrorControl& c = *_control;
+    co_await c.wait_resync(_queue, [&]() {
+        MirrorResync* r = c.resync_locked();
+        return pace_done || _closing || r == nullptr ||
+               r->generation() != generation;
+    });
+    co_return false;
+}
+
 /*
  * The owner's side of a resync: waits for every Chunk to attach, sweeps
  * the needs-copy regions one at a time from an in-sync source, mutually
@@ -3078,8 +3120,35 @@ rawstd::DetachedTask Chunk::_resync_run(uint64_t generation) {
         }
 
         std::vector<char> buf(RESYNC_CHUNK);
+        const std::shared_ptr<rawstor::RatePacer> pacer = shared_resync_pacer();
 
         for (;;) {
+            // The pause comes before the region is claimed: a claimed region
+            // is one client writes park on. It ends at once when the resync
+            // is over.
+            if (pacer->limited()) {
+                bool pace_done = false;
+                try {
+                    bool paced = co_await rawstd::any(
+                        2, [&](size_t i) -> rawstd::Task<bool> {
+                            return i == 0 ? _resync_paced(pacer, pace_done)
+                                          : _resync_wait_gone(
+                                                generation, pace_done
+                                            );
+                        }
+                    );
+                    if (!paced) {
+                        co_return;
+                    }
+                } catch (const std::system_error& e) {
+                    rawstd_warning(
+                        "Mirror resync: pacing stopped: %s\n", e.what()
+                    );
+                    _resync_abort(generation, "pacing stopped");
+                    co_return;
+                }
+            }
+
             size_t k = 0;
             size_t idx = 0;
             bool done = false;
@@ -3240,13 +3309,15 @@ rawstd::DetachedTask Chunk::_resync_run(uint64_t generation) {
                 co_return;
             }
 
-            std::lock_guard<std::mutex> lock(c.mutex());
-            if (gone_locked()) {
-                co_return;
+            {
+                std::lock_guard<std::mutex> lock(c.mutex());
+                if (gone_locked()) {
+                    co_return;
+                }
+                MirrorResync* r = c.resync_locked();
+                r->complete_copy(k);
+                c.wake_resync();
             }
-            MirrorResync* r = c.resync_locked();
-            r->complete_copy(k);
-            c.wake_resync();
         }
 
         if (heal) {

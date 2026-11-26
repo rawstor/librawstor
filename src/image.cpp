@@ -1,6 +1,8 @@
 #include "image.hpp"
 
 #include "object.hpp"
+#include "opts.h"
+#include "rate_pacer.hpp"
 #include "target.hpp"
 
 #include <rawstor/target.h>
@@ -170,9 +172,11 @@ rawstd::Task<void> copy_object_to_file(
     rawio::Queue& queue, rawstor::Object& source, int fd, uint64_t size,
     bool sparse, Progress& progress
 ) {
+    rawstor::RatePacer pacer(rawstor_opts_export_rate());
     std::vector<char> buf(block_size);
     for (uint64_t offset = 0; offset < size; offset += block_size) {
         size_t n = block_at(offset, size);
+        co_await pacer.acquire(queue, n);
         co_await read_object(source, buf.data(), n, offset);
         if (!sparse || !is_zero(buf.data(), n)) {
             co_await write_file(queue, fd, buf.data(), n, offset);
