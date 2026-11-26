@@ -833,6 +833,11 @@ ObjectStore::Access ObjectStore::authorize(
     Access result{
         std::unique_lock<std::recursive_mutex>(_mutex), RAWSTOR_PERM_ALL, {}
     };
+    // The map is being replaced: answered later. A control connection is
+    // still acknowledged, so that an OST can connect to register.
+    if (_reconstructing && command != RAWSTOR_CMD_SET_OBJECT) {
+        RAWSTD_THROW_SYSTEM_ERROR(EAGAIN);
+    }
     if (!peer) {
         return result;
     }
@@ -1425,6 +1430,24 @@ void ObjectStore::_sweep(Clock::time_point now, bool force) {
 bool ObjectStore::backend_available(const RawstdUUID& id) {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
     return _alive(id, Clock::now());
+}
+
+std::vector<TopologyOST> ObjectStore::available_osts() {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    std::vector<TopologyOST> ret;
+    const Clock::time_point now = Clock::now();
+    for (const TopologyOST& ost : _topology->osts()) {
+        if (rawstd_uuid_cmp(&ost.id, &_local_witness) != 0 &&
+            _alive(ost.id, now)) {
+            ret.push_back(ost);
+        }
+    }
+    return ret;
+}
+
+void ObjectStore::set_reconstructing(bool reconstructing) {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    _reconstructing = reconstructing;
 }
 
 RawstorLocationInfo ObjectStore::info() {

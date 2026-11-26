@@ -126,6 +126,7 @@ private:
     std::unordered_map<std::string, Seen> _seen;
     // The witness this MDS hosts itself, nil for none: always available.
     RawstdUUID _local_witness{};
+    bool _reconstructing = false;
 
     uint64_t _check_layout();
     void _migrate_backends();
@@ -296,6 +297,17 @@ public:
     void set_local_witness(const TopologyOST& witness);
 
     bool backend_available(const RawstdUUID& id);
+
+    /* The OSTs available for placement now, the local witness left out. */
+    std::vector<TopologyOST> available_osts();
+
+    /*
+     * While --reconstruct waits for the OSTs and rebuilds the map
+     * (docs/mds.md, "Reconstruct / DR"), every request but a registration
+     * fails with EAGAIN: the map it would answer from is the one being
+     * replaced.
+     */
+    void set_reconstructing(bool reconstructing);
 
     /*
      * Every mutating call takes an `idempotency_key`: the client's idempotency

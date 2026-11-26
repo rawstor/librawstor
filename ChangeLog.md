@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An OST is available to the MDS for three heartbeats (`RAWSTOR_MDS_OPTS_HEARTBEAT_INTERVAL`) after it registers, instead of being probed; `RAWSTOR_MDS_OPTS_INFO_CONCURRENCY` is gone.
 - The space `rawstor location info mds://` reports is sampled by the OSTs themselves, every `RAWSTOR_MDS_OPTS_INFO_INTERVAL` and `RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY` after they created or removed a member or a version.
 - `rawstor-ost@<uuid>` runs with `--id=<uuid>`: with TLS, an instance whose certificate is for another id does not start.
+- `rawstor-mds --reconstruct` waits for every OST of its topology to register, or for `--expect N` of them when the database is gone, answering only registrations until the map is rebuilt.
 
 ## [0.3.6] - 2026-11-26
 

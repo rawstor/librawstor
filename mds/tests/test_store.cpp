@@ -427,6 +427,48 @@ TEST_F(ObjectStoreTest, only_an_ost_registers_and_only_as_itself) {
     );
 }
 
+// While the map is rebuilt, only the OSTs it is rebuilt from get through:
+// they connect and register, everything else is answered later.
+TEST_F(ObjectStoreTest, a_reconstruct_holds_back_everything_but_registration) {
+    ObjectStore& store = make_store();
+    rawtls::SpiffeId admin("spiffe://cluster.example/admin/ops");
+    store.set_reconstructing(true);
+
+    EXPECT_EQ(
+        errno_of([&] { store.authorize(&admin, RAWSTOR_CMD_LIST); }), EAGAIN
+    );
+    EXPECT_EQ(
+        errno_of([&] { store.authorize(nullptr, RAWSTOR_CMD_OBJ_CREATE); }),
+        EAGAIN
+    );
+    EXPECT_EQ(
+        errno_of([&] { store.authorize(&admin, RAWSTOR_CMD_SET_OBJECT); }), 0
+    );
+    TopologyOST fourth =
+        make_ost("00000000-0000-7000-8000-000000000004", "host4");
+    store.register_ost(registration_of(fourth));
+    EXPECT_EQ(store.available_osts().size(), 4u);
+
+    store.set_reconstructing(false);
+    EXPECT_EQ(errno_of([&] { store.authorize(&admin, RAWSTOR_CMD_LIST); }), 0);
+}
+
+// The OSTs a reconstruct scans: the available ones, not the MDS's own
+// witness.
+TEST_F(ObjectStoreTest, the_available_osts_leave_out_the_local_witness) {
+    ObjectStore& store = make_store();
+    TopologyOST mds = make_ost("00000000-0000-7000-8000-000000000004", "host4");
+    mds.roles = {rawstor::mdsserver::Role::Witness};
+    store.set_local_witness(mds);
+    leave(store, make_topology().osts()[2]);
+
+    std::vector<TopologyOST> available = store.available_osts();
+    ASSERT_EQ(available.size(), 2u);
+    for (const TopologyOST& ost : available) {
+        EXPECT_FALSE(ost.witness_only());
+    }
+}
+
 // A store of layout 1 kept the space samples of a topology read from a file:
 // its entries keep their addresses and samples, and take chunks once their
 // OSTs register.

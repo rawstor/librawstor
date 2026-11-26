@@ -387,7 +387,7 @@ neither: each OST states its own entry and keeps it alive by registering
 its database, in the `topology` table. An entry stays as long as a slot or a
 version member is on its OST, so no slot is ever left without an address.
 Lost with the database, the roster comes back as the OSTs register again,
-which is what *Reconstruct / DR* starts from.
+which is what *Reconstruct / DR* waits for.
 
 ## MDS API
 
@@ -1133,8 +1133,9 @@ witness tables being the reason `synchronous=FULL` is non-negotiable.
 
 ```
 rebuild the map:
-  get the OST roster from topology (v1: static config)
-  for each OST: LIST -> physical ids, then per id: META -> chunk_meta
+  wait for the OSTs to register: every OST of the topology table, or
+    --expect N of them for a database that is gone
+  for each OST registered: LIST -> physical ids, then per id: META -> chunk_meta
   drop member_role = WITNESS records (metadata-only, not slots)
   group by (id, version): nil version -> live chunk_map,
                                  version = version_id -> version view
@@ -1144,7 +1145,7 @@ rebuild the map:
 
 ```mermaid
 flowchart TB
-    T[/"topology: OST roster"/] --> Scan
+    T[/"OSTs registered:<br/>the topology table's, or --expect N"/] --> Scan
     subgraph Scan ["for each OST"]
         direction LR
         L["LIST: physical ids"] --> Me["META per id: chunk_meta"]
@@ -1171,14 +1172,23 @@ of normal opens/closes.
 
 **v1 notes (shipped as `rawstor-mds --reconstruct`, scan before serving):**
 
-- **No partial scans, by construction:** every OST of the topology must
-  answer `LIST` or the reconstruct aborts outright. A half scan would
-  silently drop the unanswered OST's live copies from the map; an OST that
-  is really gone is removed from the topology first — an explicit
-  operator decision, not a timeout. One object's own `META` failing on an
-  OST that otherwise answered is a softer case: that one record is
-  skipped (logged), the same "salvage the readable copies" tolerance the
-  next bullet's degraded-chunk handling already relies on.
+- **Wait for the OSTs, then scan.** The MDS listens from the start, so the
+  OSTs can register, but answers every other request with `-EAGAIN` until the
+  map is rebuilt (witness records are not part of the map and stay served).
+  It waits for every OST the topology table has — a database whose map is
+  corrupt still has it — and logs the ones it is waiting for every ten
+  seconds. A database that is gone has no table: `--expect N` waits for N OSTs
+  to register instead, and `--reconstruct` without it refuses to start
+  (`EX_USAGE`). An OST that is really gone, but still in the table, is waited
+  for: `--expect` with the number of OSTs that are left is the operator's way
+  out, an explicit decision, not a timeout.
+- **No partial scans, by construction:** every OST scanned must answer
+  `LIST` or the reconstruct aborts outright, and the MDS exits. A half scan
+  would silently drop the unanswered OST's live copies from the map. One
+  object's own `META` failing on an OST that otherwise answered is a softer
+  case: that one record is skipped (logged), the same "salvage the readable
+  copies" tolerance the next bullet's degraded-chunk handling already relies
+  on.
 - **The map is restored, the policy knobs are not.** `failure_domain`,
   `stripe_width` and the placement seed are deliberately not persisted on
   chunks (descriptor-only state); the rebuilt descriptor gets the weakest
