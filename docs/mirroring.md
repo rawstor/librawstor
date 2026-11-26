@@ -567,7 +567,11 @@ covers both.
   resync ending (`rawstd::any()`, the pause on one side and a wait on the
   resync's condition on the other), and the loser is cancelled with
   `Task::cancel()`, so close and the abort of the resync, which come from
-  other threads, end it at once however long it is.
+  other threads, end it at once however long it is. A cancellation that
+  arrives after its target has already woken is dropped, so the side that
+  waits on the condition also ends by itself: the pause sets a flag under the
+  control's mutex and wakes the condition when it is over. Without a rate
+  there is no pause and no race.
 - **A zero region counts** by its length, like any other: it costs the source
   a read.
 - **A slow copy runs into the record of a syncing member**: it keeps the
