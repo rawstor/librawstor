@@ -1,3 +1,2 @@
 usr/bin/rawstor-mds
 systemd/rawstor-mds@.service usr/lib/systemd/system
-mds/topology.conf usr/share/doc/rawstor-mds

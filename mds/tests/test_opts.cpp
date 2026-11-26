@@ -34,35 +34,34 @@ public:
 };
 
 TEST(MdsOptsTest, defaults_and_overrides) {
+    ScopedEnv heartbeat("RAWSTOR_MDS_OPTS_HEARTBEAT_INTERVAL", nullptr);
     ScopedEnv interval("RAWSTOR_MDS_OPTS_INFO_INTERVAL", nullptr);
-    ScopedEnv concurrency("RAWSTOR_MDS_OPTS_INFO_CONCURRENCY", nullptr);
+    ScopedEnv refresh("RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY", nullptr);
     auto defaults = rawstor::mdsserver::Opts::from_env();
+    EXPECT_EQ(defaults.heartbeat_interval, 10000u);
     EXPECT_EQ(defaults.info_interval, 300000u);
-    EXPECT_EQ(defaults.info_concurrency, 128u);
     EXPECT_EQ(defaults.info_refresh_delay, 5000u);
-    setenv("RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY", "50", 1);
-    EXPECT_EQ(rawstor::mdsserver::Opts::from_env().info_refresh_delay, 50u);
-    unsetenv("RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY");
+    setenv("RAWSTOR_MDS_OPTS_HEARTBEAT_INTERVAL", "250", 1);
     setenv("RAWSTOR_MDS_OPTS_INFO_INTERVAL", "2500", 1);
-    setenv("RAWSTOR_MDS_OPTS_INFO_CONCURRENCY", "32", 1);
+    setenv("RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY", "0", 1);
     auto overridden = rawstor::mdsserver::Opts::from_env();
+    EXPECT_EQ(overridden.heartbeat_interval, 250u);
     EXPECT_EQ(overridden.info_interval, 2500u);
-    EXPECT_EQ(overridden.info_concurrency, 32u);
-    setenv("RAWSTOR_MDS_OPTS_INFO_CONCURRENCY", "1024", 1);
-    EXPECT_EQ(rawstor::mdsserver::Opts::from_env().info_concurrency, 1024u);
+    EXPECT_EQ(overridden.info_refresh_delay, 0u);
 }
 
 TEST(MdsOptsTest, invalid_values_are_configuration_errors) {
+    ScopedEnv heartbeat("RAWSTOR_MDS_OPTS_HEARTBEAT_INTERVAL", nullptr);
     ScopedEnv interval("RAWSTOR_MDS_OPTS_INFO_INTERVAL", nullptr);
-    ScopedEnv concurrency("RAWSTOR_MDS_OPTS_INFO_CONCURRENCY", nullptr);
     for (const char* bad : {"0", "", "5m", "-1"}) {
         setenv("RAWSTOR_MDS_OPTS_INFO_INTERVAL", bad, 1);
         EXPECT_THROW(rawstor::mdsserver::Opts::from_env(), std::system_error)
             << bad;
     }
     unsetenv("RAWSTOR_MDS_OPTS_INFO_INTERVAL");
-    for (const char* bad : {"0", "1025", "abc"}) {
-        setenv("RAWSTOR_MDS_OPTS_INFO_CONCURRENCY", bad, 1);
+    // A lease is three heartbeats, which must fit.
+    for (const char* bad : {"0", "2000000000", "abc"}) {
+        setenv("RAWSTOR_MDS_OPTS_HEARTBEAT_INTERVAL", bad, 1);
         EXPECT_THROW(rawstor::mdsserver::Opts::from_env(), std::system_error)
             << bad;
     }

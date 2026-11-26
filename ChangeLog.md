@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.7] - Unreleased
+
+### Added
+
+- `rawstor-mds --advertise`, `--domain` and `--weight` enter the witness the MDS hosts in its topology.
+
+### Changed
+
+- `rawstor-mds` keeps its topology in its database, entered by the OSTs that register with it (`OST_REGISTER`), not in a file: `--topology`, the instance's `TOPOLOGY_PATH` and the reload on `SIGHUP` are gone; a database of an earlier build keeps its entries.
+- An OST is available to the MDS for three heartbeats (`RAWSTOR_MDS_OPTS_HEARTBEAT_INTERVAL`) after it registers, instead of being probed; `RAWSTOR_MDS_OPTS_INFO_CONCURRENCY` is gone.
+
 ## [0.3.6] - 2026-11-26
 
 ### Added

@@ -326,8 +326,8 @@ Two kinds of principals, told apart by the path of their SPIFFE ID:
   those plus `manage` (structural changes: allocate, release, versions,
   freeze). Explicit object permissions override these defaults. A `none` client
   has no account-wide listing permission and may access only its named objects.
-- **Provider principals**: `mds` (`/mds/...`), `admin` (`/admin/...`). They
-  are not account-scoped and authorize by their type.
+- **Provider principals**: `ost` (`/ost/...`), `mds` (`/mds/...`), `admin`
+  (`/admin/...`). They are not account-scoped and authorize by their type.
 
 The list is closed: a command that is not in the table is refused with
 `-EACCES`. `yes` means the type may use the command, `—` that it may not.
@@ -351,18 +351,19 @@ OST commands:
 
 MDS commands:
 
-| Command | Account principal: role | `mds` | `admin` |
-|---|---|---|---|
-| `HANDSHAKE` | any | any | any |
-| `SET_OBJECT` (binds nothing on an MDS) | any nonzero default or object permissions | — | yes |
-| `RESOLVE` | any nonzero permissions on the object | — | yes |
-| `LIST_VERSIONS` | `reader` | — | yes |
-| `LIST` | default role grants `read`; answers only the certificate account | — | yes: any account or all |
-| `OBJ_CREATE`, `OBJ_RESIZE`, `OBJ_REMOVE`, `OBJ_COMMIT_VERSION`, `OBJ_REMOVE_VERSION` | `manager` | — | yes |
-| `ALLOCATE`, `RELEASE`, `META`, `SET_OWNER`, `SYNC_PREPARE`, `SYNC_ACCEPT` on a witness hosted by the MDS | as the same command on an OST (`SYNC_*`: `write`), by certificate | — | as on an OST |
-| `LOCATION_INFO`, `LIST_LOCATIONS` | — | — | yes |
-| `LIST_ACCOUNTS`, `ACCOUNT_CREATE`, `ACCOUNT_REMOVE` | — | — | yes |
-| `OBJ_TRANSFER` (changes the owner of an object) | — | — | yes |
+| Command | Account principal: role | `ost` | `mds` | `admin` |
+|---|---|---|---|---|
+| `HANDSHAKE` | any | any | any | any |
+| `SET_OBJECT` (binds nothing on an MDS) | any nonzero default or object permissions | yes | — | yes |
+| `RESOLVE` | any nonzero permissions on the object | — | — | yes |
+| `LIST_VERSIONS` | `reader` | — | — | yes |
+| `LIST` | default role grants `read`; answers only the certificate account | — | — | yes: any account or all |
+| `OBJ_CREATE`, `OBJ_RESIZE`, `OBJ_REMOVE`, `OBJ_COMMIT_VERSION`, `OBJ_REMOVE_VERSION` | `manager` | — | — | yes |
+| `ALLOCATE`, `RELEASE`, `META`, `SET_OWNER`, `SYNC_PREPARE`, `SYNC_ACCEPT` on a witness hosted by the MDS | as the same command on an OST (`SYNC_*`: `write`), by certificate | — | — | as on an OST |
+| `LOCATION_INFO`, `LIST_LOCATIONS` | — | — | — | yes |
+| `LIST_ACCOUNTS`, `ACCOUNT_CREATE`, `ACCOUNT_REMOVE` | — | — | — | yes |
+| `OBJ_TRANSFER` (changes the owner of an object) | — | — | — | yes |
+| `OST_REGISTER` (enters the OST in the topology) | — | yes: its own id only | — | — |
 
 Provider admins also use the membership register to initialize newly created
 objects and manage their copies. This grants metadata control, not data access:

@@ -27,20 +27,26 @@ WorkingDirectory=/var/lib/rawstor/mds/%i
 # Defaults; /etc/rawstor/mds/<uuid>.conf below overrides any of them and
 # must set BIND_ADDR, which has no default: every instance on a host needs
 # a port of its own.
-# SQLite database file (created if missing).
+# SQLite database file (created if missing). It also holds the topology:
+# the OSTs register themselves (docs/mds.md, "OST registration").
 Environment=DB_PATH=/var/lib/rawstor/mds/%i/mds.db
-# Static topology config (docs/mds.md): the OSTs and placement domains of
-# this cluster, in the format of /usr/share/doc/rawstor-mds/topology.conf.
-# Must exist: the instance does not start without one.
-Environment=TOPOLOGY_PATH=/etc/rawstor/mds/%i.topology
 # rawstor-mds's own --queue-size/--workers (see its --help).
 Environment=QUEUE_SIZE=4096
 Environment=WORKERS=4
-# MDS statistics collection and librawstor tuning knobs its probes use
-# (see README.md's "Environment Variables" section for what each one does);
-# set them in /etc/rawstor/mds/<uuid>.conf below to override a default.
+# The witness this MDS hosts (rawstor-mds --advertise/--domain/--weight):
+# the location clients reach it at, ost://<this host>:<port of BIND_ADDR>,
+# and its failure domain, [[[dc/]row/]rack/]server. No ADVERTISE, no
+# witness.
+Environment=ADVERTISE=
+Environment=DOMAIN=
+Environment=WEIGHT=100
+# What the MDS asks of the OSTs that register, and the librawstor tuning
+# knobs (see README.md's "Environment Variables" section for what each one
+# does); set them in /etc/rawstor/mds/<uuid>.conf below to override a
+# default.
+#Environment=RAWSTOR_MDS_OPTS_HEARTBEAT_INTERVAL=10000
 #Environment=RAWSTOR_MDS_OPTS_INFO_INTERVAL=300000
-#Environment=RAWSTOR_MDS_OPTS_INFO_CONCURRENCY=128
+#Environment=RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY=5000
 #Environment=RAWSTOR_OPTS_IO_ATTEMPTS=10
 #Environment=RAWSTOR_OPTS_IO_RETRY_BACKOFF_BASE=100
 #Environment=RAWSTOR_OPTS_IO_RETRY_BACKOFF_MAX=30000
@@ -59,19 +65,15 @@ Environment=WORKERS=4
 # Set in the configuration file below, e.g. EXTRA_ARGS="--insecure".
 Environment=EXTRA_ARGS=
 EnvironmentFile=/etc/rawstor/mds/%i.conf
-ExecStart=/usr/bin/rawstor-mds $EXTRA_ARGS --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --workers=${WORKERS} --db=${DB_PATH} --topology=${TOPOLOGY_PATH}
-# Re-reads TOPOLOGY_PATH without a restart (SIGHUP), keeping every client
-# connection. A topology that doesn't parse, or drops an OST still holding
-# chunks, is refused and the current one kept; the reason is logged to
-# this instance's journal ("Topology reload from ... failed"). The same
-# signal makes it read the TLS certificate, key and CAs again for the
-# connections made after it.
+ExecStart=/usr/bin/rawstor-mds $EXTRA_ARGS --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --workers=${WORKERS} --db=${DB_PATH} --advertise=${ADVERTISE} --domain=${DOMAIN} --weight=${WEIGHT}
+# Reads the TLS certificate, key and CAs again for the connections made
+# after it (SIGHUP), keeping every client connection.
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=10
 # sysexits.h codes rawstor-mds exits with when retrying won't help:
 # EX_USAGE (64) e.g. no BIND_ADDR in the instance's .conf, EX_NOINPUT (66)
-# e.g. a missing topology file, EX_NOPERM (77) permission denied and
+# e.g. a missing database directory, EX_NOPERM (77) permission denied and
 # EX_CONFIG (78) an invalid RAWSTOR_OPTS_* or RAWSTOR_MDS_OPTS_* setting.
 # Leave the unit failed instead of restart-looping.
 RestartPreventExitStatus=64 66 77 78

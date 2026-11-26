@@ -1468,6 +1468,27 @@ rawstd::Task<RawstorLocationInfo> Slot::info() {
     }
 }
 
+rawstd::Task<OstRegistered>
+Slot::register_ost(const OstRegistration& registration) {
+    OperationGuard operation(*this);
+
+    const char* func_name = __FUNCTION__;
+    rawstd::TraceEvent trace_event =
+        RAWSTD_TRACE_EVENT('c', "%s()\n", func_name);
+    rawstor::telemetry::TimePoint t_call = rawstor::telemetry::now();
+
+    try {
+        OstRegistered result = co_await _with_retry(
+            func_name, trace_event, &Backend::register_ost, registration
+        );
+        _finish(t_call);
+        co_return result;
+    } catch (...) {
+        _finish(t_call);
+        throw;
+    }
+}
+
 rawstd::Task<RawstorObjectMeta> Slot::open(
     const RawstdUUID& session_id, const RawstdUUID& id, uint64_t offset,
     int flags, const RawstdUUID& version_id

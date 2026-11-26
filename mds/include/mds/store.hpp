@@ -4,6 +4,8 @@
 #include <optional>
 #include <rawtls/spiffe.hpp>
 
+#include "opts.hpp"
+#include "ost_registration.hpp"
 #include "placement.hpp"
 #include "topology.hpp"
 
@@ -13,11 +15,12 @@
 #include <rawstor/protocol.h>
 #include <rawstor/target.h>
 
+#include <chrono>
 #include <cstdint>
-#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 struct sqlite3;
@@ -95,27 +98,45 @@ struct VersionMember {
  * (storage failure).
  */
 class ObjectStore final {
+public:
+    using Clock = std::chrono::steady_clock;
+
 private:
+    // When an OST registered last; `leaving` if it said it was stopping.
+    struct Seen {
+        Clock::time_point at;
+        bool leaving = false;
+    };
+
     // Serializes every public call: one SQLite connection shared by every
-    // worker thread, and the topology swapped by set_topology().
+    // worker thread, the topology and the registrations.
     std::recursive_mutex _mutex;
     sqlite3* _db;
-    // Swapped whole, never modified in place: a caller of topology()
-    // keeps using the one it got even across a concurrent
-    // set_topology().
+    Opts _opts;
+    // How long a registration keeps an OST available: three heartbeats.
+    Clock::duration _lease;
+    Clock::time_point _started;
+    Clock::time_point _last_sweep;
+    // The topology table as it stands, swapped whole whenever an entry is
+    // added, changed or dropped, never modified in place: a caller of
+    // topology() keeps using the one it got.
     std::shared_ptr<const Topology> _topology;
+    // Liveness is kept in memory only: a heartbeat writes nothing, and after
+    // a restart every OST is unavailable until it registers again.
+    std::unordered_map<std::string, Seen> _seen;
+    // The witness this MDS hosts itself, nil for none: always available.
+    RawstdUUID _local_witness{};
 
-    std::function<void(const std::vector<RawstdUUID>&)> _on_space_change;
-
-    void _check_layout();
+    uint64_t _check_layout();
+    void _migrate_backends();
     // ENOENT unless `account` is registered; the nil account (none) always is.
     void _require_account(const RawstdUUID& account);
     void _register_default_account();
-    void _sync_backends(const Topology& topology);
-    // The caller holds _mutex and has committed.
-    void _notify_space_change(std::vector<RawstdUUID> osts);
+    // The caller holds _mutex.
+    void _load_topology();
+    bool _alive(const RawstdUUID& id, Clock::time_point now) const;
+    void _sweep(Clock::time_point now, bool force);
     Topology _available_topology();
-    void _check_topology(const Topology& topology);
     ObjectDescriptor _descriptor(const RawstdUUID& id);
     ObjectMap _open_live(const RawstdUUID& id);
     ObjectMap _open_version(const RawstdUUID& id, const RawstdUUID& version_id);
@@ -144,7 +165,8 @@ public:
         const RawstdUUID& account = {}
     );
 
-    ObjectStore(const std::string& path, Topology topology);
+    /* `opts` gives the heartbeat interval the OSTs are held to. */
+    explicit ObjectStore(const std::string& path, const Opts& opts = Opts());
     ObjectStore(const ObjectStore&) = delete;
     ObjectStore(ObjectStore&&) = delete;
     ~ObjectStore();
@@ -241,34 +263,39 @@ public:
 
     std::shared_ptr<const Topology> topology();
 
-    /* Last successful space samples for the current topology, including
-     * unavailable OSTs. Unsampled OSTs contribute zero. */
+    const Opts& opts() const noexcept { return _opts; }
+
+    /* Last space samples of the topology's OSTs, available or not. An OST
+     * that has sent none contributes zero, and so does a witness. */
     RawstorLocationInfo info();
 
-    /* A result from a removed/readdressed OST is ignored. Failure keeps
-     * the last successful sample but disables new placement. */
-    void
-    update_backend(const TopologyOST& ost, const RawstorLocationInfo* info);
-
-    /* Called, under the store's lock, with the OSTs whose `used` a
-     * create/resize/remove has just given or taken a slot. The space they
-     * now use is unknown until probed. It must be quick and must
-     * not call back into the store. Set before serving requests. */
-    void set_space_change_listener(
-        std::function<void(const std::vector<RawstdUUID>&)> listener
-    );
-    void reset_backend_availability();
-    bool backend_available(const RawstdUUID& id);
+    /*
+     * OST_REGISTER (docs/mds.md, "OST registration"). An OST peer may
+     * register only its own id (EPERM), and no other peer may register
+     * (EACCES); without TLS (a nil `peer`) anyone may.
+     */
+    static void
+    authorize_registration(const rawtls::SpiffeId* peer, const RawstdUUID& id);
 
     /*
-     * Throws EBUSY if `topology` is missing an OST that still holds a
-     * chunk (or a version member) of any stored object -- its slots
-     * would be left without an address. Every missing ost_id is logged.
+     * Enters the OST in the topology, or updates its entry, as a DATA and
+     * witness candidate, and makes it available for placement for three
+     * heartbeat intervals -- or, for a `leaving` registration, takes it out
+     * of placement. A new domain or weight is logged as a warning; the chunks
+     * placed on the OST stay where they are. EINVAL for a malformed location
+     * or domain, EEXIST for the id of the local witness or for an available
+     * OST's id at another location. The entry of an OST that is unavailable
+     * and holds nothing is dropped.
      */
-    void check_topology(const Topology& topology);
+    void register_ost(const OstRegistration& registration);
 
-    /* check_topology(), then replaces the current topology. */
-    void set_topology(Topology topology);
+    /*
+     * Enters the witness this MDS hosts itself in the topology: a witness
+     * candidate only, always available while the MDS runs.
+     */
+    void set_local_witness(const TopologyOST& witness);
+
+    bool backend_available(const RawstdUUID& id);
 
     /*
      * Every mutating call takes an `idempotency_key`: the client's idempotency

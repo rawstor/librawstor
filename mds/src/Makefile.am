@@ -31,8 +31,6 @@ libmdsstore_la_SOURCES = placement.cpp \
 # untestable outside of spawning the rawstor-mds binary itself.
 libmds_la_SOURCES = opts.cpp \
                     $(top_srcdir)/mds/include/mds/opts.hpp \
-                    monitor.cpp \
-                    $(top_srcdir)/mds/include/mds/monitor.hpp \
                     server.cpp \
                     $(top_srcdir)/mds/include/mds/server.hpp \
                     client.cpp \

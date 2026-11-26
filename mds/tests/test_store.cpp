@@ -5,13 +5,22 @@
 #include <mds/store.hpp>
 #include <mds/topology.hpp>
 
+#include "ost_registration.hpp"
+
 #include <rawstor/target.h>
+
+#include <rawtls/spiffe.hpp>
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/uuid.h>
 
+#include <sqlite3.h>
+
 #include <algorithm>
+#include <chrono>
+#include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -83,24 +92,65 @@ all_accounts(ObjectStore& store, unsigned int limit = 2) {
     return ret;
 }
 
+// What `ost` sends when it registers, with `info` as its sample if given.
+rawstor::OstRegistration registration_of(
+    const TopologyOST& ost, const RawstorLocationInfo* info = nullptr,
+    bool leaving = false
+) {
+    rawstor::OstRegistration ret;
+    ret.id = ost.id;
+    ret.location = ost.location;
+    ret.weight = ost.weight;
+    for (const std::string& part : ost.path) {
+        if (!part.empty()) {
+            ret.domain += (ret.domain.empty() ? "" : "/") + part;
+        }
+    }
+    if (info != nullptr) {
+        ret.sampled = true;
+        ret.info = *info;
+    }
+    ret.leaving = leaving;
+    return ret;
+}
+
+void register_all(
+    ObjectStore& store, const Topology& topology,
+    const RawstorLocationInfo* info = nullptr
+) {
+    for (const TopologyOST& ost : topology.osts()) {
+        store.register_ost(registration_of(ost, info));
+    }
+}
+
+void leave(ObjectStore& store, const TopologyOST& ost) {
+    store.register_ost(registration_of(ost, nullptr, true));
+}
+
+int errno_of(const std::function<void()>& call) {
+    try {
+        call();
+    } catch (const std::system_error& e) {
+        return e.code().value();
+    }
+    return 0;
+}
+
 class ObjectStoreTest : public testing::Test {
 protected:
     rawstor::mdsserver::tests::TmpDir dir;
+    std::unique_ptr<ObjectStore> _store;
 
-    ObjectStore make_store() {
-        {
-            ObjectStore store(dir.db_path(), make_topology());
-            RawstorLocationInfo info{};
-            for (const auto& ost : store.topology()->osts()) {
-                store.update_backend(ost, &info);
-            }
-        }
-        return ObjectStore(dir.db_path(), make_topology());
+    // A store with make_topology()'s three OSTs registered.
+    ObjectStore& make_store() {
+        _store = std::make_unique<ObjectStore>(dir.db_path());
+        register_all(*_store, make_topology());
+        return *_store;
     }
 };
 
 TEST_F(ObjectStoreTest, create_populates_chunk_map) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
 
     ObjectDescriptor descriptor = store.create(
@@ -120,7 +170,7 @@ TEST_F(ObjectStoreTest, create_populates_chunk_map) {
 }
 
 TEST_F(ObjectStoreTest, create_rejects_duplicate_id) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
 
     store.create(
@@ -137,7 +187,7 @@ TEST_F(ObjectStoreTest, create_rejects_duplicate_id) {
 }
 
 TEST_F(ObjectStoreTest, create_rejects_zero_size) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
 
     EXPECT_THROW(
         store.create(
@@ -148,7 +198,7 @@ TEST_F(ObjectStoreTest, create_rejects_zero_size) {
 }
 
 TEST_F(ObjectStoreTest, create_rejects_non_power_of_two_chunk_size) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
 
     EXPECT_THROW(
         store.create(
@@ -159,7 +209,7 @@ TEST_F(ObjectStoreTest, create_rejects_non_power_of_two_chunk_size) {
 }
 
 TEST_F(ObjectStoreTest, create_rejects_size_not_chunk_multiple) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
 
     EXPECT_THROW(
         store.create(
@@ -171,7 +221,7 @@ TEST_F(ObjectStoreTest, create_rejects_size_not_chunk_multiple) {
 }
 
 TEST_F(ObjectStoreTest, create_rejects_unsatisfiable_placement) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
 
     // Only 3 OST-level domains exist; width 4 can never be satisfied.
@@ -189,56 +239,236 @@ TEST_F(ObjectStoreTest, create_rejects_unsatisfiable_placement) {
     EXPECT_THROW(store.open(id, RawstdUUID{}), std::system_error);
 }
 
-TEST_F(ObjectStoreTest, set_topology_adds_ost) {
-    ObjectStore store = make_store();
+TEST_F(ObjectStoreTest, registering_adds_an_ost) {
+    ObjectStore& store = make_store();
     store.create(
         RawstdUUID{}, RawstdUUID{}, make_id(), chunk_size, chunk_size,
         make_policy(3)
     );
 
-    Topology topology = make_topology();
-    topology.add(make_ost("00000000-0000-7000-8000-000000000004", "host4"));
-    store.set_topology(std::move(topology));
+    TopologyOST fourth =
+        make_ost("00000000-0000-7000-8000-000000000004", "host4");
+    store.register_ost(registration_of(fourth));
 
-    EXPECT_EQ(store.topology()->osts().size(), 4u);
+    auto topology = store.topology();
+    EXPECT_EQ(topology->osts().size(), 4u);
+    EXPECT_TRUE(store.backend_available(fourth.id));
+    // Every OST is a DATA and witness candidate.
+    for (const TopologyOST& ost : topology->osts()) {
+        EXPECT_TRUE(ost.supports(rawstor::mdsserver::Role::Data));
+        EXPECT_TRUE(ost.supports(rawstor::mdsserver::Role::Witness));
+    }
 }
 
-TEST_F(ObjectStoreTest, set_topology_refuses_dropping_ost_with_chunks) {
-    ObjectStore store = make_store();
+// Three heartbeats: an OST that has not registered since is unavailable, and
+// registering again makes it available.
+TEST_F(ObjectStoreTest, a_registration_lasts_three_heartbeats) {
+    rawstor::mdsserver::Opts opts;
+    opts.heartbeat_interval = 1;
+    ObjectStore store(dir.db_path(), opts);
+    TopologyOST ost = make_ost("00000000-0000-7000-8000-000000000001", "host1");
+    store.register_ost(registration_of(ost));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    EXPECT_FALSE(store.backend_available(ost.id));
+    EXPECT_EQ(
+        errno_of([&] {
+            store.create(
+                RawstdUUID{}, {}, make_id(), chunk_size, chunk_size,
+                make_policy(1)
+            );
+        }),
+        EINVAL
+    );
+    store.register_ost(registration_of(ost));
+    EXPECT_TRUE(store.backend_available(ost.id));
+}
+
+TEST_F(ObjectStoreTest, an_unavailable_ost_holding_chunks_stays) {
+    ObjectStore& store = make_store();
     // Width 3 of 3 OSTs: every OST holds a copy.
     store.create(
         RawstdUUID{}, RawstdUUID{}, make_id(), chunk_size, chunk_size,
         make_policy(3)
     );
 
-    Topology topology;
-    topology.add(make_ost("00000000-0000-7000-8000-000000000001", "host1"));
-    topology.add(make_ost("00000000-0000-7000-8000-000000000002", "host2"));
-
-    try {
-        store.set_topology(std::move(topology));
-        FAIL() << "expected EBUSY";
-    } catch (const std::system_error& e) {
-        EXPECT_EQ(e.code().value(), EBUSY);
+    Topology topology = make_topology();
+    for (const TopologyOST& ost : topology.osts()) {
+        leave(store, ost);
+        EXPECT_FALSE(store.backend_available(ost.id));
     }
     EXPECT_EQ(store.topology()->osts().size(), 3u);
-    EXPECT_THROW(store.check_topology(Topology()), std::system_error);
 }
 
-TEST_F(ObjectStoreTest, set_topology_allows_dropping_unused_ost) {
-    ObjectStore store = make_store();
+TEST_F(ObjectStoreTest, an_unavailable_ost_holding_nothing_leaves) {
+    ObjectStore& store = make_store();
+    TopologyOST first = make_topology().osts()[0];
 
-    Topology topology;
-    topology.add(make_ost("00000000-0000-7000-8000-000000000001", "host1"));
-    store.set_topology(std::move(topology));
+    leave(store, first);
 
-    EXPECT_EQ(store.topology()->osts().size(), 1u);
+    auto topology = store.topology();
+    ASSERT_EQ(topology->osts().size(), 2u);
+    for (const TopologyOST& ost : topology->osts()) {
+        EXPECT_NE(rawstd_uuid_cmp(&ost.id, &first.id), 0);
+    }
+    // It comes back by registering again.
+    store.register_ost(registration_of(first));
+    EXPECT_EQ(store.topology()->osts().size(), 3u);
+}
+
+// One id is one OST: while it is available, another process registering the
+// same id elsewhere is refused; once it is gone, the id may move.
+TEST_F(ObjectStoreTest, an_ost_moves_only_while_unavailable) {
+    ObjectStore& store = make_store();
+    RawstdUUID id = make_id();
+    store.create(RawstdUUID{}, {}, id, chunk_size, chunk_size, make_policy(3));
+    TopologyOST moved = make_topology().osts()[0];
+    moved.location = "ost://127.0.0.1:7778";
+
+    EXPECT_EQ(
+        errno_of([&] { store.register_ost(registration_of(moved)); }), EEXIST
+    );
+    leave(store, make_topology().osts()[0]);
+    store.register_ost(registration_of(moved));
+
+    EXPECT_TRUE(store.backend_available(moved.id));
+    bool found = false;
+    auto topology = store.topology();
+    for (const TopologyOST& ost : topology->osts()) {
+        if (rawstd_uuid_cmp(&ost.id, &moved.id) == 0) {
+            EXPECT_EQ(ost.location, moved.location);
+            found = true;
+        }
+    }
+    EXPECT_TRUE(found);
+}
+
+// A domain or weight is the OST's to set: a new one is taken, and the chunks
+// already placed stay where they are.
+TEST_F(ObjectStoreTest, a_new_domain_or_weight_is_taken) {
+    ObjectStore& store = make_store();
+    RawstdUUID id = make_id();
+    store.create(RawstdUUID{}, {}, id, chunk_size, chunk_size, make_policy(3));
+    ObjectMap before = store.open(id, {});
+
+    TopologyOST changed = make_topology().osts()[0];
+    changed.path[2] = "rack2";
+    changed.weight = 7;
+    store.register_ost(registration_of(changed));
+
+    const TopologyOST entry = store.topology()->osts()[0];
+    EXPECT_EQ(entry.path[2], "rack2");
+    EXPECT_EQ(entry.weight, 7u);
+    ObjectMap after = store.open(id, {});
+    ASSERT_EQ(after.chunks[0].size(), before.chunks[0].size());
+    for (size_t i = 0; i < after.chunks[0].size(); ++i) {
+        EXPECT_EQ(
+            rawstd_uuid_cmp(
+                &after.chunks[0][i].ost_id, &before.chunks[0][i].ost_id
+            ),
+            0
+        );
+    }
+}
+
+TEST_F(ObjectStoreTest, a_malformed_registration_is_refused) {
+    ObjectStore store(dir.db_path());
+    TopologyOST ost = make_ost("00000000-0000-7000-8000-000000000001", "host1");
+    for (const char* location :
+         {"mds://host1:7776", "ost://host1:7777,ost://host2:7777", ""}) {
+        rawstor::OstRegistration registration = registration_of(ost);
+        registration.location = location;
+        EXPECT_EQ(errno_of([&] { store.register_ost(registration); }), EINVAL)
+            << location;
+    }
+    for (const char* domain : {"", "a//b", "a/b/c/d/e"}) {
+        rawstor::OstRegistration registration = registration_of(ost);
+        registration.domain = domain;
+        EXPECT_EQ(errno_of([&] { store.register_ost(registration); }), EINVAL)
+            << domain;
+    }
+    rawstor::OstRegistration nil = registration_of(ost);
+    nil.id = RawstdUUID{};
+    EXPECT_EQ(errno_of([&] { store.register_ost(nil); }), EINVAL);
+    EXPECT_TRUE(store.topology()->osts().empty());
+}
+
+TEST_F(ObjectStoreTest, only_an_ost_registers_and_only_as_itself) {
+    RawstdUUID id{};
+    ASSERT_EQ(
+        rawstd_uuid_from_string(&id, "00000000-0000-7000-8000-000000000001"), 0
+    );
+    rawtls::SpiffeId self(
+        "spiffe://cluster.example/ost/00000000-0000-7000-8000-000000000001"
+    );
+    rawtls::SpiffeId other(
+        "spiffe://cluster.example/ost/00000000-0000-7000-8000-000000000002"
+    );
+    rawtls::SpiffeId mds(
+        "spiffe://cluster.example/mds/00000000-0000-7000-8000-000000000001"
+    );
+    rawtls::SpiffeId admin("spiffe://cluster.example/admin/ops");
+
+    EXPECT_EQ(
+        errno_of([&] { ObjectStore::authorize_registration(nullptr, id); }), 0
+    );
+    EXPECT_EQ(
+        errno_of([&] { ObjectStore::authorize_registration(&self, id); }), 0
+    );
+    EXPECT_EQ(
+        errno_of([&] { ObjectStore::authorize_registration(&other, id); }),
+        EPERM
+    );
+    EXPECT_EQ(
+        errno_of([&] { ObjectStore::authorize_registration(&mds, id); }), EACCES
+    );
+    EXPECT_EQ(
+        errno_of([&] { ObjectStore::authorize_registration(&admin, id); }),
+        EACCES
+    );
+}
+
+// A store of layout 1 kept the space samples of a topology read from a file:
+// its entries keep their addresses and samples, and take chunks once their
+// OSTs register.
+TEST_F(ObjectStoreTest, a_store_of_layout_1_keeps_its_entries) {
+    {
+        sqlite3* db = nullptr;
+        ASSERT_EQ(sqlite3_open(dir.db_path().c_str(), &db), SQLITE_OK);
+        const char* sql =
+            "CREATE TABLE backends ("
+            " id BLOB PRIMARY KEY, location TEXT NOT NULL,"
+            " active INTEGER NOT NULL, available INTEGER NOT NULL DEFAULT 0,"
+            " used INTEGER NOT NULL DEFAULT 0, total INTEGER NOT NULL DEFAULT "
+            "0,"
+            " checked_at INTEGER NOT NULL DEFAULT 0,"
+            " sampled_at INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID;"
+            "INSERT INTO backends (id, location, active, available, used, "
+            "total) VALUES (x'00000000000070008000000000000001', "
+            "'ost://host1:7777', 1, 1, 10, 100);"
+            "PRAGMA user_version=1;";
+        ASSERT_EQ(sqlite3_exec(db, sql, nullptr, nullptr, nullptr), SQLITE_OK);
+        sqlite3_close(db);
+    }
+    ObjectStore store(dir.db_path());
+    TopologyOST ost = make_ost("00000000-0000-7000-8000-000000000001", "host1");
+
+    ASSERT_EQ(store.topology()->osts().size(), 1u);
+    EXPECT_EQ(store.topology()->osts()[0].location, "ost://host1:7777");
+    EXPECT_EQ(store.info().total, 100u);
+    EXPECT_FALSE(store.backend_available(ost.id));
+
+    store.register_ost(registration_of(ost));
+    EXPECT_TRUE(store.backend_available(ost.id));
+    EXPECT_EQ(store.topology()->osts()[0].path[3], "host1");
+    store.create(
+        RawstdUUID{}, {}, make_id(), chunk_size, chunk_size, make_policy(1)
+    );
 }
 
 // Idempotent mutations (docs/mds.md): a repeated idempotency_key replays the
 // first call's result instead of applying anything again.
 TEST_F(ObjectStoreTest, create_replays_repeated_idempotency_key) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
     RawstdUUID idempotency_key = make_id();
 
@@ -262,7 +492,7 @@ TEST_F(ObjectStoreTest, create_replays_repeated_idempotency_key) {
 }
 
 TEST_F(ObjectStoreTest, create_replayed_after_rollback_creates_afresh) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
     RawstdUUID idempotency_key = make_id();
 
@@ -280,7 +510,7 @@ TEST_F(ObjectStoreTest, create_replayed_after_rollback_creates_afresh) {
 }
 
 TEST_F(ObjectStoreTest, resize_replays_repeated_idempotency_key) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
     RawstdUUID idempotency_key = make_id();
     store.create(
@@ -299,7 +529,7 @@ TEST_F(ObjectStoreTest, resize_replays_repeated_idempotency_key) {
 }
 
 TEST_F(ObjectStoreTest, remove_replays_the_removed_map) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
     RawstdUUID idempotency_key = make_id();
     store.create(
@@ -328,7 +558,7 @@ TEST_F(ObjectStoreTest, remove_replays_the_removed_map) {
 }
 
 TEST_F(ObjectStoreTest, versions_replay_repeated_idempotency_key) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
     RawstdUUID version_id = make_id();
     store.create(
@@ -352,7 +582,7 @@ TEST_F(ObjectStoreTest, versions_replay_repeated_idempotency_key) {
 }
 
 TEST_F(ObjectStoreTest, idempotency_key_reused_for_another_call_is_einval) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
     RawstdUUID idempotency_key = make_id();
     store.create(
@@ -369,13 +599,13 @@ TEST_F(ObjectStoreTest, idempotency_key_reused_for_another_call_is_einval) {
 }
 
 TEST_F(ObjectStoreTest, open_rejects_unknown_id) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
 
     EXPECT_THROW(store.open(make_id(), RawstdUUID{}), std::system_error);
 }
 
 TEST_F(ObjectStoreTest, resize_grows_chunk_count_and_bumps_epoch) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
     store.create(
         RawstdUUID{}, RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1)
@@ -395,7 +625,7 @@ TEST_F(ObjectStoreTest, resize_grows_chunk_count_and_bumps_epoch) {
 }
 
 TEST_F(ObjectStoreTest, resize_rejects_shrink) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
     store.create(
         RawstdUUID{}, RawstdUUID{}, id, 3 * chunk_size, chunk_size,
@@ -406,7 +636,7 @@ TEST_F(ObjectStoreTest, resize_rejects_shrink) {
 }
 
 TEST_F(ObjectStoreTest, resize_rejects_size_not_chunk_multiple) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
     store.create(
         RawstdUUID{}, RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1)
@@ -422,7 +652,7 @@ TEST_F(ObjectStoreTest, resize_rejects_size_not_chunk_multiple) {
 }
 
 TEST_F(ObjectStoreTest, resize_rejects_zero_size) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
     store.create(
         RawstdUUID{}, RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1)
@@ -432,7 +662,7 @@ TEST_F(ObjectStoreTest, resize_rejects_zero_size) {
 }
 
 TEST_F(ObjectStoreTest, remove_deletes_object) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
     store.create(
         RawstdUUID{}, RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1)
@@ -444,13 +674,13 @@ TEST_F(ObjectStoreTest, remove_deletes_object) {
 }
 
 TEST_F(ObjectStoreTest, remove_rejects_unknown_id) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
 
     EXPECT_THROW(store.remove(RawstdUUID{}, make_id()), std::system_error);
 }
 
 TEST_F(ObjectStoreTest, remove_rejects_while_version_exists) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
     store.create(
         RawstdUUID{}, RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1)
@@ -472,43 +702,8 @@ TEST_F(ObjectStoreTest, remove_rejects_while_version_exists) {
     store.remove(RawstdUUID{}, id);
 }
 
-TEST_F(ObjectStoreTest, version_commit_and_remove_notify_space_change) {
-    ObjectStore store = make_store();
-    std::vector<RawstdUUID> notified;
-    store.set_space_change_listener(
-        [&notified](const std::vector<RawstdUUID>& osts) {
-            notified.insert(notified.end(), osts.begin(), osts.end());
-        }
-    );
-
-    RawstdUUID id = make_id();
-    store.create(
-        RawstdUUID{}, RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1)
-    );
-    RawstdUUID version_id = make_id();
-    ObjectMap map = store.open(id, RawstdUUID{});
-    std::vector<VersionMember> members;
-    for (size_t index = 0; index < map.chunks.size(); ++index) {
-        for (const auto& slot : map.chunks[index]) {
-            members.push_back(VersionMember{index, slot.ost_id});
-        }
-    }
-    ASSERT_FALSE(members.empty());
-
-    // The members' copies are what a version takes and gives back.
-    notified.clear();
-    store.commit_version(RawstdUUID{}, id, version_id, members);
-    ASSERT_EQ(notified.size(), 1u);
-    EXPECT_EQ(memcmp(notified[0].bytes, members[0].ost_id.bytes, 16), 0);
-
-    notified.clear();
-    store.remove_version(RawstdUUID{}, id, version_id);
-    ASSERT_EQ(notified.size(), 1u);
-    EXPECT_EQ(memcmp(notified[0].bytes, members[0].ost_id.bytes, 16), 0);
-}
-
 TEST_F(ObjectStoreTest, commit_version_and_open_round_trip) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
     store.create(
         RawstdUUID{}, RawstdUUID{}, id, 2 * chunk_size, chunk_size,
@@ -543,7 +738,7 @@ TEST_F(ObjectStoreTest, commit_version_and_open_round_trip) {
 }
 
 TEST_F(ObjectStoreTest, list_objects_pages_by_id) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     std::vector<RawstdUUID> ids = {make_id(), make_id(), make_id()};
     for (const RawstdUUID& id : ids) {
         store.create(
@@ -595,7 +790,7 @@ list_on(ObjectStore& store, const std::string& location, unsigned int limit) {
 }
 
 TEST_F(ObjectStoreTest, list_objects_on_a_location) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     std::vector<RawstdUUID> ids;
     for (int i = 0; i < 8; ++i) {
         ids.push_back(make_id());
@@ -632,7 +827,7 @@ TEST_F(ObjectStoreTest, list_objects_on_a_location) {
 }
 
 TEST_F(ObjectStoreTest, list_objects_on_a_location_counts_version_members) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
     store.create(
         RawstdUUID{}, RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1)
@@ -670,22 +865,10 @@ TEST_F(ObjectStoreTest, list_objects_on_a_location_counts_version_members) {
 // A location is told by its URI as a URI prints: the password of its user
 // information is not part of it, in the topology or in the request.
 TEST_F(ObjectStoreTest, list_objects_on_a_location_ignores_a_password) {
-    auto topology = [] {
-        TopologyOST ost =
-            make_ost("00000000-0000-7000-8000-000000000001", "host1");
-        ost.location = "ost://user:secret@host1:7777";
-        Topology ret;
-        ret.add(ost);
-        return ret;
-    };
-    {
-        ObjectStore first(dir.db_path(), topology());
-        RawstorLocationInfo info{};
-        for (const auto& ost : first.topology()->osts()) {
-            first.update_backend(ost, &info);
-        }
-    }
-    ObjectStore store(dir.db_path(), topology());
+    TopologyOST ost = make_ost("00000000-0000-7000-8000-000000000001", "host1");
+    ost.location = "ost://user:secret@host1:7777";
+    ObjectStore store(dir.db_path());
+    store.register_ost(registration_of(ost));
     store.create(
         RawstdUUID{}, RawstdUUID{}, make_id(), chunk_size, chunk_size,
         make_policy(1)
@@ -698,7 +881,7 @@ TEST_F(ObjectStoreTest, list_objects_on_a_location_ignores_a_password) {
 }
 
 TEST_F(ObjectStoreTest, list_objects_on_an_unknown_location_is_enoent) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID token{};
     try {
         store.list_chunks(RawstdUUID{}, token, 0, "ost://nowhere:7777");
@@ -709,7 +892,7 @@ TEST_F(ObjectStoreTest, list_objects_on_an_unknown_location_is_enoent) {
 }
 
 TEST_F(ObjectStoreTest, list_versions_oldest_first) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
     store.create(
         RawstdUUID{}, RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1)
@@ -742,7 +925,7 @@ TEST_F(ObjectStoreTest, list_versions_oldest_first) {
 }
 
 TEST_F(ObjectStoreTest, commit_version_rejects_nil_version_id) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
     store.create(
         RawstdUUID{}, RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1)
@@ -755,7 +938,7 @@ TEST_F(ObjectStoreTest, commit_version_rejects_nil_version_id) {
 }
 
 TEST_F(ObjectStoreTest, commit_version_rejects_uncovered_chunk) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
     store.create(
         RawstdUUID{}, RawstdUUID{}, id, 2 * chunk_size, chunk_size,
@@ -775,7 +958,7 @@ TEST_F(ObjectStoreTest, commit_version_rejects_uncovered_chunk) {
 }
 
 TEST_F(ObjectStoreTest, commit_version_freezes_size_across_a_later_resize) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
     store.create(
         RawstdUUID{}, RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1)
@@ -795,7 +978,7 @@ TEST_F(ObjectStoreTest, commit_version_freezes_size_across_a_later_resize) {
 }
 
 TEST_F(ObjectStoreTest, remove_version_returns_members_and_unregisters) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
     store.create(
         RawstdUUID{}, RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1)
@@ -817,7 +1000,7 @@ TEST_F(ObjectStoreTest, remove_version_returns_members_and_unregisters) {
 }
 
 TEST_F(ObjectStoreTest, remove_version_rejects_unknown_version) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
     store.create(
         RawstdUUID{}, RawstdUUID{}, id, chunk_size, chunk_size, make_policy(1)
@@ -838,7 +1021,7 @@ RawstorObjectMeta make_meta(uint64_t size, unsigned width) {
 }
 
 TEST_F(ObjectStoreTest, reconstruct_rebuilds_single_chunk_object) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
     RawstdUUID ost_id = make_id();
 
@@ -857,7 +1040,7 @@ TEST_F(ObjectStoreTest, reconstruct_rebuilds_single_chunk_object) {
 }
 
 TEST_F(ObjectStoreTest, reconstruct_rebuilds_multi_chunk_object) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
     RawstdUUID ost0 = make_id();
     RawstdUUID ost1 = make_id();
@@ -879,7 +1062,7 @@ TEST_F(ObjectStoreTest, reconstruct_rebuilds_multi_chunk_object) {
 }
 
 TEST_F(ObjectStoreTest, reconstruct_skips_witness_records) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
     RawstorObjectMeta meta = make_meta(chunk_size, 1);
     meta.member_role = RAWSTOR_MEMBER_WITNESS;
@@ -895,7 +1078,7 @@ TEST_F(ObjectStoreTest, reconstruct_skips_witness_records) {
 }
 
 TEST_F(ObjectStoreTest, reconstruct_fails_on_missing_chunk_hole) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
 
     // Chunk 1 (offset chunk_size) never shows up in any record.
@@ -908,7 +1091,7 @@ TEST_F(ObjectStoreTest, reconstruct_fails_on_missing_chunk_hole) {
 }
 
 TEST_F(ObjectStoreTest, reconstruct_fails_on_conflicting_identity) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID id = make_id();
 
     std::vector<ScanRecord> records{
@@ -920,7 +1103,7 @@ TEST_F(ObjectStoreTest, reconstruct_fails_on_conflicting_identity) {
 }
 
 TEST_F(ObjectStoreTest, reconstruct_replaces_every_existing_object) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID stale_id = make_id();
     store.create(
         RawstdUUID{}, RawstdUUID{}, stale_id, chunk_size, chunk_size,
@@ -940,35 +1123,34 @@ TEST_F(ObjectStoreTest, reconstruct_replaces_every_existing_object) {
     EXPECT_NO_THROW(store.open(rebuilt_id, RawstdUUID{}));
 }
 
-TEST_F(ObjectStoreTest, backend_samples_survive_failure_and_reopen) {
-    auto topology = make_topology();
-    auto first = topology.osts()[0];
-    auto second = topology.osts()[1];
+// Samples are kept in the store; availability is not: after a restart every
+// OST is unavailable until it registers again.
+TEST_F(ObjectStoreTest, samples_survive_a_restart_and_availability_does_not) {
+    Topology topology = make_topology();
+    const TopologyOST& first = topology.osts()[0];
+    const TopologyOST& second = topology.osts()[1];
     {
-        ObjectStore store(dir.db_path(), topology);
-        EXPECT_FALSE(store.backend_available(first.id));
+        ObjectStore store(dir.db_path());
         RawstorLocationInfo a{10, 100}, b{20, 200};
-        store.update_backend(first, &a);
-        store.update_backend(second, &b);
-        store.update_backend(first, nullptr);
-        EXPECT_FALSE(store.backend_available(first.id));
+        store.register_ost(registration_of(first, &a));
+        store.register_ost(registration_of(second, &b));
+        // A registration without a sample keeps the one there is.
+        store.register_ost(registration_of(first));
         EXPECT_EQ(store.info().used, 30u);
         EXPECT_EQ(store.info().total, 300u);
     }
-    ObjectStore reopened(dir.db_path(), topology);
+    ObjectStore reopened(dir.db_path());
     EXPECT_FALSE(reopened.backend_available(first.id));
-    EXPECT_TRUE(reopened.backend_available(second.id));
-    EXPECT_EQ(reopened.info().total, 300u);
-    reopened.reset_backend_availability();
     EXPECT_FALSE(reopened.backend_available(second.id));
     EXPECT_EQ(reopened.info().used, 30u);
+    EXPECT_EQ(reopened.info().total, 300u);
 }
 
 TEST_F(ObjectStoreTest, unavailable_osts_are_excluded_from_create_and_resize) {
-    ObjectStore store = make_store();
-    auto topology = store.topology();
-    for (const auto& ost : topology->osts()) {
-        store.update_backend(ost, nullptr);
+    ObjectStore& store = make_store();
+    Topology topology = make_topology();
+    for (const auto& ost : topology.osts()) {
+        leave(store, ost);
     }
     EXPECT_THROW(
         store.create(
@@ -976,18 +1158,17 @@ TEST_F(ObjectStoreTest, unavailable_osts_are_excluded_from_create_and_resize) {
         ),
         std::system_error
     );
-    RawstorLocationInfo info{};
-    const auto& first = topology->osts()[0];
-    const auto& second = topology->osts()[1];
-    store.update_backend(first, &info);
+    const auto& first = topology.osts()[0];
+    const auto& second = topology.osts()[1];
+    store.register_ost(registration_of(first));
     RawstdUUID id = make_id();
     store.create(RawstdUUID{}, {}, id, chunk_size, chunk_size, make_policy(1));
     auto before = store.open(id, {});
     EXPECT_EQ(rawstd_uuid_cmp(&before.chunks[0][0].ost_id, &first.id), 0);
-    store.update_backend(first, nullptr);
+    leave(store, first);
     EXPECT_THROW(store.resize({}, id, 2 * chunk_size), std::system_error);
     EXPECT_EQ(store.open(id, {}).descriptor.logical_size, chunk_size);
-    store.update_backend(second, &info);
+    store.register_ost(registration_of(second));
     store.resize({}, id, 2 * chunk_size);
     auto after = store.open(id, {});
     EXPECT_EQ(rawstd_uuid_cmp(&after.chunks[0][0].ost_id, &first.id), 0);
@@ -1000,40 +1181,16 @@ TEST_F(ObjectStoreTest, unavailable_osts_are_excluded_from_create_and_resize) {
     );
 }
 
-TEST_F(ObjectStoreTest, reload_discards_removed_and_readdressed_samples) {
-    ObjectStore store = make_store();
-    auto old = store.topology();
-    RawstorLocationInfo sample{10, 100};
-    for (const auto& ost : old->osts()) {
-        store.update_backend(ost, &sample);
-    }
-    Topology replacement;
-    auto moved = old->osts()[0];
-    moved.location = "ost://127.0.0.1:7778";
-    replacement.add(moved);
-    replacement.add(old->osts()[1]);
-    store.set_topology(replacement);
-    EXPECT_FALSE(store.backend_available(moved.id));
-    EXPECT_EQ(store.info().total, 100u);
-    store.update_backend(old->osts()[0], &sample);
-    store.update_backend(old->osts()[2], &sample);
-    EXPECT_FALSE(store.backend_available(moved.id));
-    EXPECT_EQ(store.info().total, 100u);
-    store.update_backend(moved, &sample);
-    EXPECT_TRUE(store.backend_available(moved.id));
-    EXPECT_EQ(store.info().total, 200u);
-}
-
 TEST_F(
     ObjectStoreTest, info_preserves_unsigned_counts_and_rejects_sum_overflow
 ) {
-    ObjectStore store = make_store();
-    auto topology = store.topology();
+    ObjectStore& store = make_store();
+    Topology topology = make_topology();
     RawstorLocationInfo sample{UINT64_MAX - 1, UINT64_MAX};
-    store.update_backend(topology->osts()[0], &sample);
+    store.register_ost(registration_of(topology.osts()[0], &sample));
     EXPECT_EQ(store.info().total, UINT64_MAX);
     RawstorLocationInfo more{2, 2};
-    store.update_backend(topology->osts()[1], &more);
+    store.register_ost(registration_of(topology.osts()[1], &more));
     EXPECT_THROW(store.info(), std::system_error);
 }
 
@@ -1057,7 +1214,7 @@ TEST_F(
     config.roles[1] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
     config.roles[2] = RAWSTOR_OBJECT_MEMBER_EXCLUDED;
     {
-        ObjectStore store = make_store();
+        ObjectStore& store = make_store();
         store.create_witness(RawstdUUID{}, id, chunk_size, spec);
         bool ok = false;
         store.sync_accept(id, chunk_size, {1, 1}, {}, config, ok);
@@ -1069,7 +1226,7 @@ TEST_F(
         EXPECT_THROW(store.witness_meta(id, 0), std::system_error);
         EXPECT_THROW(store.open(id, RawstdUUID{}), std::system_error);
     }
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     store.reconstruct({});
     auto meta = store.witness_meta(id, chunk_size);
     EXPECT_EQ(meta.member_role, RAWSTOR_MEMBER_WITNESS);
@@ -1086,7 +1243,7 @@ TEST_F(
 TEST_F(
     ObjectStoreTest, witness_listing_pages_objects_without_splitting_chunks
 ) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     auto first = make_id();
     auto second = make_id();
     if (rawstd_uuid_cmp(&first, &second) > 0) {
@@ -1114,7 +1271,7 @@ TEST_F(
 }
 
 TEST_F(ObjectStoreTest, list_chunks_merges_objects_and_native_members) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     auto object = make_id();
     auto witness = make_id();
     store.create(
@@ -1155,7 +1312,7 @@ TEST_F(ObjectStoreTest, witness_refuses_a_ballot_beyond_its_reach) {
     spec.size = chunk_size;
     spec.width = 2;
     spec.chunk_size = chunk_size;
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     store.create_witness(RawstdUUID{}, id, 0, spec);
 
     // A request moves the counters forward by a bounded amount only, so that
@@ -1198,7 +1355,7 @@ TEST_F(ObjectStoreTest, witness_votes_in_the_configuration_register) {
     RawstorObjectBallot high{4, 5};
     bool ok = false;
     {
-        ObjectStore store = make_store();
+        ObjectStore& store = make_store();
         EXPECT_THROW(store.sync_prepare(id, 0, low, ok), std::system_error);
         store.create_witness(RawstdUUID{}, id, 0, spec);
 
@@ -1222,7 +1379,7 @@ TEST_F(ObjectStoreTest, witness_votes_in_the_configuration_register) {
         EXPECT_FALSE(ok);
     }
     // Promises and the accepted value survive a restart.
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     store.reconstruct({});
     auto meta = store.witness_meta(id, 0);
     EXPECT_EQ(meta.promised.counter, 5u);
@@ -1231,65 +1388,52 @@ TEST_F(ObjectStoreTest, witness_votes_in_the_configuration_register) {
     EXPECT_EQ(meta.config.roles[1], RAWSTOR_OBJECT_MEMBER_EXCLUDED);
 }
 
+// The witness the MDS hosts itself is a witness candidate, always available,
+// and holds no storage.
 TEST_F(
     ObjectStoreTest,
-    witness_candidate_is_health_gated_and_does_not_count_as_capacity
+    the_local_witness_is_a_witness_candidate_and_counts_no_capacity
 ) {
-    auto topology = make_topology();
+    Topology topology = make_topology();
     auto mds = make_ost("00000000-0000-7000-8000-000000000004", "host4");
     mds.location = "ost://127.0.0.1:7776";
     mds.roles = {rawstor::mdsserver::Role::Witness};
-    topology.add(mds);
-    ObjectStore store(dir.db_path(), topology);
+    ObjectStore store(dir.db_path());
     RawstorLocationInfo info{.used = 10, .total = 100};
-    for (const auto& backend : topology.osts()) {
-        store.update_backend(backend, &info);
-    }
-    EXPECT_EQ(store.info().total, 300u);
-    EXPECT_EQ(store.info().used, 30u);
-    auto id = make_id();
-    store.create(RawstdUUID{}, {}, id, chunk_size, chunk_size, make_policy(2));
-    EXPECT_EQ(store.open(id, {}).chunks.front().size(), 3u);
-    store.reset_backend_availability();
-    for (size_t i = 0; i < 2; ++i) {
-        store.update_backend(topology.osts()[i], &info);
-    }
+    register_all(store, topology, &info);
+    leave(store, topology.osts()[2]);
+    EXPECT_EQ(store.info().total, 200u);
+    // Two DATA copies and their witness need three domains.
     EXPECT_THROW(
         store.create(
             RawstdUUID{}, {}, make_id(), chunk_size, chunk_size, make_policy(2)
         ),
         std::system_error
     );
-    store.update_backend(mds, &info);
-    auto another = make_id();
-    store.create(
-        RawstdUUID{}, {}, another, chunk_size, chunk_size, make_policy(2)
-    );
+
+    store.set_local_witness(mds);
+    EXPECT_TRUE(store.backend_available(mds.id));
+    EXPECT_EQ(store.info().total, 200u);
+    EXPECT_EQ(store.info().used, 20u);
+    auto id = make_id();
+    store.create(RawstdUUID{}, {}, id, chunk_size, chunk_size, make_policy(2));
+    ASSERT_EQ(store.open(id, {}).chunks.front().size(), 3u);
     EXPECT_EQ(
         rawstd_uuid_cmp(
-            &store.open(another, {}).chunks.front().back().ost_id, &mds.id
+            &store.open(id, {}).chunks.front().back().ost_id, &mds.id
         ),
         0
+    );
+    // Nobody registers under its id.
+    EXPECT_EQ(
+        errno_of([&] { store.register_ost(registration_of(mds)); }), EEXIST
     );
 }
 
 // ---- accounts (docs/accounts.md) ----
 
-namespace {
-
-int errno_of(const std::function<void()>& call) {
-    try {
-        call();
-    } catch (const std::system_error& e) {
-        return e.code().value();
-    }
-    return 0;
-}
-
-} // namespace
-
 TEST_F(ObjectStoreTest, an_object_is_owned_by_the_account_that_created_it) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID acme = make_id();
     store.create_account(RawstdUUID{}, acme);
     RawstdUUID owned = make_id();
@@ -1319,7 +1463,7 @@ TEST_F(ObjectStoreTest, an_object_is_owned_by_the_account_that_created_it) {
 }
 
 TEST_F(ObjectStoreTest, listing_shows_the_objects_a_account_owns) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID acme = make_id();
     RawstdUUID other = make_id();
     store.create_account(RawstdUUID{}, acme);
@@ -1363,7 +1507,7 @@ TEST_F(ObjectStoreTest, listing_shows_the_objects_a_account_owns) {
 }
 
 TEST_F(ObjectStoreTest, an_owner_is_a_registered_account) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID acme = make_id();
 
     EXPECT_EQ(
@@ -1385,7 +1529,7 @@ TEST_F(ObjectStoreTest, an_owner_is_a_registered_account) {
 // A page ends where the next one starts: every account once, in order, and no
 // token after the last page; limit 0 is everything.
 TEST_F(ObjectStoreTest, accounts_are_listed_a_page_at_a_time) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     for (int i = 0; i < 4; ++i) {
         store.create_account(RawstdUUID{}, make_id());
     }
@@ -1410,7 +1554,7 @@ TEST_F(ObjectStoreTest, accounts_are_listed_a_page_at_a_time) {
 // A transfer moves the object between accounts: listings follow it, the old
 // owner can then be removed, and the new one must be registered.
 TEST_F(ObjectStoreTest, an_object_is_transferred_to_another_account) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID acme = make_id();
     RawstdUUID other = make_id();
     store.create_account(RawstdUUID{}, acme);
@@ -1449,7 +1593,7 @@ TEST_F(ObjectStoreTest, an_object_is_transferred_to_another_account) {
 // A transfer resent after a lost reply is answered, not applied again: it
 // does not undo what was transferred since.
 TEST_F(ObjectStoreTest, a_replayed_transfer_does_not_undo_a_later_one) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID first = make_id();
     RawstdUUID second = make_id();
     store.create_account(RawstdUUID{}, first);
@@ -1482,7 +1626,7 @@ TEST_F(ObjectStoreTest, a_replayed_transfer_does_not_undo_a_later_one) {
 // resize reports the owner of the object, which the chunks it adds are
 // created for.
 TEST_F(ObjectStoreTest, resize_reports_the_owner) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID acme = make_id();
     RawstdUUID other = make_id();
     store.create_account(RawstdUUID{}, acme);
@@ -1510,7 +1654,7 @@ TEST_F(ObjectStoreTest, resize_reports_the_owner) {
 }
 
 TEST_F(ObjectStoreTest, accounts_are_created_and_removed) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID acme = make_id();
 
     // The default account is registered with every store, and stays.
@@ -1556,7 +1700,7 @@ TEST_F(ObjectStoreTest, accounts_are_created_and_removed) {
 TEST_F(
     ObjectStoreTest, a_replayed_account_creation_restores_a_removed_account
 ) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID acme = make_id();
     RawstdUUID key = make_id();
 
@@ -1577,7 +1721,7 @@ TEST_F(
 
 // The owner is part of the chunk's own metadata, so a rebuilt map has it.
 TEST_F(ObjectStoreTest, reconstruct_restores_the_owner) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID acme = make_id();
     RawstdUUID id = make_id();
     RawstdUUID ost_id = make_id();
@@ -1602,7 +1746,7 @@ TEST_F(
     ObjectStoreTest,
     authorization_uses_certificate_roles_and_object_restrictions
 ) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID account = make_id(), other = make_id(), object = make_id();
     store.create_account(make_id(), account);
     store.create_account(make_id(), other);
@@ -1675,7 +1819,7 @@ TEST_F(
 TEST_F(
     ObjectStoreTest, a_account_can_authorize_only_its_own_recorded_remove_retry
 ) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID account = make_id(), object = make_id(), mutation = make_id();
     store.create_account(make_id(), account);
     RawstdUUIDString text;
@@ -1708,7 +1852,7 @@ TEST_F(
 TEST_F(
     ObjectStoreTest, witness_authorization_uses_certificate_policy_and_owner
 ) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID account = make_id(), foreign = make_id(), object = make_id();
     RawstdUUIDString text;
     rawstd_uuid_to_string(&account, &text);
@@ -1761,7 +1905,7 @@ TEST_F(
     ObjectStoreTest,
     none_can_resolve_only_granted_objects_without_listing_account
 ) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     RawstdUUID account = make_id(), object = make_id(), other = make_id();
     store.create_account(make_id(), account);
     for (const auto& id : {object, other}) {
@@ -1813,7 +1957,7 @@ list_locations_of(ObjectStore& store, unsigned int limit) {
 }
 
 TEST_F(ObjectStoreTest, list_locations_pages_by_id) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     const auto& osts = store.topology()->osts();
     std::vector<RawstdUUID> expected;
     for (const auto& ost : osts) {
@@ -1846,7 +1990,7 @@ TEST_F(ObjectStoreTest, list_locations_pages_by_id) {
 // The topology is the operator's: an admin lists it, an account's client does
 // not.
 TEST_F(ObjectStoreTest, only_an_admin_lists_the_locations) {
-    ObjectStore store = make_store();
+    ObjectStore& store = make_store();
     rawtls::SpiffeId admin("spiffe://cluster.example/admin/operator");
     EXPECT_NO_THROW(store.authorize(&admin, RAWSTOR_CMD_LIST_LOCATIONS));
 

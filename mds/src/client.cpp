@@ -379,6 +379,47 @@ rawstd::Task<void> Client::_dispatch(
         }
         break;
     }
+    case RAWSTOR_CMD_OST_REGISTER: {
+        RawstorFrameOstRegisterPayload payload{};
+        co_await recv_all(stream, &payload, sizeof(payload));
+        std::string location(payload.location_len, '\0');
+        if (!location.empty()) {
+            co_await recv_all(stream, location.data(), location.size());
+        }
+        std::string domain(payload.domain_len, '\0');
+        if (!domain.empty()) {
+            co_await recv_all(stream, domain.data(), domain.size());
+        }
+        RawstorFrameOstRegisteredPayload out{};
+        int32_t res = 0;
+        try {
+            rawstor::OstRegistration registration;
+            registration.id = uuid_of(payload.ost_id);
+            rawstor::mdsserver::ObjectStore::authorize_registration(
+                client->_transport->peer(), registration.id
+            );
+            registration.location = std::move(location);
+            registration.weight = payload.weight;
+            registration.domain = std::move(domain);
+            registration.sampled = payload.flags & RAWSTOR_OST_SAMPLED;
+            registration.info = {payload.used, payload.total};
+            registration.members = {payload.members, payload.members_hash};
+            registration.leaving = payload.flags & RAWSTOR_OST_LEAVING;
+            store.register_ost(registration);
+            const rawstor::mdsserver::Opts& opts = store.opts();
+            out.heartbeat_interval = opts.heartbeat_interval;
+            out.info_interval = opts.info_interval;
+            out.info_refresh_delay = opts.info_refresh_delay;
+            res = sizeof(out);
+        } catch (const std::system_error& e) {
+            res = -e.code().value();
+        }
+        co_await client->_send_response(
+            head.cmd, head.cid, res, res > 0 ? &out : nullptr,
+            res > 0 ? sizeof(out) : 0
+        );
+        break;
+    }
     case RAWSTOR_CMD_ALLOCATE: {
         RawstorFrameAllocatePayload payload{};
         co_await recv_all(stream, &payload, sizeof(payload));
