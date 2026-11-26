@@ -30,6 +30,8 @@ libmdsstore_la_SOURCES = placement.cpp \
 # Object::create_version()/version_remove()'s actual MDS wire path would be
 # untestable outside of spawning the rawstor-mds binary itself.
 libmds_la_SOURCES = opts.cpp \
+                    $(top_srcdir)/mds/include/mds/reconciler.hpp \
+                    reconciler.cpp \
                     $(top_srcdir)/mds/include/mds/opts.hpp \
                     server.cpp \
                     $(top_srcdir)/mds/include/mds/server.hpp \

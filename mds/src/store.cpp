@@ -275,11 +275,13 @@ void validate_geometry(uint64_t logical_size, uint64_t chunk_size) {
     }
 }
 
-void insert_chunks(
+/* Returns every OST that gets a slot. */
+std::vector<RawstdUUID> insert_chunks(
     sqlite3* db, const rawstor::mdsserver::Topology& topology,
     const RawstdUUID& id, uint64_t first_index, uint64_t end_index,
     uint64_t chunk_size, const PlacementPolicy& policy
 ) {
+    std::vector<RawstdUUID> touched;
     (void)chunk_size;
     Stmt insert(
         db, "INSERT INTO chunk_map"
@@ -297,8 +299,10 @@ void insert_chunks(
                 .bind_int64(3, slot.slot_index)
                 .bind_blob(4, slot.ost_id.bytes, sizeof(slot.ost_id.bytes))
                 .step();
+            touched.push_back(slot.ost_id);
         }
     }
+    return touched;
 }
 
 /*
@@ -1364,6 +1368,10 @@ void ObjectStore::register_ost(const OstRegistration& registration) {
         _load_topology();
     }
 
+    // Not with a map that is being replaced.
+    if (registration.sampled && !registration.leaving && !_reconstructing) {
+        _check_members(ost, registration.members, now);
+    }
     const bool was_alive = _alive(ost.id, now);
     _seen[key_of(ost.id)] = Seen{now, registration.leaving};
     if (registration.leaving) {
@@ -1448,6 +1456,93 @@ std::vector<TopologyOST> ObjectStore::available_osts() {
 void ObjectStore::set_reconstructing(bool reconstructing) {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
     _reconstructing = reconstructing;
+}
+
+std::vector<Member> ObjectStore::members_on(const RawstdUUID& ost) {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    return _members_on(ost);
+}
+
+std::vector<Member> ObjectStore::_members_on(const RawstdUUID& ost) {
+    Stmt select(
+        _db, "SELECT c.id, c.logical_index * o.chunk_size FROM chunk_map c"
+             " JOIN objects o ON o.id = c.id WHERE c.ost_id = ?;"
+    );
+    select.bind_blob(1, ost.bytes, sizeof(ost.bytes));
+    std::vector<Member> ret;
+    while (select.step()) {
+        Member member{};
+        select.column_uuid(0, &member.id);
+        member.offset = select.column_int64(1);
+        ret.push_back(member);
+    }
+    return ret;
+}
+
+void ObjectStore::set_disagreement_listener(
+    std::function<void(const TopologyOST&)> listener
+) {
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    _on_disagreement = std::move(listener);
+}
+
+void ObjectStore::_slots_changed(const std::vector<RawstdUUID>& osts) {
+    for (const RawstdUUID& id : osts) {
+        _map_changed.insert(key_of(id));
+    }
+}
+
+/*
+ * The map's digest is computed only when the OST's or the map's has changed
+ * since the last comparison, so a heartbeat costs nothing here. A
+ * disagreement is given a lease to go away before it is reported: between a
+ * create's reply and the client creating the chunks, the map places members
+ * the OST does not have yet, until its next sample.
+ */
+void ObjectStore::_check_members(
+    const TopologyOST& ost, const MemberDigest& reported, Clock::time_point now
+) {
+    const std::string key = key_of(ost.id);
+    Digests& digests = _digests[key];
+    const bool changed = _map_changed.erase(key) != 0;
+    if (!digests.checked || changed || digests.reported != reported) {
+        MemberDigest expected;
+        for (const Member& member : _members_on(ost.id)) {
+            expected.add(member.id, member.offset);
+        }
+        const bool same = digests.checked && digests.reported == reported &&
+                          digests.expected == expected;
+        digests.reported = reported;
+        digests.expected = expected;
+        digests.checked = true;
+        if (reported == expected) {
+            if (digests.reported_disagreement) {
+                RawstdUUIDString name;
+                rawstd_uuid_to_string(&ost.id, &name);
+                rawstd_info("OST %s agrees with the map again\n", name);
+            }
+            digests.disagreeing.reset();
+            digests.reported_disagreement = false;
+        } else if (!same) {
+            digests.disagreeing = now;
+            digests.reported_disagreement = false;
+        }
+    }
+    if (digests.disagreeing && !digests.reported_disagreement &&
+        now - *digests.disagreeing >= _lease) {
+        digests.reported_disagreement = true;
+        RawstdUUIDString name;
+        rawstd_uuid_to_string(&ost.id, &name);
+        rawstd_warning(
+            "OST %s disagrees with the map: it holds %llu member(s), the "
+            "map places %llu on it; listing it\n",
+            name, (unsigned long long)digests.reported.count,
+            (unsigned long long)digests.expected.count
+        );
+        if (_on_disagreement) {
+            _on_disagreement(ost);
+        }
+    }
 }
 
 RawstorLocationInfo ObjectStore::info() {
@@ -1540,11 +1635,14 @@ ObjectDescriptor ObjectStore::create(
             .step();
     }
 
-    insert_chunks(_db, available, ret.id, 0, nchunks, chunk_size, ret.policy);
+    std::vector<RawstdUUID> touched = insert_chunks(
+        _db, available, ret.id, 0, nchunks, chunk_size, ret.policy
+    );
 
     record_mutation(_db, idempotency_key, MutationType::create, id, {});
 
     tx.commit();
+    _slots_changed(touched);
 
     return ret;
 }
@@ -1652,7 +1750,7 @@ ResizeResult ObjectStore::resize(
             .step();
     }
 
-    insert_chunks(
+    std::vector<RawstdUUID> touched = insert_chunks(
         _db, _available_topology(), id, old_chunks, new_chunks,
         descriptor.chunk_size, descriptor.policy
     );
@@ -1663,6 +1761,7 @@ ResizeResult ObjectStore::resize(
     );
 
     tx.commit();
+    _slots_changed(touched);
 
     return ResizeResult{
         .map_version = map_version,
@@ -1673,6 +1772,9 @@ ResizeResult ObjectStore::resize(
 
 void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
+    // Every comparison was with the map this replaces.
+    _digests.clear();
+    _map_changed.clear();
     struct Chunk {
         /* Scan order becomes the slot order. */
         std::vector<RawstdUUID> ost_ids;
@@ -1901,6 +2003,13 @@ ObjectStore::remove(const RawstdUUID& idempotency_key, const RawstdUUID& id) {
     }
 
     tx.commit();
+    std::vector<RawstdUUID> touched;
+    for (const auto& chunk : ret.chunks) {
+        for (const PlacementSlot& slot : chunk) {
+            touched.push_back(slot.ost_id);
+        }
+    }
+    _slots_changed(touched);
 
     return ret;
 }

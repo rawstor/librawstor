@@ -38,6 +38,7 @@ numbers its stages separately.
 | Version redundancy status surfacing | 2 | ❌ | TODO |
 | vhost/QEMU flush hook for versions | 2 | ❌ | the CLI assumes no concurrent writer |
 | Space samples sent by the OSTs, `LOCATION_INFO` from them | — | ✅ | `ost/src/registrar.cpp`, `mds/src/store.cpp` |
+| Member digest against the map; a lasting disagreement lists the OST and logs the difference | — | ✅ | `mds/src/store.cpp`, `mds/src/reconciler.cpp`, [Member digest](#space-and-the-member-digest) |
 | `LIST_LOCATIONS`: the locations of the topology, paged like `LIST`; `rawstor location list` | — | ✅ | `mds/src/client.cpp`, `src/wire_backend.cpp`, `cli/locations.c` |
 | `HANDSHAKE`: feature bits, the first request of every connection (no protocol version) | — | ✅ | [Protocol](protocol.md), `src/wire_backend.cpp`, `ost/src/client.cpp`, `mds/src/client.cpp` |
 | Unified response frame `{res, len, hash}` | — | ❌ | — |
@@ -1308,6 +1309,22 @@ members the store holds and the sum, modulo 2^64, of
 little-endian))` over them, as its `LIST` reports them. The sum does not depend
 on the order of the members. The MDS never computes the space a slot takes:
 that is the OST's business (sparse files, compression and so on).
+
+The MDS compares the digest with its own over the slots its map places on the
+OST (every live chunk's, witnesses included: the store lists those too). It
+computes its own only when the OST's or the map's has changed since the last
+comparison, so a heartbeat costs it nothing. A disagreement is reported only
+once it has lasted three heartbeat intervals: between a create's reply and the
+client creating the chunks, the map places members the OST does not have yet.
+Then the MDS logs it (`OST ... disagrees with the map: ...`), lists the OST
+with `LIST`, once, and logs the members it holds that the map does not place on
+it -- leftovers of a remove made while it was away, for one -- and the ones the
+map places there that it lacks, up to eight of each. A member created or
+removed during the listing is not counted either way: the map is read before
+the listing and after it. Nothing is changed: the map stays as it is, and so
+does the OST. The OST is listed again only once the two digests have changed,
+and `OST ... agrees with the map again` is logged once they agree. All the
+members of an OST registered with an MDS are taken to be of its cluster.
 
 An OST samples its store when it starts, every `RAWSTOR_MDS_OPTS_INFO_INTERVAL`,
 and `RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY` after it created or removed a member

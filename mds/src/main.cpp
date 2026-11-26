@@ -1,4 +1,5 @@
 #include <mds/opts.hpp>
+#include <mds/reconciler.hpp>
 #include <mds/server.hpp>
 
 #include "ost_registration.hpp"
@@ -493,10 +494,24 @@ void mds(
         "OST registration: heartbeat=%u ms, info=%u ms, info refresh=%u ms\n",
         opts.heartbeat_interval, opts.info_interval, opts.info_refresh_delay
     );
-    std::vector<std::exception_ptr> errors(workers + 1);
+    std::vector<std::exception_ptr> errors(workers + 2);
     std::vector<std::thread> threads;
-    threads.reserve(workers + 1);
+    threads.reserve(workers + 2);
     std::atomic<bool> stop{false};
+    rawstor::mdsserver::Reconciler reconciler(store);
+    store.set_disagreement_listener(
+        [&reconciler](const rawstor::mdsserver::TopologyOST& ost) {
+            reconciler.request(ost);
+        }
+    );
+    threads.emplace_back([&errors, &reconciler, workers]() {
+        try {
+            reconciler.loop();
+        } catch (...) {
+            errors[workers + 1] = std::current_exception();
+            kill(getpid(), SIGTERM);
+        }
+    });
     if (do_reconstruct) {
         threads.emplace_back([&errors, &store, &stop, &awaited, workers,
                               expect]() {
@@ -542,6 +557,7 @@ void mds(
     }
 
     stop = true;
+    reconciler.stop();
     for (const rawstd::Pipe& pipe : wake_pipes) {
         char byte = 0;
         ssize_t n = write(pipe.write_fd(), &byte, 1);

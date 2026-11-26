@@ -17,10 +17,12 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 struct sqlite3;
@@ -75,6 +77,12 @@ struct ResizeResult {
     RawstdUUID account;
 };
 
+/* One live member the map places on an OST: a chunk of an object. */
+struct Member {
+    RawstdUUID id;
+    uint64_t offset;
+};
+
 /* One chunk copy holding a version. */
 struct VersionMember {
     uint64_t logical_index;
@@ -108,6 +116,17 @@ private:
         bool leaving = false;
     };
 
+    // An OST's member digest against the map's: the last one it sent, the
+    // map's at the time, since when they disagree, and whether that has
+    // been reported.
+    struct Digests {
+        MemberDigest reported;
+        MemberDigest expected;
+        bool checked = false;
+        std::optional<Clock::time_point> disagreeing;
+        bool reported_disagreement = false;
+    };
+
     // Serializes every public call: one SQLite connection shared by every
     // worker thread, the topology and the registrations.
     std::recursive_mutex _mutex;
@@ -127,6 +146,11 @@ private:
     // The witness this MDS hosts itself, nil for none: always available.
     RawstdUUID _local_witness{};
     bool _reconstructing = false;
+    // Compared again with the next sample of the OST: its digest, or the
+    // map's slots on it, changed.
+    std::unordered_map<std::string, Digests> _digests;
+    std::unordered_set<std::string> _map_changed;
+    std::function<void(const TopologyOST&)> _on_disagreement;
 
     uint64_t _check_layout();
     void _migrate_backends();
@@ -138,6 +162,12 @@ private:
     bool _alive(const RawstdUUID& id, Clock::time_point now) const;
     void _sweep(Clock::time_point now, bool force);
     Topology _available_topology();
+    std::vector<Member> _members_on(const RawstdUUID& ost);
+    void _check_members(
+        const TopologyOST& ost, const MemberDigest& reported,
+        Clock::time_point now
+    );
+    void _slots_changed(const std::vector<RawstdUUID>& osts);
     ObjectDescriptor _descriptor(const RawstdUUID& id);
     ObjectMap _open_live(const RawstdUUID& id);
     ObjectMap _open_version(const RawstdUUID& id, const RawstdUUID& version_id);
@@ -308,6 +338,19 @@ public:
      * replaced.
      */
     void set_reconstructing(bool reconstructing);
+
+    /* The members the map places on `ost`: every slot of a live chunk on it,
+     * at its chunk offset. */
+    std::vector<Member> members_on(const RawstdUUID& ost);
+
+    /*
+     * Called, under the store's lock, with an OST whose member digest has
+     * disagreed with the map's for a lease (docs/mds.md, "Member digest"):
+     * once for one disagreement, again only once the two have changed. It
+     * must be quick and must not call back into the store.
+     */
+    void
+    set_disagreement_listener(std::function<void(const TopologyOST&)> listener);
 
     /*
      * Every mutating call takes an `idempotency_key`: the client's idempotency

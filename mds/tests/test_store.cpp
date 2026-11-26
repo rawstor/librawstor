@@ -469,6 +469,74 @@ TEST_F(ObjectStoreTest, the_available_osts_leave_out_the_local_witness) {
     }
 }
 
+TEST_F(ObjectStoreTest, the_members_on_an_ost_are_its_slots_at_their_offsets) {
+    ObjectStore& store = make_store();
+    RawstdUUID id = make_id();
+    store.create(
+        RawstdUUID{}, {}, id, 2 * chunk_size, chunk_size, make_policy(3)
+    );
+    Topology topology = make_topology();
+    for (const TopologyOST& ost : topology.osts()) {
+        std::vector<rawstor::mdsserver::Member> members =
+            store.members_on(ost.id);
+        ASSERT_EQ(members.size(), 2u);
+        std::vector<uint64_t> offsets{members[0].offset, members[1].offset};
+        std::sort(offsets.begin(), offsets.end());
+        EXPECT_EQ(offsets[0], 0u);
+        EXPECT_EQ(offsets[1], chunk_size);
+        EXPECT_EQ(rawstd_uuid_cmp(&members[0].id, &id), 0);
+    }
+}
+
+TEST(MemberDigestTest, the_order_of_the_members_does_not_matter) {
+    RawstdUUID a = make_id(), b = make_id();
+    rawstor::MemberDigest forward, backward, other;
+    forward.add(a, 0);
+    forward.add(b, chunk_size);
+    backward.add(b, chunk_size);
+    backward.add(a, 0);
+    other.add(a, chunk_size);
+    other.add(b, 0);
+    EXPECT_EQ(forward, backward);
+    EXPECT_EQ(forward.count, 2u);
+    EXPECT_NE(forward, other);
+}
+
+// A member digest that disagrees with the map is reported once it has done so
+// for a lease, and once only; agreeing again clears it.
+TEST_F(ObjectStoreTest, a_lasting_disagreement_is_reported_once) {
+    rawstor::mdsserver::Opts opts;
+    opts.heartbeat_interval = 1;
+    ObjectStore store(dir.db_path(), opts);
+    std::vector<RawstdUUID> reported;
+    store.set_disagreement_listener([&](const TopologyOST& ost) {
+        reported.push_back(ost.id);
+    });
+    TopologyOST ost = make_ost("00000000-0000-7000-8000-000000000001", "host1");
+    RawstorLocationInfo info{};
+    rawstor::OstRegistration registration = registration_of(ost, &info);
+    store.register_ost(registration);
+    RawstdUUID id = make_id();
+    store.create(RawstdUUID{}, {}, id, chunk_size, chunk_size, make_policy(1));
+
+    // The client has not created the chunk yet: not a disagreement to report.
+    store.register_ost(registration);
+    EXPECT_TRUE(reported.empty());
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    store.register_ost(registration);
+    ASSERT_EQ(reported.size(), 1u);
+    EXPECT_EQ(rawstd_uuid_cmp(&reported[0], &ost.id), 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    store.register_ost(registration);
+    EXPECT_EQ(reported.size(), 1u);
+
+    registration.members.add(id, 0);
+    store.register_ost(registration);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    store.register_ost(registration);
+    EXPECT_EQ(reported.size(), 1u);
+}
+
 // A store of layout 1 kept the space samples of a topology read from a file:
 // its entries keep their addresses and samples, and take chunks once their
 // OSTs register.
