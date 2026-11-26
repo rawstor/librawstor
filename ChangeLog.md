@@ -5,7 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.6] - Unreleased
+## [0.3.6] - 2026-11-26
+
+### Added
+
+- `RAWSTOR_OPTS_MIRROR_RESYNC_RATE` (`mirror_resync_rate` in `RawstorOpts`) limits the bytes per second the copy of a mirror resync or heal sends, over all the objects of the process; the default is no limit.
+- `RAWSTOR_OPTS_EXPORT_RATE` (`export_rate` in `RawstorOpts`) limits the bytes per second the exports to a file (`rawstor object export`, `rawstor version export`, `rawstor_target_export()`) read, for each export; the default is no limit.
 
 ### Changed
 
