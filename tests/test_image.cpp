@@ -2,6 +2,7 @@
 // from another object, over a real MDS + OST pair so the multi-chunk
 // object path is the one exercised.
 #include "object_env.hpp"
+#include "opts.h"
 #include "rawio_sync.hpp"
 #include "tmp_dir.hpp"
 
@@ -14,6 +15,7 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -54,8 +56,19 @@ ssize_t image_run(
     if (res < 0) {
         return res;
     }
+    int wait_failures = 0;
     while (!op.done) {
-        EXPECT_GE(rawio_wait(&queue), 0);
+        int wait_res = rawio_wait(&queue);
+        EXPECT_GE(wait_res, 0);
+        // A queue that keeps failing never completes the call, and the call
+        // still points at `op` on this stack: stop here, loudly, rather than
+        // wait for ever.
+        if (wait_res >= 0) {
+            wait_failures = 0;
+        } else if (++wait_failures >= 100) {
+            ADD_FAILURE() << "rawio_wait() keeps failing: " << wait_res;
+            std::abort();
+        }
     }
     // Let anything that would wrongly follow the last call arrive.
     for (int i = 0; i < 4; ++i) {
@@ -217,6 +230,40 @@ TEST(ImageTest, file_to_object_to_object_to_file) {
 
     EXPECT_EQ(target_remove(*queue, first), 0);
     EXPECT_EQ(target_remove(*queue, second), 0);
+}
+
+// With a rate set, an export takes at least what its bytes take at that rate,
+// and the file is still the object byte for byte.
+TEST(ImageTest, an_export_reads_no_faster_than_its_rate) {
+    rawstor::tests::ObjectEnv env(8922, 8923);
+    rawstor::tests::TmpDir dir;
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(128);
+
+    // Four 1 MiB blocks.
+    std::string data = pattern(8 * chunk_size);
+    write_file(dir.path() / "in.img", data);
+    std::string target =
+        object_target(env, "018f4e2a-4000-7000-8000-000000000011");
+    ASSERT_EQ(
+        target_create_from_file(
+            *queue, target, (dir.path() / "in.img").string(), mds_spec(0)
+        ),
+        0
+    );
+
+    // 4 MiB/s: a block a quarter of a second, three waits between four.
+    RawstorOpts opts{};
+    opts.export_rate = 4u << 20;
+    ASSERT_EQ(rawstor_opts_initialize(&opts), 0);
+    auto begin = std::chrono::steady_clock::now();
+    ssize_t res =
+        target_export(*queue, target, (dir.path() / "out.img").string());
+    auto elapsed = std::chrono::steady_clock::now() - begin;
+    rawstor_opts_initialize(nullptr);
+
+    ASSERT_EQ(res, 0);
+    EXPECT_GE(elapsed, std::chrono::milliseconds(700));
+    EXPECT_EQ(read_file(dir.path() / "out.img"), data);
 }
 
 // A mirror short of its quorum is not exported, unless the export is forced:
