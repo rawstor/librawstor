@@ -3059,17 +3059,25 @@ rawstd::DetachedTask Chunk::_resync_watch() {
     }
 }
 
-rawstd::Task<bool>
-Chunk::_resync_paced(std::shared_ptr<rawstor::RatePacer> pacer) {
+rawstd::Task<bool> Chunk::_resync_paced(
+    std::shared_ptr<rawstor::RatePacer> pacer, bool& pace_done
+) {
     co_await pacer->acquire(_queue, RESYNC_CHUNK);
+    {
+        std::lock_guard<std::mutex> lock(_control->mutex());
+        pace_done = true;
+    }
+    _control->wake_resync();
     co_return true;
 }
 
-rawstd::Task<bool> Chunk::_resync_wait_gone(uint64_t generation) {
+rawstd::Task<bool>
+Chunk::_resync_wait_gone(uint64_t generation, bool& pace_done) {
     MirrorControl& c = *_control;
     co_await c.wait_resync(_queue, [&]() {
         MirrorResync* r = c.resync_locked();
-        return _closing || r == nullptr || r->generation() != generation;
+        return pace_done || _closing || r == nullptr ||
+               r->generation() != generation;
     });
     co_return false;
 }
@@ -3118,20 +3126,27 @@ rawstd::DetachedTask Chunk::_resync_run(uint64_t generation) {
             // The pause comes before the region is claimed: a claimed region
             // is one client writes park on. It ends at once when the resync
             // is over.
-            try {
-                bool paced = co_await rawstd::any(
-                    2, [&](size_t i) -> rawstd::Task<bool> {
-                        return i == 0 ? _resync_paced(pacer)
-                                      : _resync_wait_gone(generation);
+            if (pacer->limited()) {
+                bool pace_done = false;
+                try {
+                    bool paced = co_await rawstd::any(
+                        2, [&](size_t i) -> rawstd::Task<bool> {
+                            return i == 0 ? _resync_paced(pacer, pace_done)
+                                          : _resync_wait_gone(
+                                                generation, pace_done
+                                            );
+                        }
+                    );
+                    if (!paced) {
+                        co_return;
                     }
-                );
-                if (!paced) {
+                } catch (const std::system_error& e) {
+                    rawstd_warning(
+                        "Mirror resync: pacing stopped: %s\n", e.what()
+                    );
+                    _resync_abort(generation, "pacing stopped");
                     co_return;
                 }
-            } catch (const std::system_error& e) {
-                rawstd_warning("Mirror resync: pacing stopped: %s\n", e.what());
-                _resync_abort(generation, "pacing stopped");
-                co_return;
             }
 
             size_t k = 0;

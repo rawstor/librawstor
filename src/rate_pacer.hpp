@@ -50,6 +50,9 @@ public:
      * caller is not to copy.
      */
     rawstd::Task<void> acquire(rawio::Queue& queue, size_t bytes);
+
+    // Whether there is a rate: with none, acquire() never waits.
+    bool limited() const noexcept { return _rate != 0; }
 };
 
 } // namespace rawstor
