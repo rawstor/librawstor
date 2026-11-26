@@ -56,8 +56,19 @@ ssize_t image_run(
     if (res < 0) {
         return res;
     }
+    int wait_failures = 0;
     while (!op.done) {
-        EXPECT_GE(rawio_wait(&queue), 0);
+        int wait_res = rawio_wait(&queue);
+        EXPECT_GE(wait_res, 0);
+        // A queue that keeps failing never completes the call, and the call
+        // still points at `op` on this stack: stop here, loudly, rather than
+        // wait for ever.
+        if (wait_res >= 0) {
+            wait_failures = 0;
+        } else if (++wait_failures >= 100) {
+            ADD_FAILURE() << "rawio_wait() keeps failing: " << wait_res;
+            std::abort();
+        }
     }
     // Let anything that would wrongly follow the last call arrive.
     for (int i = 0; i < 4; ++i) {
@@ -226,7 +237,7 @@ TEST(ImageTest, file_to_object_to_object_to_file) {
 TEST(ImageTest, an_export_reads_no_faster_than_its_rate) {
     rawstor::tests::ObjectEnv env(8922, 8923);
     rawstor::tests::TmpDir dir;
-    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(4);
+    std::unique_ptr<rawio::Queue> queue = rawio::Queue::create(128);
 
     // Four 1 MiB blocks.
     std::string data = pattern(8 * chunk_size);
