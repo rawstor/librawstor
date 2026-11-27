@@ -3,6 +3,9 @@
 #include <rawstd/gpp.hpp>
 #include <rawstd/hash.h>
 #include <rawstd/logging.hpp>
+#include <rawstd/uri.hpp>
+
+#include <system_error>
 
 #include <cerrno>
 #include <cstring>
@@ -43,6 +46,14 @@ void split_domain(const std::string& domain, std::string (&out)[4]) {
     }
     for (size_t i = 0; i < 4; ++i) {
         out[i] = i < 4 - n ? std::string() : parts[i - (4 - n)];
+    }
+}
+
+std::string printable_location(const std::string& location) {
+    try {
+        return rawstd::URI(location).str();
+    } catch (const std::system_error&) {
+        return "(malformed location)";
     }
 }
 

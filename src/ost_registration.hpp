@@ -60,6 +60,12 @@ struct OstRegistered {
  */
 void split_domain(const std::string& domain, std::string (&out)[4]);
 
+/*
+ * A location URI as it may be logged: as a URI prints, without the password
+ * its user information may carry. One that does not parse is not echoed.
+ */
+std::string printable_location(const std::string& location);
+
 } // namespace rawstor
 
 #endif // RAWSTOR_OST_REGISTRATION_HPP

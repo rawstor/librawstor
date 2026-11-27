@@ -29,10 +29,11 @@ namespace ostserver {
  * registration"), on a thread of its own: registers with the MDS, again every
  * heartbeat interval the MDS asks for, and with each registration sends the
  * latest sample of the store it serves -- its space and its member digest. A
- * sample is taken at start, every info interval, and one info refresh delay
- * after the last of a burst of members_changed(). stop() registers the OST
- * as leaving and ends loop(); stop() and members_changed() may be called from
- * any thread, stop() from a signal handler too.
+ * sample is taken apart from the registrations, which go on meanwhile: at
+ * start, every info interval, and one info refresh delay after the last of a
+ * burst of members_changed(), and is registered at once. stop() registers the
+ * OST as leaving and ends loop(); stop() and members_changed() may be called
+ * from any thread, stop() from a signal handler too.
  */
 class Registrar final {
 public:
@@ -71,16 +72,21 @@ private:
     bool _registered = false;
     bool _failing = false;
 
-    // The step _control() is waiting for, and whether it is a sleep: a
-    // change wakes a sleep up, a stop cuts any step short.
-    std::optional<rawstd::Task<void>> _work;
-    bool _sleeping = false;
+    // The step each loop is waiting for, and whether it is a sleep: a change
+    // wakes the sampler up, a new sample the heartbeats, and a stop cuts any
+    // step short.
+    std::optional<rawstd::Task<void>> _heartbeat_work;
+    bool _heartbeat_sleeping = false;
+    std::optional<rawstd::Task<void>> _sample_work;
+    bool _sample_sleeping = false;
 
     rawstd::Task<void> _sample();
     rawstd::Task<void> _register(bool leaving);
     rawstd::Task<void> _sleep_until(Clock::time_point due);
     rawstd::Task<void> _cancel_after(rawstd::Task<void>& task, unsigned int ms);
     rawstd::Task<void> _wake_reader();
+    rawstd::Task<void> _heartbeats();
+    rawstd::Task<void> _samples();
     rawstd::Task<void> _control();
     void _wake_up() noexcept;
 

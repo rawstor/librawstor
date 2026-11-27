@@ -84,9 +84,12 @@ when it starts, again every heartbeat interval the MDS asks for, and as
 leaving when it stops. With each registration it sends its latest sample of
 the store -- the space `LOCATION_INFO` reports and the digest of the members
 it holds -- taken at start, every info interval the MDS asks for, and shortly
-after a member or a version was created or removed on it. A registration the
-MDS refuses, or an MDS that does not answer, is logged once and retried every
-heartbeat interval; the OST serves on meanwhile.
+after a member or a version was created or removed on it. A sample is taken
+apart from the registrations, which go on while a large store is walked, and
+is registered as soon as it is taken. A registration the MDS refuses, or one
+it does not answer within a heartbeat interval, is logged once and made again
+on a new connection; the OST serves on meanwhile, and is back within two
+intervals of the MDS. The advertised location carries no user information.
 
 ```bash
 rawstor-ost -b 0.0.0.0:7777 --id ${OST_ID} --mds mds://mds1:7776 \

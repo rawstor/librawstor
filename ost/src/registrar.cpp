@@ -125,6 +125,7 @@ rawstd::Task<void> Registrar::_register(bool leaving) {
     registration.info = _info;
     registration.members = _members;
     registration.leaving = leaving;
+    bool failed = false;
     try {
         if (!_mds) {
             _mds = co_await Slot::create(*_queue, _mds_location);
@@ -139,25 +140,40 @@ rawstd::Task<void> Registrar::_register(bool leaving) {
         _asked.info_refresh_delay = asked.info_refresh_delay;
         if (!_registered && !leaving) {
             rawstd_info(
-                "Registered with %s at %s in %s\n", _config.mds.c_str(),
-                _config.location.c_str(), _config.domain.c_str()
+                "Registered with %s at %s in %s\n",
+                printable_location(_config.mds).c_str(),
+                printable_location(_config.location).c_str(),
+                _config.domain.c_str()
             );
         }
         _registered = true;
         _failing = false;
     } catch (const std::exception& e) {
         // Cut short by stop(): says nothing about the MDS, and the OST is
-        // still registered as far as it knows.
-        if (!cancelled(e)) {
+        // still registered as far as it knows. Cut short by its deadline, it
+        // is a failure like any other.
+        if (!cancelled(e) || !_stop_requested) {
             if (!_failing) {
                 rawstd_warning(
-                    "Registration with %s failed: %s\n", _config.mds.c_str(),
-                    e.what()
+                    "Registration with %s failed: %s\n",
+                    printable_location(_config.mds).c_str(),
+                    cancelled(e) ? "no answer within a heartbeat interval"
+                                 : e.what()
                 );
             }
             _registered = false;
             _failing = true;
+            failed = true;
         }
+    }
+    // The next attempt starts over on a connection of its own, not inside
+    // the retries of this one.
+    if (failed && _mds) {
+        try {
+            co_await _mds->close();
+        } catch (const std::exception&) {
+        }
+        _mds.reset();
     }
 }
 
@@ -210,10 +226,12 @@ rawstd::Task<void> Registrar::_wake_reader() {
             co_return;
         }
         if (_stop_requested) {
-            // Whatever the step: a registration retrying against an MDS that
-            // is down could take minutes.
-            if (_work && !_work->done()) {
-                _work->cancel_sticky();
+            // Whatever the step: a sample of a large store takes long.
+            for (std::optional<rawstd::Task<void>>* work :
+                 {&_heartbeat_work, &_sample_work}) {
+                if (*work && !(*work)->done()) {
+                    (*work)->cancel_sticky();
+                }
             }
             co_return;
         }
@@ -221,46 +239,77 @@ rawstd::Task<void> Registrar::_wake_reader() {
             // A burst of changes is sampled once, after the last of them.
             _refresh_due = Clock::now() +
                            std::chrono::milliseconds(_asked.info_refresh_delay);
-            if (_sleeping && _work && !_work->done()) {
-                _work->cancel();
+            if (_sample_sleeping && _sample_work && !_sample_work->done()) {
+                _sample_work->cancel();
             }
         }
     }
 }
 
-rawstd::Task<void> Registrar::_control() {
-    _sample_due = Clock::now();
+/*
+ * Every heartbeat interval, whatever the sampler is doing: a sample of a
+ * large store can take longer than the lease the registration keeps. Each
+ * registration is given one interval, so that one stuck in the retries of an
+ * MDS that is down gives way to the next, and the OST is back at most two
+ * intervals after the MDS is.
+ */
+rawstd::Task<void> Registrar::_heartbeats() {
     while (!_stop_requested) {
-        auto now = Clock::now();
-        if (now >= _sample_due || (_refresh_due && now >= *_refresh_due)) {
-            _refresh_due.reset();
-            _work.emplace(_sample());
-            rawstd::Task<void>& sample = *_work;
-            co_await sample;
-            if (_stop_requested) {
-                break;
-            }
-        }
-        _work.emplace(_register(false));
-        rawstd::Task<void>& registration = *_work;
+        _heartbeat_work.emplace(_register(false));
+        rawstd::Task<void>& registration = *_heartbeat_work;
+        rawstd::Task<void> deadline =
+            _cancel_after(registration, _asked.heartbeat_interval);
         co_await registration;
+        deadline.cancel();
+        co_await deadline;
         if (_stop_requested) {
             break;
         }
-        auto due = std::min(
-            Clock::now() + std::chrono::milliseconds(_asked.heartbeat_interval),
-            _sample_due
-        );
+        _heartbeat_sleeping = true;
+        _heartbeat_work.emplace(_sleep_until(
+            Clock::now() + std::chrono::milliseconds(_asked.heartbeat_interval)
+        ));
+        rawstd::Task<void>& sleep = *_heartbeat_work;
+        co_await sleep;
+        _heartbeat_sleeping = false;
+    }
+    _heartbeat_work.reset();
+}
+
+// Every info interval, and one info refresh delay after a change; a new
+// sample is registered at once rather than with the next heartbeat.
+rawstd::Task<void> Registrar::_samples() {
+    _sample_due = Clock::now();
+    while (!_stop_requested) {
+        auto due = _sample_due;
         if (_refresh_due) {
             due = std::min(due, *_refresh_due);
         }
-        _sleeping = true;
-        _work.emplace(_sleep_until(due));
-        rawstd::Task<void>& sleep = *_work;
-        co_await sleep;
-        _sleeping = false;
+        if (Clock::now() < due) {
+            _sample_sleeping = true;
+            _sample_work.emplace(_sleep_until(due));
+            rawstd::Task<void>& sleep = *_sample_work;
+            co_await sleep;
+            _sample_sleeping = false;
+            continue;
+        }
+        _refresh_due.reset();
+        _sample_work.emplace(_sample());
+        rawstd::Task<void>& sample = *_sample_work;
+        co_await sample;
+        if (_heartbeat_sleeping && _heartbeat_work &&
+            !_heartbeat_work->done()) {
+            _heartbeat_work->cancel();
+        }
     }
-    _work.reset();
+    _sample_work.reset();
+}
+
+rawstd::Task<void> Registrar::_control() {
+    rawstd::Task<void> samples = _samples();
+    rawstd::Task<void> heartbeats = _heartbeats();
+    co_await heartbeats;
+    co_await samples;
 
     if (_registered) {
         rawstd::Task<void> leave = _register(true);
@@ -269,14 +318,17 @@ rawstd::Task<void> Registrar::_control() {
         deadline.cancel();
         co_await deadline;
         if (_registered) {
-            rawstd_info("Left %s\n", _config.mds.c_str());
+            rawstd_info("Left %s\n", printable_location(_config.mds).c_str());
         }
     }
     if (_mds) {
         try {
             co_await _mds->close();
         } catch (const std::exception& e) {
-            rawstd_warning("Closing %s: %s\n", _config.mds.c_str(), e.what());
+            rawstd_warning(
+                "Closing %s: %s\n", printable_location(_config.mds).c_str(),
+                e.what()
+            );
         }
         _mds.reset();
     }
