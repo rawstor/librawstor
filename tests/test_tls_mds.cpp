@@ -1,3 +1,4 @@
+#include "object_env.hpp"
 #include "rawio_sync.hpp"
 #include "tls_process.hpp"
 #include "tmp_dir.hpp"
@@ -74,11 +75,12 @@ public:
         _thread = std::thread([fd = _listen_fd, db, topology, wake_read_fd,
                                ready]() mutable {
             try {
-                rawstor::mdsserver::ObjectStore store(db, std::move(topology));
-                RawstorLocationInfo info{123, 456};
-                for (const auto& ost : store.topology()->osts()) {
-                    store.update_backend(ost, &info);
-                }
+                rawstor::mdsserver::ObjectStore store(
+                    db, rawstor::tests::test_mds_opts()
+                );
+                rawstor::tests::enter_topology(
+                    store, topology, RawstorLocationInfo{123, 456}
+                );
                 rawstor::mdsserver::Server s(64, fd, store, wake_read_fd);
                 ready->set_value();
                 s.loop();

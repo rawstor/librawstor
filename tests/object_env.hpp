@@ -3,7 +3,11 @@
 
 #include "tmp_dir.hpp"
 
+#include <mds/opts.hpp>
+#include <mds/store.hpp>
 #include <mds/topology.hpp>
+
+#include <rawstor/location.h>
 
 #include <string>
 #include <thread>
@@ -11,6 +15,17 @@
 
 namespace rawstor {
 namespace tests {
+
+// A heartbeat long enough that no OST a test registers expires in the test.
+mdsserver::Opts test_mds_opts();
+
+// Enters every entry of `topology` in `store` the way it would enter it
+// itself: a witness-only entry as the MDS's own witness, any other one as
+// an OST registering with `info` as its sample.
+void enter_topology(
+    mdsserver::ObjectStore& store, const mdsserver::Topology& topology,
+    const RawstorLocationInfo& info
+);
 
 // A live rawstor-mds + rawstor-ost pair, each driven on its own
 // background thread with its own RawIOQueue -- mirroring how the real

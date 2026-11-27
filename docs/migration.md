@@ -75,13 +75,15 @@ What the present model fixes, and this design has to make changeable:
 
 ## Weight 0 and draining
 
-`weight 0` in `topology.conf` keeps a location out of **every new placement**:
+An OST registered with `--weight 0` keeps its location out of **every new
+placement**:
 `place()` skips zero-weight entries before building failure domains, and the
 witness candidate filter and the domain-count checks skip them too
 (`mds/src/placement.cpp`; unit test
 `PlacementTest.zero_weight_ost_never_populates_a_domain`). Existing slots are
-untouched: reads and writes go on, a `SIGHUP` reload accepts the new weight, and
-only *dropping* a location that still holds chunks or version members is refused.
+untouched: reads and writes go on, the MDS takes the new weight with the OST's
+next registration, and the entry of a location stays as long as it holds chunks
+or version members.
 
 - Create and grow fail with the usual hard error when the weighted locations
   left cannot satisfy `width` and `failure_domain`; nothing falls back onto the
@@ -411,11 +413,11 @@ The object stays open and writable; the VM is not stopped.
 ### Draining a location
 
 ```
-1. weight 0 in topology.conf, SIGHUP                 no new placement
+1. WEIGHT=0 for the OST, restart it                 no new placement
 2. rawstor location drain MDS LOCATION               every slot on it migrated,
                                                        one plan per chunk, bounded parallelism
 3. rawstor location info MDS LOCATION                slots and version members left: done at 0 and 0
-4. remove the entry from topology.conf, SIGHUP       accepted: nothing refers to it
+4. stop the OST                                     its entry goes: nothing refers to it
 ```
 
 `MDS` is the `mds://` location whose topology has the entry; `LOCATION` names

@@ -70,6 +70,7 @@ test_all_SOURCES += object_env.cpp \
                     test_tls_mds.cpp \
                     test_object.cpp \
                     test_resync_stress.cpp \
+                    test_registration.cpp \
                     test_witness.cpp
 test_all_LDADD += $(top_builddir)/ost/src/libost.la \
                   $(top_builddir)/mds/src/libmds.la \

@@ -9,6 +9,8 @@
 #include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
+#include "ost_registration.hpp"
+
 #include <rawstor/location.h>
 #include <rawstor/object.h>
 
@@ -164,6 +166,11 @@ public:
         unsigned int limit, std::vector<std::string>& locations,
         RawstdUUID& token
     );
+
+    // Enters an OST in the topology of the MDS, or keeps it there
+    // (OST_REGISTER, docs/mds.md "OST registration"); ENOTSUP elsewhere.
+    virtual rawstd::Task<OstRegistered>
+    register_ost(const OstRegistration& registration);
 
     // Registers / removes an account (docs/accounts.md); only an MDS keeps a
     // account registry, so the default is ENOTSUP.

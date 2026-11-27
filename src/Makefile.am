@@ -67,6 +67,8 @@ librawstor_la_SOURCES = 3rdparty/nlohmann/json.hpp \
                         wire_backend_op.hpp \
                         ost_backend.cpp \
                         ost_backend.hpp \
+                        ost_registration.cpp \
+                        ost_registration.hpp \
                         meta_cache.cpp \
                         meta_cache.hpp \
                         rawstor.cpp \
