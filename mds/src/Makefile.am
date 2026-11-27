@@ -17,7 +17,11 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
 AM_LDFLAGS = $(ASAN_LDFLAGS)
 
 
-libmdsstore_la_SOURCES = placement.cpp \
+libmdsstore_la_SOURCES = database.cpp \
+                         database.hpp \
+                         sqlite_database.cpp \
+                         sqlite_database.hpp \
+                         placement.cpp \
                          $(top_srcdir)/mds/include/mds/placement.hpp \
                          store.cpp \
                          $(top_srcdir)/mds/include/mds/store.hpp \

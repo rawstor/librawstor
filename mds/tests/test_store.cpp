@@ -141,11 +141,34 @@ protected:
 
     // A store with make_topology()'s three OSTs registered.
     ObjectStore& make_store() {
-        _store = std::make_unique<ObjectStore>(dir.db_path());
+        _store = std::make_unique<ObjectStore>(dir.db_uri());
         register_all(*_store, make_topology());
         return *_store;
     }
 };
+
+TEST_F(ObjectStoreTest, an_sqlite_connection_string_opens_the_file) {
+    std::string path = (dir.path() / "mds.db").string();
+    {
+        ObjectStore store("sqlite://" + path);
+    }
+    EXPECT_TRUE(std::filesystem::exists(path));
+}
+
+TEST_F(ObjectStoreTest, a_connection_string_it_does_not_take_is_refused) {
+    std::string path = (dir.path() / "mds.db").string();
+    const std::vector<std::string> uris = {
+        path,                                    // no scheme
+        "postgresql://localhost/mds",            // not supported
+        "sqlite://localhost" + path,             // an authority
+        "sqlite://" + dir.path().string() + "/", // no file
+    };
+    for (const std::string& uri : uris) {
+        SCOPED_TRACE(uri);
+        EXPECT_EQ(errno_of([&] { ObjectStore store(uri); }), EINVAL);
+    }
+    EXPECT_FALSE(std::filesystem::exists(path));
+}
 
 TEST_F(ObjectStoreTest, create_populates_chunk_map) {
     ObjectStore& store = make_store();
@@ -263,7 +286,7 @@ TEST_F(ObjectStoreTest, registering_adds_an_ost) {
 TEST_F(ObjectStoreTest, a_registration_lasts_three_heartbeats) {
     rawstor::mdsserver::Opts opts;
     opts.heartbeat_interval = 1;
-    ObjectStore store(dir.db_path(), opts);
+    ObjectStore store(dir.db_uri(), opts);
     TopologyOST ost = make_ost("00000000-0000-7000-8000-000000000001", "host1");
     store.register_ost(registration_of(ost));
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -369,7 +392,7 @@ TEST_F(ObjectStoreTest, a_new_domain_or_weight_is_taken) {
 }
 
 TEST_F(ObjectStoreTest, a_malformed_registration_is_refused) {
-    ObjectStore store(dir.db_path());
+    ObjectStore store(dir.db_uri());
     TopologyOST ost = make_ost("00000000-0000-7000-8000-000000000001", "host1");
     for (const char* location :
          {"mds://host1:7776", "ost://host1:7777,ost://host2:7777", "",
@@ -506,7 +529,7 @@ TEST(MemberDigestTest, the_order_of_the_members_does_not_matter) {
 TEST_F(ObjectStoreTest, a_lasting_disagreement_is_reported_once) {
     rawstor::mdsserver::Opts opts;
     opts.heartbeat_interval = 1;
-    ObjectStore store(dir.db_path(), opts);
+    ObjectStore store(dir.db_uri(), opts);
     std::vector<RawstdUUID> reported;
     store.set_disagreement_listener([&](const TopologyOST& ost) {
         reported.push_back(ost.id);
@@ -1183,7 +1206,7 @@ TEST_F(ObjectStoreTest, samples_survive_a_restart_and_availability_does_not) {
     const TopologyOST& first = topology.osts()[0];
     const TopologyOST& second = topology.osts()[1];
     {
-        ObjectStore store(dir.db_path());
+        ObjectStore store(dir.db_uri());
         RawstorLocationInfo a{10, 100}, b{20, 200};
         store.register_ost(registration_of(first, &a));
         store.register_ost(registration_of(second, &b));
@@ -1192,7 +1215,7 @@ TEST_F(ObjectStoreTest, samples_survive_a_restart_and_availability_does_not) {
         EXPECT_EQ(store.info().used, 30u);
         EXPECT_EQ(store.info().total, 300u);
     }
-    ObjectStore reopened(dir.db_path());
+    ObjectStore reopened(dir.db_uri());
     EXPECT_FALSE(reopened.backend_available(first.id));
     EXPECT_FALSE(reopened.backend_available(second.id));
     EXPECT_EQ(reopened.info().used, 30u);
@@ -1451,7 +1474,7 @@ TEST_F(
     auto mds = make_ost("00000000-0000-7000-8000-000000000004", "host4");
     mds.location = "ost://127.0.0.1:7776";
     mds.roles = {rawstor::mdsserver::Role::Witness};
-    ObjectStore store(dir.db_path());
+    ObjectStore store(dir.db_uri());
     RawstorLocationInfo info{.used = 10, .total = 100};
     register_all(store, topology, &info);
     leave(store, topology.osts()[2]);

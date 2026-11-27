@@ -23,8 +23,8 @@ TmpDir::~TmpDir() {
     std::filesystem::remove_all(_path, ec);
 }
 
-std::string TmpDir::db_path() const {
-    return (_path / "mds.db").string();
+std::string TmpDir::db_uri() const {
+    return "sqlite://" + (_path / "mds.db").string();
 }
 
 } // namespace tests

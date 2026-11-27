@@ -90,7 +90,7 @@ jobs:
         echo "RAWSTOR_TLS_CA=${PWD}/ca/ca.crt" >> $GITHUB_ENV
     - name: start rawstor-mds
       run: |
-        env $(cat ${GITHUB_WORKSPACE}/pki/mds.env) rawstor-mds --bind 127.0.0.1:7776 --db ${GITHUB_WORKSPACE}/mds.db &
+        env $(cat ${GITHUB_WORKSPACE}/pki/mds.env) rawstor-mds --bind 127.0.0.1:7776 --db sqlite://${GITHUB_WORKSPACE}/mds.db &
         sleep 5
     - name: start rawstor-ost
       # Registers the store with the MDS at the location the clients reach

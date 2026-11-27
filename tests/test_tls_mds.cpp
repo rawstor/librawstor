@@ -71,7 +71,7 @@ public:
 
         auto ready = std::make_shared<std::promise<void>>();
         std::future<void> ready_future = ready->get_future();
-        std::string db = (_dir.path() / "mds.db").string();
+        std::string db = "sqlite://" + (_dir.path() / "mds.db").string();
         _thread = std::thread([fd = _listen_fd, db, topology, wake_read_fd,
                                ready]() mutable {
             try {

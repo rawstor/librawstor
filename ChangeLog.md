@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The space `rawstor location info mds://` reports is sampled by the OSTs themselves, every `RAWSTOR_MDS_OPTS_INFO_INTERVAL` and `RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY` after they created or removed a member or a version.
 - `rawstor-ost@<uuid>` runs with `--id=<uuid>`: with TLS, an instance whose certificate is for another id does not start.
 - `rawstor-mds --reconstruct` waits a lease for the OSTs to register and rebuilds the map from the ones that have, answering only registrations meanwhile.
+- `rawstor-mds --db` takes a database connection string, `sqlite:///path/to/file`, and `rawstor-mds@<uuid>` its `DB_URI` instead of `DB_PATH`.
 
 ## [0.3.6] - 2026-11-26
 

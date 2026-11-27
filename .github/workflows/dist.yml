@@ -701,7 +701,7 @@ jobs:
       # step).
       run: |
         rawstor-mds --version
-        env $(cat /tmp/pki/mds.env) rawstor-mds --bind=127.0.0.1:7776 --db=/tmp/mds.db &
+        env $(cat /tmp/pki/mds.env) rawstor-mds --bind=127.0.0.1:7776 --db=sqlite:///tmp/mds.db &
         MDS_PID=$!
         sleep 5
         mkdir -p /var/lib/rawstor/ost/test
