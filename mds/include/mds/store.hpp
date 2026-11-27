@@ -25,10 +25,12 @@
 #include <unordered_set>
 #include <vector>
 
-struct sqlite3;
-
 namespace rawstor {
 namespace mdsserver {
+
+namespace db {
+class Database;
+} // namespace db
 
 struct ChunkEntry {
     RawstdUUID id;
@@ -90,9 +92,9 @@ struct VersionMember {
 };
 
 /*
- * The explicit chunk map, stored in SQLite (docs/mds.md, "MDS
- * server, v1"): WAL journal, synchronous=FULL — crash-safety by
- * construction rather than by our own fsync protocol. The map is an index
+ * The explicit chunk map, stored in a database (docs/mds.md, "MDS
+ * server, v1") whose every committed transaction is durable — crash-safety
+ * by construction rather than by our own fsync protocol. The map is an index
  * over the OST-side truth and can be rebuilt by scan; single instance,
  * no replication in v1.
  *
@@ -127,10 +129,10 @@ private:
         bool reported_disagreement = false;
     };
 
-    // Serializes every public call: one SQLite connection shared by every
+    // Serializes every public call: one database connection shared by every
     // worker thread, the topology and the registrations.
     std::recursive_mutex _mutex;
-    sqlite3* _db;
+    std::unique_ptr<db::Database> _db;
     Opts _opts;
     // How long a registration keeps an OST available: three heartbeats.
     Clock::duration _lease;
@@ -195,8 +197,13 @@ public:
         const RawstdUUID& account = {}
     );
 
-    /* `opts` gives the heartbeat interval the OSTs are held to. */
-    explicit ObjectStore(const std::string& path, const Opts& opts = Opts());
+    /*
+     * Opens the store in the database the connection string `uri` names
+     * (db::Database::open(): `sqlite:///path/to/file`), creating it if
+     * missing; EINVAL for a connection string it does not take. `opts`
+     * gives the heartbeat interval the OSTs are held to.
+     */
+    explicit ObjectStore(const std::string& uri, const Opts& opts = Opts());
     ObjectStore(const ObjectStore&) = delete;
     ObjectStore(ObjectStore&&) = delete;
     ~ObjectStore();

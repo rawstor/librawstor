@@ -27,10 +27,12 @@ public:
     TmpDir& operator=(const TmpDir&) = delete;
     TmpDir& operator=(TmpDir&&) = delete;
 
-    // A fresh SQLite path under this directory -- ObjectStore's own
-    // constructor creates the file itself (SQLITE_OPEN_CREATE), so this
-    // just names where.
-    std::string db_path() const;
+    // The connection string of a fresh SQLite file under this directory --
+    // ObjectStore's own constructor creates the file itself, so this just
+    // names where.
+    std::string db_uri() const;
+
+    std::filesystem::path path() const { return _path; }
 };
 
 } // namespace tests
