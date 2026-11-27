@@ -120,10 +120,12 @@ int Server::bind_listen(const std::string& addr, unsigned int port) {
 
 Server::Server(
     unsigned int queue_size, int listen_fd, const char* location, int wake_fd,
-    std::shared_ptr<FreezeGate> gate, std::shared_ptr<MetaCache> meta_cache
+    std::shared_ptr<FreezeGate> gate, std::shared_ptr<MetaCache> meta_cache,
+    std::function<void()> members_changed
 ) :
     _gate(gate ? std::move(gate) : std::make_shared<FreezeGate>()),
     _meta_cache(std::move(meta_cache)),
+    _members_changed(std::move(members_changed)),
     _queue(nullptr),
     _fd(listen_fd),
     _wake_fd(wake_fd),

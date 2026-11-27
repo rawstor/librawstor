@@ -2,47 +2,12 @@
 
 #include <rawstd/gpp.hpp>
 #include <rawstd/logging.hpp>
-#include <rawstd/uri.hpp>
 
-#include <fstream>
-#include <sstream>
 #include <string>
 #include <unordered_set>
 
 #include <cerrno>
 #include <cstring>
-
-namespace {
-
-// Splits a root-first path, "[[[dc/]row/]rack/]server", into `out`'s
-// dc, row, rack, server slots. Only the server is required; the path may
-// start at any level, and a level left out stays empty, so every entry
-// that leaves it out shares that one implicit domain.
-void split_path(const std::string& s, std::string (&out)[4]) {
-    std::string parts[4];
-    size_t n = 0;
-    size_t begin = 0;
-    while (true) {
-        size_t end = s.find('/', begin);
-        std::string part = s.substr(
-            begin, end == std::string::npos ? std::string::npos : end - begin
-        );
-        if (part.empty() || n == 4) {
-            rawstd_error("Malformed topology path: %s\n", s.c_str());
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-        parts[n++] = part;
-        if (end == std::string::npos) {
-            break;
-        }
-        begin = end + 1;
-    }
-    for (size_t i = 0; i < 4; ++i) {
-        out[i] = i < 4 - n ? std::string() : parts[i - (4 - n)];
-    }
-}
-
-} // namespace
 
 namespace rawstor {
 namespace mdsserver {
@@ -118,114 +83,6 @@ Topology Topology::select(const std::vector<RawstdUUID>& ids) const {
         }
     }
     return result;
-}
-
-Topology Topology::parse(std::istream& in) {
-    Topology ret;
-
-    std::string line;
-    size_t lineno = 0;
-    while (std::getline(in, line)) {
-        ++lineno;
-
-        size_t comment = line.find('#');
-        if (comment != std::string::npos) {
-            line.resize(comment);
-        }
-
-        std::istringstream tokens(line);
-        std::string id;
-        if (!(tokens >> id)) {
-            continue; /* blank */
-        }
-
-        std::string location, role, path;
-        uint64_t weight = 0;
-        if (!(tokens >> location >> weight >> role >> path)) {
-            rawstd_error("Topology line %zu: malformed entry\n", lineno);
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-
-        std::string extra;
-        if (tokens >> extra) {
-            rawstd_error(
-                "Topology line %zu: trailing tokens: %s\n", lineno,
-                extra.c_str()
-            );
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-
-        TopologyOST ost{};
-        int res = rawstd_uuid_from_string(&ost.id, id.c_str());
-        if (res < 0) {
-            rawstd_error(
-                "Topology line %zu: malformed ost id: %s\n", lineno, id.c_str()
-            );
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-        // One URI per entry: an entry is one placement slot, i.e. one
-        // member with one vote in the mirror quorum (docs/mds.md).
-        if (rawstd::URI::uriv(location.c_str()).size() != 1) {
-            rawstd_error(
-                "Topology line %zu: expected a single location URI: %s\n",
-                lineno, location.c_str()
-            );
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-        if (rawstd::URI(location).scheme() == "mds") {
-            rawstd_error(
-                "Topology line %zu: expected a physical location URI\n", lineno
-            );
-            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-        }
-        ost.roles.clear();
-        size_t begin = 0;
-        while (true) {
-            const size_t end = role.find(',', begin);
-            const auto name = role.substr(
-                begin, end == std::string::npos ? end : end - begin
-            );
-            Role value;
-            if (name == "data") {
-                value = Role::Data;
-            } else if (name == "witness") {
-                value = Role::Witness;
-            } else {
-                rawstd_error(
-                    "Topology line %zu: unknown role: %s\n", lineno,
-                    name.c_str()
-                );
-                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-            }
-            if (!ost.roles.insert(value).second) {
-                rawstd_error(
-                    "Topology line %zu: duplicate role: %s\n", lineno,
-                    name.c_str()
-                );
-                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
-            }
-            if (end == std::string::npos) {
-                break;
-            }
-            begin = end + 1;
-        }
-        ost.location = location;
-        ost.weight = weight;
-        split_path(path, ost.path);
-
-        ret.add(ost);
-    }
-
-    return ret;
-}
-
-Topology Topology::parse_file(const std::string& path) {
-    std::ifstream in(path);
-    if (!in.is_open()) {
-        rawstd_error("Failed to open topology config: %s\n", path.c_str());
-        RAWSTD_THROW_SYSTEM_ERROR(ENOENT);
-    }
-    return parse(in);
 }
 
 void Topology::add(const TopologyOST& ost) {

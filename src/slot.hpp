@@ -240,6 +240,9 @@ public:
         RawstdUUID& token
     );
 
+    rawstd::Task<OstRegistered>
+    register_ost(const OstRegistration& registration);
+
     // Records `owner` as the owner of the copy `id`/`offset`, under the copy's
     // record lock like every other rewrite of its metadata.
     rawstd::Task<void>

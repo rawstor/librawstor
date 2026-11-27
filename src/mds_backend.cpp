@@ -570,6 +570,65 @@ rawstd::Task<void> Backend::list_locations(
     return _wire_list_locations(limit, locations, token);
 }
 
+// The payload, then the bytes of the location and of the domain.
+rawstd::Task<OstRegistered>
+Backend::register_ost(const OstRegistration& registration) {
+    if (registration.location.size() > UINT16_MAX ||
+        registration.domain.size() > UINT16_MAX) {
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    RawstorFrameOstRegister request{};
+    request.head = {
+        .magic = RAWSTOR_MAGIC, .cmd = RAWSTOR_CMD_OST_REGISTER, .cid = 0
+    };
+    RawstorFrameOstRegisterPayload& payload = request.payload;
+    memcpy(payload.ost_id, registration.id.bytes, sizeof(payload.ost_id));
+    payload.weight = registration.weight;
+    if (registration.sampled) {
+        payload.flags |= RAWSTOR_OST_SAMPLED;
+        payload.used = registration.info.used;
+        payload.total = registration.info.total;
+        payload.members = registration.members.count;
+        payload.members_hash = registration.members.hash;
+    }
+    if (registration.leaving) {
+        payload.flags |= RAWSTOR_OST_LEAVING;
+    }
+    payload.location_len = static_cast<uint16_t>(registration.location.size());
+    payload.domain_len = static_cast<uint16_t>(registration.domain.size());
+
+    std::vector<unsigned char> frame(sizeof(request));
+    memcpy(frame.data(), &request, sizeof(request));
+    frame.insert(
+        frame.end(), registration.location.begin(), registration.location.end()
+    );
+    frame.insert(
+        frame.end(), registration.domain.begin(), registration.domain.end()
+    );
+
+    std::vector<unsigned char> response;
+    try {
+        response = co_await exchange(
+            frame.data(), frame.size(), RAWSTOR_CMD_OST_REGISTER,
+            sizeof(RawstorFrameOstRegisteredPayload)
+        );
+    } catch (const std::system_error&) {
+        throw;
+    } catch (...) {
+        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    }
+    RawstorFrameOstRegisteredPayload registered;
+    if (response.size() != sizeof(registered)) {
+        RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
+    }
+    memcpy(&registered, response.data(), sizeof(registered));
+    co_return OstRegistered{
+        .heartbeat_interval = registered.heartbeat_interval,
+        .info_interval = registered.info_interval,
+        .info_refresh_delay = registered.info_refresh_delay,
+    };
+}
+
 rawstd::Task<void> Backend::create_account(
     const RawstdUUID& idempotency_key, const RawstdUUID& account
 ) {

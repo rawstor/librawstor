@@ -4,7 +4,6 @@
 #include <rawstd/uuid.h>
 
 #include <cstdint>
-#include <iosfwd>
 #include <set>
 #include <string>
 #include <vector>
@@ -50,31 +49,19 @@ struct TopologyOST {
 };
 
 /*
- * The static topology config, v1 of the MGS role of docs/mds.md.
- * Line-based:
- *
- *   # <ost-uuid> <location> <weight> <role> [[[<dc>/]<row>/]<rack>/]<server>
- *   00000000-0000-7000-8000-000000000001 ost://h:7 1 data,witness h
- *
- * The path goes from the root down to the server the OST runs on; only
- * the server is required and the leading levels may be left out: a level
- * an entry leaves out is one implicit domain shared by every entry that
- * leaves it out too.
- * <location> is a single physical location URI. MDS-hosted witnesses use
- * ost:// at the MDS endpoint. <role> is data, witness, or both separated
- * by a comma in either order; it controls eligibility independently of URI.
- * Local backends (file://, lvm://, zfs://) only make sense on a single host.
- * All five columns are required. '#' comments and blank lines are skipped.
+ * The OSTs mds:// objects are placed on (docs/mds.md, "OST registration"):
+ * every OST that has registered with the MDS, a DATA and witness candidate
+ * each, and the witness the MDS hosts itself. An entry's path goes from the
+ * root down to the server it runs on; a level it leaves out is one implicit
+ * domain shared by every entry that leaves it out too.
  */
 class Topology final {
 private:
     std::vector<TopologyOST> _osts;
 
 public:
-    static Topology parse(std::istream& in);
-    static Topology parse_file(const std::string& path);
-
-    /* Throws EEXIST on a duplicate ost id. */
+    /* Throws EEXIST on a duplicate ost id, EINVAL for an entry without a
+     * role. */
     void add(const TopologyOST& ost);
 
     /* Retains only the given OST ids, preserving topology order. */

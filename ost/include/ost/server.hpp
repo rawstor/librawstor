@@ -8,6 +8,7 @@
 
 #include <rawstor/rawio.h>
 
+#include <functional>
 #include <memory>
 #include <set>
 #include <string>
@@ -34,6 +35,10 @@ private:
     // The records of the store, shared by every worker's Server and given
     // to every Slot they create, or null for none (see MetaCache).
     std::shared_ptr<MetaCache> _meta_cache;
+
+    // Called once a member of the store was created or removed, or a
+    // version of one; empty for none.
+    std::function<void()> _members_changed;
 
     unsigned int _live_clients = 0;
     unsigned int _departures = 0;
@@ -88,11 +93,15 @@ public:
     // `meta_cache` lets the Slots of this Server answer a record from
     // memory: Servers that serve the same storage must share one, and only
     // a process that is the sole writer of that storage may pass one --
-    // see MetaCache. Null reads the storage every time.
+    // see MetaCache. Null reads the storage every time. `members_changed`,
+    // if any, is called from this Server's thread after every request that
+    // creates or removes a member or a version (a Registrar's, to sample the
+    // store again).
     Server(
         unsigned int queue_size, int listen_fd, const char* location,
         int wake_fd = -1, std::shared_ptr<FreezeGate> gate = nullptr,
-        std::shared_ptr<MetaCache> meta_cache = nullptr
+        std::shared_ptr<MetaCache> meta_cache = nullptr,
+        std::function<void()> members_changed = {}
     );
     Server(const Server&) = delete;
     Server(Server&&) = delete;
@@ -116,6 +125,12 @@ public:
     // Every Slot this Server creates is created with it.
     inline const std::shared_ptr<MetaCache>& meta_cache() const noexcept {
         return _meta_cache;
+    }
+
+    inline void members_changed() const {
+        if (_members_changed) {
+            _members_changed();
+        }
     }
 
     // Drops `fd`'s Client from this Server (if it still has one) and, if

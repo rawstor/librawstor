@@ -87,6 +87,10 @@ Backend::list_locations(unsigned int, std::vector<std::string>&, RawstdUUID&) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
 }
 
+rawstd::Task<OstRegistered> Backend::register_ost(const OstRegistration&) {
+    RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);
+}
+
 rawstd::Task<void>
 Backend::create_account(const RawstdUUID&, const RawstdUUID&) {
     RAWSTD_THROW_SYSTEM_ERROR(ENOTSUP);

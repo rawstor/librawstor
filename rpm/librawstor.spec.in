@@ -192,6 +192,5 @@ fi
 %files -n rawstor-mds
 %{_bindir}/rawstor-mds
 %{_unitdir}/rawstor-mds@.service
-%doc mds/topology.conf
 %dir %{_sysconfdir}/rawstor
 %dir %{_sysconfdir}/rawstor/mds
