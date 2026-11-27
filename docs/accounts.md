@@ -288,8 +288,10 @@ namespace interference and availability.
   convention backed by account-isolated physical storage. The current global
   namespace claim cannot be enforced for first allocation from an account-wide
   certificate alone.
-- Resource quotas and limits on legitimate direct allocations are separate work;
-  solving them does not establish the rightful owner of a UUID.
+- Account [quotas](quotas.md) live on the MDS and do not see direct OST
+  allocations; an OST has no limits of its own. MDS-issued, quota-charged
+  allocation grants ([Quotas](quotas.md#direct-ost-allocation)) are a candidate
+  form of the ownership evidence below.
 
 ### Decisions and implementation work
 
@@ -300,7 +302,8 @@ namespace interference and availability.
    who establishes ownership, how an OST verifies it on first allocation, and
    how transfer and revocation update it without requiring MDS on every I/O.
    Neither option is selected or implemented yet.
-2. **Define the scope of local hardening.** An object-level owner record on an
+2. **Define the scope of local hardening.** Per-account OST usage reports
+   ([Quotas](quotas.md#direct-ost-allocation)) make squatting visible. An object-level owner record on an
    OST can prevent allocation of a foreign offset when that OST already knows
    the object. Document that this alone does not protect an OST that has never
    seen the UUID, and do not treat it as a complete global-namespace fix.
@@ -325,6 +328,9 @@ namespace interference and availability.
 - Provider operations select the intended account unambiguously; listing and
   reconstruction preserve ownership even if isolated namespaces reuse a UUID.
 - Direct OST I/O continues with valid certificates while MDS is unavailable.
+- Allocations that bypass the MDS are visible per account on every OST and,
+  with quota-charged grants, bounded by the account's quota (see
+  [Quotas](quotas.md#direct-ost-allocation)).
 - Document residual capacity-exhaustion risks separately from UUID ownership;
   keep this issue open until the chosen namespace protection is implemented.
 
@@ -485,6 +491,6 @@ records. `Location.accounts()`, `create_account()` and `remove_account()` raise
 ## Not here
 
 TLS authentication, certificate roles and object restrictions enforce
-account access; see [Security](security.md). Quotas and per-account resource
-limits are separate work. An insecure deployment has no authenticated account
+account access; see [Security](security.md). Per-account quotas are designed
+in [Quotas](quotas.md); rate limits and bandwidth are separate work. An insecure deployment has no authenticated account
 boundary.

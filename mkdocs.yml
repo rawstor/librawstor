@@ -46,6 +46,7 @@ nav:
       - Protocol: protocol.md
       - MDS design: mds.md
       - Accounts: accounts.md
+      - Quotas: quotas.md
       - Mirroring: mirroring.md
       - Migration: migration.md
       - Security: security.md
