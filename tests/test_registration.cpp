@@ -49,7 +49,7 @@ public:
     Mds(unsigned int port, const rawstor::mdsserver::Opts& opts) :
         _store(
             std::make_unique<ObjectStore>(
-                (_dir.path() / "mds.db").string(), opts
+                "sqlite://" + (_dir.path() / "mds.db").string(), opts
             )
         ),
         _listen_fd(rawstor::mdsserver::Server::bind_listen("127.0.0.1", port)),

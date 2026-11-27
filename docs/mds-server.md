@@ -17,7 +17,7 @@ OSTs that have registered within the last three intervals.
 
 ## Usage
 
-`rawstor-mds [options] -b ADDR -d DBPATH`
+`rawstor-mds [options] -b ADDR -d URI`
 
 ## Options
 
@@ -26,7 +26,7 @@ OSTs that have registered within the last three intervals.
 | `-h, --help` | Show help message and exit. |
 | `--insecure` | Run without TLS: plaintext, and no peer is authenticated. Without it the process needs [TLS settings](configuration.md#tls) and refuses to start without them. |
 | `-b, --bind ADDR` | Bind address in `<ip>[:<port>]` format (e.g., `127.0.0.1:7776`); the port defaults to 7776. |
-| `-d, --db PATH` | SQLite database file holding the chunk map and the topology (created if missing). |
+| `-d, --db URI` | Connection string of the database holding the chunk map and the topology, created if missing; its scheme names the database. Only SQLite is supported: `sqlite:///path/to/file`. |
 | `--queue-size SIZE` | RawIO queue (`io_uring`) depth. Default: `4096`. |
 | `-w, --workers N` | Number of worker threads, each with its own client connections and I/O queue, all accepting on the same listening socket and sharing one database (default: `4`). |
 | `-r, --reconstruct` | Rebuild the chunk map from a LIST+META scan of the OSTs -- for recovering from a lost or corrupted database. The MDS waits a lease (three heartbeat intervals) for the OSTs to register and scans the ones that have, answering only registrations meanwhile; an OST of its topology that did not register is logged (see [Reconstruct / DR](mds.md#reconstruct--dr)). |
@@ -39,7 +39,7 @@ OSTs that have registered within the last three intervals.
 
 Serve two OSTs, which register themselves:
 ```bash
-rawstor-mds --insecure -b 0.0.0.0:7776 -d /var/lib/rawstor/mds/mds.db
+rawstor-mds --insecure -b 0.0.0.0:7776 -d sqlite:///var/lib/rawstor/mds/mds.db
 # on host1 and host2:
 rawstor-ost --insecure -b 0.0.0.0:7777 --id ${OST_ID} --mds mds://mds:7776 \
     --advertise ost://$(hostname):7777 --domain-path dc1/row1/rack1/$(hostname) \
@@ -72,7 +72,7 @@ The config is an environment file (`KEY=VALUE` lines):
 | Key | Default | Description |
 |-----|---------|-------------|
 | `BIND_ADDR` | — (required) | `<ip>:<port>` to listen on, unique per host. |
-| `DB_PATH` | `/var/lib/rawstor/mds/<uuid>/mds.db` | Database; its directory must be writable by `rawstor`. |
+| `DB_URI` | `sqlite:///var/lib/rawstor/mds/<uuid>/mds.db` | `--db`; the directory of an SQLite file must be writable by `rawstor`. |
 | `QUEUE_SIZE` | `4096` | `--queue-size`. |
 | `WORKERS` | `4` | `--workers`. |
 | `ADVERTISE`, `DOMAIN_PATH`, `WEIGHT` | empty, empty, `100` | `--advertise`, `--domain-path`, `--weight`: the witness the instance hosts; none while `ADVERTISE` is empty. |

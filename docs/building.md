@@ -41,7 +41,7 @@ mkdir -p ${MDS_DATADIR}
 # The OSTs register themselves (rawstor-ost --mds above).
 rawstor-mds \
     --bind ${MDS_HOST} \
-    --db ${MDS_DATADIR}/mds.db
+    --db sqlite://${MDS_DATADIR}/mds.db
 
 ##
 # Client

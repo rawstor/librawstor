@@ -2,6 +2,7 @@
 #include <mds/reconciler.hpp>
 #include <mds/server.hpp>
 
+#include "database.hpp"
 #include "ost_registration.hpp"
 
 #include "config.h"
@@ -115,7 +116,9 @@ void usage() {
         << std::endl
         << "                        (the port defaults to " << DEFAULT_PORT
         << ")." << std::endl
-        << "  -d, --db PATH         SQLite database file (created if missing)"
+        << "  -d, --db URI          Database connection string, created if"
+        << std::endl
+        << "                        missing: sqlite:///path/to/file"
         << std::endl;
 }
 
@@ -409,7 +412,7 @@ RawstdUUID local_witness_id(const std::string& id) {
 // bind_listen() opens here -- every worker registers its own
 // accept_multishot on it and the kernel wakes exactly one of them per
 // incoming connection, same as rawstor-ost -- and the one ObjectStore
-// (one SQLite connection, every call serialized by the store itself).
+// (one database connection, every call serialized by the store itself).
 //
 // SIGINT/SIGTERM/SIGHUP/SIGUSR1 are blocked before any worker starts (they
 // inherit the mask) and taken synchronously by this thread with
@@ -419,7 +422,7 @@ RawstdUUID local_witness_id(const std::string& id) {
 // pipe (Server::_wake_task()).
 void mds(
     unsigned int queue_size, unsigned int workers, const std::string& addr,
-    unsigned int port, const std::string& db_path, bool do_reconstruct,
+    unsigned int port, const std::string& db_uri, bool do_reconstruct,
     const LocalWitness& witness, const rawstor::mdsserver::Opts& opts
 ) {
     sigset_t signals;
@@ -435,7 +438,7 @@ void mds(
         );
     }
 
-    rawstor::mdsserver::ObjectStore store(db_path, opts);
+    rawstor::mdsserver::ObjectStore store(db_uri, opts);
     if (!witness.location.empty()) {
         rawstor::mdsserver::TopologyOST ost{};
         ost.id = local_witness_id(witness.id);
@@ -752,6 +755,16 @@ int main(int argc, char** argv) {
     }
 
     rawstd_info("Rawstor MDS server %s\n", PACKAGE_VERSION);
+
+    // validate() has logged why, without a password the string may hold; the
+    // argument itself is not printed for the same reason.
+    try {
+        rawstor::mdsserver::db::Database::validate(db_arg);
+    } catch (const std::system_error&) {
+        std::cerr << "Invalid database connection string" << std::endl;
+        rawstor_terminate();
+        return EX_USAGE;
+    }
 
     // Read before opening the database or the listening socket, so a
     // configuration error fails fast. from_env() throws only on invalid
