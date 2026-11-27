@@ -29,8 +29,7 @@ OSTs that have registered within the last three intervals.
 | `-d, --db PATH` | SQLite database file holding the chunk map and the topology (created if missing). |
 | `--queue-size SIZE` | RawIO queue (`io_uring`) depth. Default: `4096`. |
 | `-w, --workers N` | Number of worker threads, each with its own client connections and I/O queue, all accepting on the same listening socket and sharing one database (default: `4`). |
-| `-r, --reconstruct` | Rebuild the chunk map from a LIST+META scan of the OSTs -- for recovering from a lost or corrupted database. The MDS waits for every OST of its topology to register, answering only registrations meanwhile (see [Reconstruct / DR](mds.md#reconstruct--dr)). |
-| `--expect N` | With `--reconstruct`, for a database that is gone: wait for N OSTs to register instead. |
+| `-r, --reconstruct` | Rebuild the chunk map from a LIST+META scan of the OSTs -- for recovering from a lost or corrupted database. The MDS waits a lease (three heartbeat intervals) for the OSTs to register, and for every OST of its topology if the database still has one, answering only registrations meanwhile (see [Reconstruct / DR](mds.md#reconstruct--dr)). |
 | `--advertise LOCATION` | Host a witness: the location the clients reach it at, `ost://<this host>:<port>` (see [Automatic witness placement](mds.md#automatic-witness-placement)). Empty or absent: no witness. |
 | `--domain PATH` | The witness's failure domain, `[[[dc/]row/]rack/]server`; required with `--advertise`. |
 | `--weight N` | The witness's share of new witnesses (default: `100`). |

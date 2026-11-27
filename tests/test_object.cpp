@@ -389,14 +389,12 @@ TEST(ObjectListTest, lists_mds_objects) {
 }
 
 // The locations of an MDS's topology, a page at a time: the environment's OST
-// and three more entries, in the order of their topology ids, the password of
-// a location's user information left out. A location that is not an MDS has no
-// topology.
+// and three more entries, in the order of their topology ids. A location that
+// is not an MDS has no topology.
 TEST(ObjectListTest, lists_the_locations_of_an_mds) {
     std::vector<rawstor::mdsserver::TopologyOST> extra;
     const std::pair<const char*, const char*> entries[] = {
-        {"018f4e2a-0000-7000-8000-000000000004",
-         "ost://user:secret@127.0.0.1:9004"},
+        {"018f4e2a-0000-7000-8000-000000000004", "ost://127.0.0.1:9004"},
         {"018f4e2a-0000-7000-8000-000000000003", "ost://127.0.0.1:9003"},
         {"018f4e2a-0000-7000-8000-000000000002", "ost://127.0.0.1:9002"},
     };
@@ -443,7 +441,7 @@ TEST(ObjectListTest, lists_the_locations_of_an_mds) {
         "ost://127.0.0.1:8941",
         "ost://127.0.0.1:9002",
         "ost://127.0.0.1:9003",
-        "ost://user@127.0.0.1:9004",
+        "ost://127.0.0.1:9004",
     };
     for (unsigned int limit : {0u, 1u, 2u, 3u}) {
         std::vector<std::string> found;
@@ -457,8 +455,8 @@ TEST(ObjectListTest, lists_the_locations_of_an_mds) {
     size_t pages = 0;
     EXPECT_EQ(locations_of("file:///tmp", 0, &found, &pages), -ENOTSUP);
 
-    // The password is not on the wire: a client that does not go through
-    // Location, as the library does, is told the same.
+    // A client that does not go through Location, as the library does, is
+    // told the same.
     std::shared_ptr<rawstor::Backend> backend =
         run(*queue,
             rawstor::Backend::create(*queue, rawstd::URI(env.location())));
@@ -466,9 +464,6 @@ TEST(ObjectListTest, lists_the_locations_of_an_mds) {
     RawstdUUID token{};
     run(*queue, backend->list_locations(0, raw, token));
     EXPECT_EQ(raw, expected);
-    for (const std::string& location : raw) {
-        EXPECT_EQ(location.find("secret"), std::string::npos) << location;
-    }
 }
 
 // A listing page that fails leaves the token where it was: Slot repeats a

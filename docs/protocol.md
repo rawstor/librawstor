@@ -990,7 +990,8 @@ is null-terminated. `weight` is the OST's share of new chunks. With
 them) and `members`/`members_hash` (the [member digest](mds.md#space-and-the-member-digest))
 are the OST's latest sample; without it they are 0 and the MDS keeps the sample
 it has. `OST_LEAVING` (bit 1) says the OST is stopping: nothing more is placed on
-it until it registers again. `-EINVAL` for a malformed location or domain,
+it until it registers again. `-EINVAL` for a malformed location or domain, or a location with user
+information,
 `-EEXIST` for an id that is available at another location.
 
 ```text

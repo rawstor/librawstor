@@ -6,11 +6,13 @@
 
 #include "config.h"
 #include "opts.h"
+#include "tls.hpp"
 #include <rawtls/ca.hpp>
 
 #include <rawstd/exitcode.h>
 #include <rawstd/logging.hpp>
 #include <rawstd/pipe.hpp>
+#include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
 #include <rawstor/location.h>
@@ -24,7 +26,6 @@
 #include <chrono>
 #include <iostream>
 #include <sstream>
-#include <stdexcept>
 #include <system_error>
 #include <thread>
 #include <utility>
@@ -65,7 +66,6 @@ constexpr int opt_id = 1001;
 constexpr int opt_advertise = 1002;
 constexpr int opt_weight = 1003;
 constexpr int opt_domain = 1004;
-constexpr int opt_expect = 1005;
 
 constexpr uint64_t default_weight = 100;
 
@@ -82,14 +82,11 @@ void usage() {
         << DEFAULT_QUEUE_SIZE << ")" << std::endl
         << "  -r, --reconstruct     Rebuild the map from a LIST+META scan"
         << std::endl
-        << "                        of the OSTs once every OST of the"
+        << "                        of the OSTs registered once a lease has"
         << std::endl
-        << "                        topology has registered (docs/mds.md)"
+        << "                        passed and every OST of the topology has"
         << std::endl
-        << "  --expect N            With --reconstruct: once N OSTs have"
-        << std::endl
-        << "                        registered, for a database that is gone"
-        << std::endl
+        << "                        (docs/mds.md)" << std::endl
         << "  --insecure            "
            "Run without TLS: plaintext, and no peer is authenticated"
         << std::endl
@@ -189,7 +186,7 @@ void scan_ost(
             rawstor_string_list_delete(targets);
             throw std::system_error(
                 static_cast<int>(-r), std::generic_category(),
-                "LIST failed for " + location
+                "LIST failed for " + rawstor::printable_location(location)
             );
         }
 
@@ -277,19 +274,20 @@ void scan_ost(
 }
 
 // rawstor-mds --reconstruct (docs/mds.md, "Reconstruct / DR"): waits for the
-// OSTs to register -- every OST the topology of the database still has, or,
-// with `expect`, that many, for a database that is gone -- then rebuilds the
-// whole map from a scan of the OSTs available. No partial scans, by
-// construction (see ObjectStore::reconstruct()'s own doc comment): an OST
-// awaited is waited for as long as it takes, and any OST that doesn't answer
+// OSTs to register -- a lease, three heartbeat intervals from the start, in
+// which every OST that runs does, and then for as long as an OST the topology
+// of the database still has is missing -- then rebuilds the whole map from a
+// scan of the OSTs available. No partial scans, by construction (see
+// ObjectStore::reconstruct()'s own doc comment): any OST that doesn't answer
 // LIST at all aborts the whole reconstruct rather than silently dropping its
 // live copies from the map (see scan_ost()'s own doc comment for the softer
 // per-object tolerance on META). `stop` gives the wait up.
 void reconstruct(
     rawstor::mdsserver::ObjectStore& store,
-    const std::vector<RawstdUUID>& awaited, unsigned int expect,
+    const std::vector<RawstdUUID>& awaited, std::chrono::milliseconds lease,
     const std::atomic<bool>& stop
 ) {
+    const auto settled = std::chrono::steady_clock::now() + lease;
     std::vector<rawstor::mdsserver::TopologyOST> osts;
     auto logged = std::chrono::steady_clock::time_point{};
     while (true) {
@@ -313,15 +311,16 @@ void reconstruct(
                 missing += std::string(nmissing++ == 0 ? "" : " ") + name;
             }
         }
-        if (expect != 0 ? osts.size() >= expect : nmissing == 0) {
+        auto now = std::chrono::steady_clock::now();
+        if (now >= settled && nmissing == 0) {
             break;
         }
-        auto now = std::chrono::steady_clock::now();
         if (now - logged >= std::chrono::seconds(10)) {
-            if (expect != 0) {
+            if (nmissing == 0) {
                 rawstd_info(
-                    "reconstruct: %zu of %u OST(s) registered, waiting\n",
-                    osts.size(), expect
+                    "reconstruct: %zu OST(s) registered, waiting for any "
+                    "other\n",
+                    osts.size()
                 );
             } else {
                 rawstd_info(
@@ -347,10 +346,15 @@ void reconstruct(
             RawstdUUIDString ost_id_string;
             rawstd_uuid_to_string(&ost.id, &ost_id_string);
             rawstd_info(
-                "reconstruct: scanning %s (%s)\n", location.c_str(),
-                ost_id_string
+                "reconstruct: scanning %s (%s)\n",
+                rawstor::printable_location(location).c_str(), ost_id_string
             );
 
+            // With TLS the server at the address must be that OST.
+            rawstd::URI uri(location);
+            if (uri.scheme() == "ost") {
+                rawstor::tls::expect_ost(uri.host(), ost.id);
+            }
             scan_ost(queue, location, ost.id, records);
         }
     } catch (...) {
@@ -367,32 +371,16 @@ void reconstruct(
     rawstd_info("reconstruct: done\n");
 }
 
-// A command line that cannot work with the database it names: EX_USAGE.
-class UsageError final : public std::runtime_error {
-public:
-    using std::runtime_error::runtime_error;
-};
-
-// What --reconstruct waits for without --expect: every OST the topology of
-// the database has. Witness-only candidates contain no recoverable DATA or
-// CoW versions.
-std::vector<RawstdUUID>
-awaited_osts(rawstor::mdsserver::ObjectStore& store, unsigned int expect) {
+// What --reconstruct waits for beyond its lease: every OST the topology of the
+// database has, none for a database that is gone. Witness-only candidates
+// contain no recoverable DATA or CoW versions.
+std::vector<RawstdUUID> awaited_osts(rawstor::mdsserver::ObjectStore& store) {
     std::vector<RawstdUUID> awaited;
-    if (expect != 0) {
-        return awaited;
-    }
     for (const rawstor::mdsserver::TopologyOST& ost :
          store.topology()->osts()) {
         if (!ost.witness_only()) {
             awaited.push_back(ost.id);
         }
-    }
-    if (awaited.empty()) {
-        throw UsageError(
-            "--reconstruct: the database has no OST to wait for; give their "
-            "number with --expect"
-        );
     }
     return awaited;
 }
@@ -440,8 +428,7 @@ RawstdUUID local_witness_id(const std::string& id) {
 void mds(
     unsigned int queue_size, unsigned int workers, const std::string& addr,
     unsigned int port, const std::string& db_path, bool do_reconstruct,
-    unsigned int expect, const LocalWitness& witness,
-    const rawstor::mdsserver::Opts& opts
+    const LocalWitness& witness, const rawstor::mdsserver::Opts& opts
 ) {
     sigset_t signals;
     sigemptyset(&signals);
@@ -466,7 +453,8 @@ void mds(
         rawstor::split_domain(witness.domain, ost.path);
         store.set_local_witness(ost);
         rawstd_info(
-            "Hosting a witness at %s in %s\n", witness.location.c_str(),
+            "Hosting a witness at %s in %s\n",
+            rawstor::printable_location(witness.location).c_str(),
             witness.domain.c_str()
         );
     }
@@ -474,7 +462,7 @@ void mds(
     // rebuilt from register with them.
     std::vector<RawstdUUID> awaited;
     if (do_reconstruct) {
-        awaited = awaited_osts(store, expect);
+        awaited = awaited_osts(store);
     }
     store.set_reconstructing(do_reconstruct);
 
@@ -513,10 +501,13 @@ void mds(
         }
     });
     if (do_reconstruct) {
+        const std::chrono::milliseconds lease(
+            uint64_t{opts.heartbeat_interval} * 3
+        );
         threads.emplace_back([&errors, &store, &stop, &awaited, workers,
-                              expect]() {
+                              lease]() {
             try {
-                reconstruct(store, awaited, expect, stop);
+                reconstruct(store, awaited, lease, stop);
                 store.set_reconstructing(false);
             } catch (...) {
                 if (!stop) {
@@ -608,7 +599,6 @@ int main(int argc, char** argv) {
         {"bind", required_argument, nullptr, 'b'},
         {"db", required_argument, nullptr, 'd'},
         {"domain", required_argument, nullptr, opt_domain},
-        {"expect", required_argument, nullptr, opt_expect},
         {"help", no_argument, nullptr, 'h'},
         {"id", required_argument, nullptr, opt_id},
         {"queue-size", required_argument, nullptr, 'q'},
@@ -625,7 +615,6 @@ int main(int argc, char** argv) {
     const char* db_arg = nullptr;
     const char* workers_arg = nullptr;
     const char* weight_arg = nullptr;
-    const char* expect_arg = nullptr;
     LocalWitness witness;
     bool do_reconstruct = false;
     bool insecure = false;
@@ -672,10 +661,6 @@ int main(int argc, char** argv) {
 
         case opt_weight:
             weight_arg = optarg;
-            break;
-
-        case opt_expect:
-            expect_arg = optarg;
             break;
 
         case 'v':
@@ -732,20 +717,6 @@ int main(int argc, char** argv) {
         std::cerr << "db argument required" << std::endl;
         return EX_USAGE;
     }
-    unsigned int expect = 0;
-    if (expect_arg != nullptr) {
-        std::istringstream iss(expect_arg);
-        if (iss.peek() < '0' || iss.peek() > '9' || !(iss >> expect) ||
-            !iss.eof() || expect == 0) {
-            std::cerr << "expect must be a positive integer" << std::endl;
-            return EX_USAGE;
-        }
-        if (!do_reconstruct) {
-            std::cerr << "--expect needs --reconstruct" << std::endl;
-            return EX_USAGE;
-        }
-    }
-
     if (weight_arg != nullptr && *weight_arg != '\0') {
         std::istringstream iss(weight_arg);
         if (iss.peek() < '0' || iss.peek() > '9' || !(iss >> witness.weight) ||
@@ -804,11 +775,8 @@ int main(int argc, char** argv) {
 
     int exit_code = EXIT_SUCCESS;
     try {
-        mds(queue_size, workers, name, port, db_arg, do_reconstruct, expect,
-            witness, opts);
-    } catch (const UsageError& e) {
-        std::cerr << e.what() << std::endl;
-        exit_code = EX_USAGE;
+        mds(queue_size, workers, name, port, db_arg, do_reconstruct, witness,
+            opts);
     } catch (const std::system_error& e) {
         std::cerr << e.what() << std::endl;
         exit_code = rawstd_exitcode_for_errno(e.code().value());

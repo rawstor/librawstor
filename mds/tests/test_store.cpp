@@ -372,7 +372,8 @@ TEST_F(ObjectStoreTest, a_malformed_registration_is_refused) {
     ObjectStore store(dir.db_path());
     TopologyOST ost = make_ost("00000000-0000-7000-8000-000000000001", "host1");
     for (const char* location :
-         {"mds://host1:7776", "ost://host1:7777,ost://host2:7777", ""}) {
+         {"mds://host1:7776", "ost://host1:7777,ost://host2:7777", "",
+          "ost://user:secret@host1:7777"}) {
         rawstor::OstRegistration registration = registration_of(ost);
         registration.location = location;
         EXPECT_EQ(errno_of([&] { store.register_ost(registration); }), EINVAL)
@@ -930,24 +931,6 @@ TEST_F(ObjectStoreTest, list_objects_on_a_location_counts_version_members) {
     // Once the version is gone nothing is held there.
     store.remove_version(make_id(), id, version_id);
     EXPECT_TRUE(list_on(store, other_location, 0).empty());
-}
-
-// A location is told by its URI as a URI prints: the password of its user
-// information is not part of it, in the topology or in the request.
-TEST_F(ObjectStoreTest, list_objects_on_a_location_ignores_a_password) {
-    TopologyOST ost = make_ost("00000000-0000-7000-8000-000000000001", "host1");
-    ost.location = "ost://user:secret@host1:7777";
-    ObjectStore store(dir.db_path());
-    store.register_ost(registration_of(ost));
-    store.create(
-        RawstdUUID{}, RawstdUUID{}, make_id(), chunk_size, chunk_size,
-        make_policy(1)
-    );
-    for (const char* location :
-         {"ost://user@host1:7777", "ost://user:secret@host1:7777",
-          "ost://user:another@host1:7777", "ost://user@host1:7777/"}) {
-        EXPECT_EQ(list_on(store, location, 0).size(), 1u) << location;
-    }
 }
 
 TEST_F(ObjectStoreTest, list_objects_on_an_unknown_location_is_enoent) {

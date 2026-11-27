@@ -2,6 +2,7 @@
 
 #include "opts.h"
 #include "slot.hpp"
+#include "tls.hpp"
 
 #include <rawio/awaitable.hpp>
 
@@ -112,10 +113,21 @@ rawstd::Task<void> Reconciler::_reconcile(TopologyOST ost) {
     RawstdUUIDString name;
     rawstd_uuid_to_string(&ost.id, &name);
     try {
+        // Only a server: an OST may register any location, and the MDS opens
+        // no local path, nor another OST's, on its word. With TLS the server
+        // at the address must be that OST.
+        rawstd::URI location(ost.location);
+        if (location.scheme() != "ost") {
+            rawstd_warning(
+                "OST %s is at %s, not an ost:// location: not listed\n", name,
+                printable_location(ost.location).c_str()
+            );
+            co_return;
+        }
+        tls::expect_ost(location.host(), ost.id);
         std::set<MemberKey> before = keys_of(_store.members_on(ost.id));
         std::set<MemberKey> listed;
-        std::unique_ptr<Slot> slot =
-            co_await Slot::create(*_queue, rawstd::URI(ost.location));
+        std::unique_ptr<Slot> slot = co_await Slot::create(*_queue, location);
         std::exception_ptr error;
         try {
             RawstdUUID token{};
@@ -159,8 +171,8 @@ rawstd::Task<void> Reconciler::_reconcile(TopologyOST ost) {
     } catch (const std::exception& e) {
         if (!cancelled(e)) {
             rawstd_warning(
-                "Listing OST %s at %s failed: %s\n", name, ost.location.c_str(),
-                e.what()
+                "Listing OST %s at %s failed: %s\n", name,
+                printable_location(ost.location).c_str(), e.what()
             );
         }
     }

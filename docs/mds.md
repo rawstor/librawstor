@@ -1134,8 +1134,8 @@ witness tables being the reason `synchronous=FULL` is non-negotiable.
 
 ```
 rebuild the map:
-  wait for the OSTs to register: every OST of the topology table, or
-    --expect N of them for a database that is gone
+  wait for the OSTs to register: a lease (three heartbeat intervals), and
+    every OST of the topology table, if the database still has one
   for each OST registered: LIST -> physical ids, then per id: META -> chunk_meta
   drop member_role = WITNESS records (metadata-only, not slots)
   group by (id, version): nil version -> live chunk_map,
@@ -1146,7 +1146,7 @@ rebuild the map:
 
 ```mermaid
 flowchart TB
-    T[/"OSTs registered:<br/>the topology table's, or --expect N"/] --> Scan
+    T[/"OSTs registered within a lease,<br/>and the topology table's"/] --> Scan
     subgraph Scan ["for each OST"]
         direction LR
         L["LIST: physical ids"] --> Me["META per id: chunk_meta"]
@@ -1176,12 +1176,13 @@ of normal opens/closes.
 - **Wait for the OSTs, then scan.** The MDS listens from the start, so the
   OSTs can register, but answers every other request with `-EAGAIN` until the
   map is rebuilt (witness records are not part of the map and stay served).
-  It waits for every OST the topology table has — a database whose map is
-  corrupt still has it — and logs the ones it is waiting for every ten
-  seconds. A database that is gone has no table: `--expect N` waits for N OSTs
-  to register instead, and `--reconstruct` without it refuses to start
-  (`EX_USAGE`). An OST that is really gone, but still in the table, is waited
-  for: `--expect` with the number of OSTs that are left is the operator's way
+  It waits one lease, three heartbeat intervals, in which every OST that runs
+  registers (an OST gives each registration one interval, so it is back within
+  two of the MDS), and then for every OST the topology table has — a database
+  whose map is corrupt still has it — logging the ones it is waiting for every
+  ten seconds. A database that is gone has no table: the OSTs registered
+  within the lease are the ones scanned. An OST that is really gone, but still
+  in the table, is waited for; starting from no database is the operator's way
   out, an explicit decision, not a timeout.
 - **No partial scans, by construction:** every OST scanned must answer
   `LIST` or the reconstruct aborts outright, and the MDS exits. A half scan
@@ -1317,7 +1318,9 @@ comparison, so a heartbeat costs it nothing. A disagreement is reported only
 once it has lasted three heartbeat intervals: between a create's reply and the
 client creating the chunks, the map places members the OST does not have yet.
 Then the MDS logs it (`OST ... disagrees with the map: ...`), lists the OST
-with `LIST`, once, and logs the members it holds that the map does not place on
+with `LIST`, once -- an `ost://` location only, and with TLS only the server
+there with that OST's certificate: the MDS opens no local path, nor another
+OST, on an OST's word -- and logs the members it holds that the map does not place on
 it -- leftovers of a remove made while it was away, for one -- and the ones the
 map places there that it lacks, up to eight of each. A member created or
 removed during the listing is not counted either way: the map is read before

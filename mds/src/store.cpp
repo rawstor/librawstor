@@ -514,12 +514,15 @@ void check_location(const std::string& location) {
         valid = !location.empty() &&
                 rawstd::URI::uriv(location.c_str()).size() == 1 &&
                 !rawstd::URI(location).scheme().empty() &&
-                rawstd::URI(location).scheme() != "mds";
+                rawstd::URI(location).scheme() != "mds" &&
+                rawstd::URI(location).userinfo().empty();
     } catch (const std::system_error&) {
     }
     if (!valid) {
         rawstd_error(
-            "Expected a single physical location: %s\n", location.c_str()
+            "Expected a single physical location without user "
+            "information: %s\n",
+            rawstor::printable_location(location).c_str()
         );
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
@@ -1270,21 +1273,23 @@ void ObjectStore::register_ost(const OstRegistration& registration) {
     if (known && location != ost.location && _alive(ost.id, now)) {
         rawstd_error(
             "OST %s registered at %s while it is registered at %s\n", name,
-            ost.location.c_str(), location.c_str()
+            printable_location(ost.location).c_str(),
+            printable_location(location).c_str()
         );
         RAWSTD_THROW_SYSTEM_ERROR(EEXIST);
     }
 
     if (!known) {
         rawstd_info(
-            "OST %s registered at %s in %s\n", name, ost.location.c_str(),
-            domain.c_str()
+            "OST %s registered at %s in %s\n", name,
+            printable_location(ost.location).c_str(), domain.c_str()
         );
     } else {
         if (location != ost.location) {
             rawstd_info(
-                "OST %s moved from %s to %s\n", name, location.c_str(),
-                ost.location.c_str()
+                "OST %s moved from %s to %s\n", name,
+                printable_location(location).c_str(),
+                printable_location(ost.location).c_str()
             );
         }
         // A domain or weight is the OST's own setting. The chunks placed
