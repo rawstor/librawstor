@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `rawstor-mds --advertise`, `--domain` and `--weight` enter the witness the MDS hosts in its topology.
-- `rawstor-ost --mds` registers the OST with the MDS of its cluster (`--id`, `--advertise`, `--domain`, `--weight`; `MDS`, `ADVERTISE`, `DOMAIN`, `WEIGHT` of `rawstor-ost@<uuid>`), every heartbeat, with a sample of its store, and as leaving when it stops.
+- `rawstor-mds --advertise`, `--domain-path` and `--weight` enter the witness the MDS hosts in its topology.
+- `rawstor-ost --mds` registers the OST with the MDS of its cluster (`--id`, `--advertise`, `--domain-path`, `--weight`; `MDS`, `ADVERTISE`, `DOMAIN_PATH`, `WEIGHT` of `rawstor-ost@<uuid>`), every heartbeat, with a sample of its store, and as leaving when it stops.
 - The MDS compares the member digest each OST sends with its map and, when they disagree for three heartbeats, lists the OST and logs the members only one of them has.
 
 ### Changed

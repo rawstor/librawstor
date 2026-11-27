@@ -33,12 +33,12 @@ Environment=DB_PATH=/var/lib/rawstor/mds/%i/mds.db
 # rawstor-mds's own --queue-size/--workers (see its --help).
 Environment=QUEUE_SIZE=4096
 Environment=WORKERS=4
-# The witness this MDS hosts (rawstor-mds --advertise/--domain/--weight):
+# The witness this MDS hosts (rawstor-mds --advertise/--domain-path/--weight):
 # the location clients reach it at, ost://<this host>:<port of BIND_ADDR>,
 # and its failure domain, [[[dc/]row/]rack/]server. No ADVERTISE, no
 # witness.
 Environment=ADVERTISE=
-Environment=DOMAIN=
+Environment=DOMAIN_PATH=
 Environment=WEIGHT=100
 # What the MDS asks of the OSTs that register, and the librawstor tuning
 # knobs (see README.md's "Environment Variables" section for what each one
@@ -65,7 +65,7 @@ Environment=WEIGHT=100
 # Set in the configuration file below, e.g. EXTRA_ARGS="--insecure".
 Environment=EXTRA_ARGS=
 EnvironmentFile=/etc/rawstor/mds/%i.conf
-ExecStart=/usr/bin/rawstor-mds $EXTRA_ARGS --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --workers=${WORKERS} --db=${DB_PATH} --advertise=${ADVERTISE} --domain=${DOMAIN} --weight=${WEIGHT}
+ExecStart=/usr/bin/rawstor-mds $EXTRA_ARGS --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --workers=${WORKERS} --db=${DB_PATH} --advertise=${ADVERTISE} --domain-path=${DOMAIN_PATH} --weight=${WEIGHT}
 # Reads the TLS certificate, key and CAs again for the connections made
 # after it (SIGHUP), keeping every client connection.
 ExecReload=/bin/kill -HUP $MAINPID

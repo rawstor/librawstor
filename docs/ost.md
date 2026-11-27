@@ -23,7 +23,7 @@
 | `--mds LOCATION` | Register with the MDS of the cluster, `mds://host:port` ([Registration with an MDS](#registration-with-an-mds)). Empty or absent: no registration. |
 | `--id UUID` | The OST's id; required with `--mds`. With TLS it must be the id of the OST's certificate, or the OST does not start. |
 | `--advertise LOCATION` | The location the clients reach the store at, normally `ost://<this host>:<port>`; required with `--mds`. |
-| `--domain PATH` | The OST's failure domain, `[[[dc/]row/]rack/]server`; required with `--mds`. |
+| `--domain-path PATH` | The OST's failure domain, `[[[dc/]row/]rack/]server`; required with `--mds`. |
 | `--weight N` | The OST's share of new chunks, e.g. its capacity in GiB (default: `100`). |
 
 ## Examples
@@ -93,7 +93,7 @@ intervals of the MDS. The advertised location carries no user information.
 
 ```bash
 rawstor-ost -b 0.0.0.0:7777 --id ${OST_ID} --mds mds://mds1:7776 \
-    --advertise ost://host1:7777 --domain dc1/row1/rack1/host1 --weight 2000 \
+    --advertise ost://host1:7777 --domain-path dc1/row1/rack1/host1 --weight 2000 \
     file:///var/rawstor/data
 ```
 
@@ -124,7 +124,7 @@ The config is an environment file (`KEY=VALUE` lines):
 | `META_CACHE_TTL` | `60000` | `--meta-cache-ttl`. |
 | `MDS` | empty | `--mds`; no registration while empty. |
 | `ADVERTISE` | empty | `--advertise`. |
-| `DOMAIN` | empty | `--domain`. |
+| `DOMAIN_PATH` | empty | `--domain-path`. |
 | `WEIGHT` | `100` | `--weight`. |
 | `RAWSTOR_TLS_*` | | TLS settings, see [Configuration](configuration.md#tls). |
 | `RAWSTOR_OPTS_*` | | Tuning knobs, see [Configuration](configuration.md). |
@@ -152,7 +152,7 @@ tls() {
     printf 'RAWSTOR_TLS_TRUST_DOMAIN=cluster.example\nRAWSTOR_TLS_CERT=/etc/rawstor/tls/%s.crt\nRAWSTOR_TLS_KEY=/etc/rawstor/tls/%s.key\nRAWSTOR_TLS_CA=/etc/rawstor/tls/ca.crt\n' $1 $1
 }
 mds() {
-    printf 'MDS=mds://mds1:7776\nADVERTISE=ost://%s:%s\nDOMAIN=dc1/row1/rack1/%s\n' $(hostname) $1 $(hostname)
+    printf 'MDS=mds://mds1:7776\nADVERTISE=ost://%s:%s\nDOMAIN_PATH=dc1/row1/rack1/%s\n' $(hostname) $1 $(hostname)
 }
 (echo BIND_ADDR=0.0.0.0:7777; tls ${OST1}; mds 7777) | sudo tee /etc/rawstor/ost/${OST1}.conf
 (echo BIND_ADDR=0.0.0.0:7778; tls ${OST2}; mds 7778) | sudo tee /etc/rawstor/ost/${OST2}.conf

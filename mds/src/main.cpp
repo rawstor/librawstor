@@ -65,7 +65,7 @@ constexpr int opt_insecure = 1000;
 constexpr int opt_id = 1001;
 constexpr int opt_advertise = 1002;
 constexpr int opt_weight = 1003;
-constexpr int opt_domain = 1004;
+constexpr int opt_domain_path = 1004;
 
 constexpr uint64_t default_weight = 100;
 
@@ -100,7 +100,7 @@ void usage() {
         << "  --advertise LOCATION  Location the clients reach the witness at,"
         << std::endl
         << "                        ost://<this host>:<port>" << std::endl
-        << "  --domain PATH         Its failure domain, "
+        << "  --domain-path PATH    Its failure domain, "
            "[[[dc/]row/]rack/]server"
         << std::endl
         << "  --weight N            Its share of new witnesses (default: "
@@ -590,7 +590,7 @@ int main(int argc, char** argv) {
         {"advertise", required_argument, nullptr, opt_advertise},
         {"bind", required_argument, nullptr, 'b'},
         {"db", required_argument, nullptr, 'd'},
-        {"domain", required_argument, nullptr, opt_domain},
+        {"domain-path", required_argument, nullptr, opt_domain_path},
         {"help", no_argument, nullptr, 'h'},
         {"id", required_argument, nullptr, opt_id},
         {"queue-size", required_argument, nullptr, 'q'},
@@ -643,7 +643,7 @@ int main(int argc, char** argv) {
             witness.location = optarg;
             break;
 
-        case opt_domain:
+        case opt_domain_path:
             witness.domain = optarg;
             break;
 
@@ -719,7 +719,7 @@ int main(int argc, char** argv) {
     }
     if (!witness.location.empty()) {
         if (witness.domain.empty()) {
-            std::cerr << "--advertise needs --domain" << std::endl;
+            std::cerr << "--advertise needs --domain-path" << std::endl;
             return EX_USAGE;
         }
         try {

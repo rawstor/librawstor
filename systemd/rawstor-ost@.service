@@ -43,14 +43,14 @@ Environment=QUEUE_SIZE=4096
 Environment=WORKERS=12
 Environment=META_CACHE_TTL=60000
 # Registration with the MDS of the cluster (rawstor-ost --mds/--advertise/
-# --domain/--weight, docs/mds.md "OST registration"): the MDS, mds://host:port;
+# --domain-path/--weight, docs/mds.md "OST registration"): the MDS, mds://host:port;
 # the location the clients reach this OST's store at,
 # ost://<this host>:<port of BIND_ADDR>; its failure domain,
 # [[[dc/]row/]rack/]server; and its share of new chunks. No MDS, no
 # registration: the OST serves only ost:// targets addressed to it directly.
 Environment=MDS=
 Environment=ADVERTISE=
-Environment=DOMAIN=
+Environment=DOMAIN_PATH=
 Environment=WEIGHT=100
 # librawstor client/server tuning knobs (see README.md's "Environment
 # Variables" section for what each one does); set them in
@@ -76,7 +76,7 @@ Environment=WEIGHT=100
 # Set in the configuration file below, e.g. EXTRA_ARGS="--insecure".
 Environment=EXTRA_ARGS=
 EnvironmentFile=/etc/rawstor/ost/%i.conf
-ExecStart=/usr/bin/rawstor-ost $EXTRA_ARGS --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --workers=${WORKERS} --meta-cache-ttl=${META_CACHE_TTL} --id=%i --mds=${MDS} --advertise=${ADVERTISE} --domain=${DOMAIN} --weight=${WEIGHT} ${LOCATION}
+ExecStart=/usr/bin/rawstor-ost $EXTRA_ARGS --bind=${BIND_ADDR} --queue-size=${QUEUE_SIZE} --workers=${WORKERS} --meta-cache-ttl=${META_CACHE_TTL} --id=%i --mds=${MDS} --advertise=${ADVERTISE} --domain-path=${DOMAIN_PATH} --weight=${WEIGHT} ${LOCATION}
 # Reads the certificate, key and CAs again for the connections made after it
 # (SIGHUP); the ones open keep what they started with. A file that cannot be
 # read is logged, and the old one stays.

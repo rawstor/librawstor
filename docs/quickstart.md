@@ -110,7 +110,7 @@ OST=${OST1}
 (echo 'BIND_ADDR=0.0.0.0'; cat tls.settings
  echo 'MDS=mds://192.168.0.13'
  echo 'ADVERTISE=ost://192.168.0.11'          # .12 on the other
- echo 'DOMAIN=dc1/row1/rack1/host1'           # rack2/host2 on the other
+ echo 'DOMAIN_PATH=dc1/row1/rack1/host1'           # rack2/host2 on the other
 ) | sudo tee /etc/rawstor/ost/${OST}.conf
 sudo systemctl enable --now rawstor-ost@${OST}
 
@@ -129,7 +129,7 @@ with the MDS's port, `7776`, and its own place in the failure hierarchy:
 ```
 (echo 'BIND_ADDR=0.0.0.0'; cat tls.settings
  echo 'ADVERTISE=ost://192.168.0.13:7776'
- echo 'DOMAIN=dc1/row1/rack3/host3'
+ echo 'DOMAIN_PATH=dc1/row1/rack3/host3'
 ) | sudo tee /etc/rawstor/mds/${CLUSTER}.conf
 sudo systemctl enable --now rawstor-mds@${CLUSTER}
 

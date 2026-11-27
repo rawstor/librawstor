@@ -28,7 +28,7 @@ rawstor-ost \
     --id $(cat /proc/sys/kernel/random/uuid) \
     --mds mds://${MDS_HOST} \
     --advertise ost://${OST_HOST} \
-    --domain dc1/row1/rack1/host1 \
+    --domain-path dc1/row1/rack1/host1 \
     file://${OST_DATADIR}
 
 ##

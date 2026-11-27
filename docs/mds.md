@@ -536,7 +536,7 @@ generator.
   `rawstd_hash_stable()` (FNV-1a with a 64-bit finalizer), so placement is
   the same whether or not the MDS is built with libxxhash.
 - **Topology = tree**: `root -> dc -> row -> rack -> server -> ost(leaf)`
-  (an OST's `--domain` is `[[[dc/]row/]rack/]server`, root first,
+  (an OST's `--domain-path` is `[[[dc/]row/]rack/]server`, root first,
   ending at the OST's server; only the server is required, and a leading
   level left out is one implicit domain shared by every entry leaving it
   out). Levels are numbered from
@@ -1265,7 +1265,7 @@ An OST enters itself in the topology of the MDS of its cluster and keeps
 itself there: `rawstor-ost --mds mds://host:port` sends `OST_REGISTER`
 ([Protocol](protocol.md#ostregister--64-bytes-then-the-location-and-the-domain))
 with its id, the location the clients reach its store at (`--advertise`), its
-failure domain (`--domain`, `[[[dc/]row/]rack/]server`) and its share of new
+failure domain (`--domain-path`, `[[[dc/]row/]rack/]server`) and its share of new
 chunks (`--weight`, 100 by default), and sends it again every heartbeat
 interval the MDS answers with. The MDS keeps no list of its own: any OST that
 registers is in the topology, and every OST is a DATA and witness candidate.
@@ -1296,7 +1296,7 @@ with every registration that changes it:
   gets one lease to do so first.
 
 The witness the MDS hosts itself is entered by `rawstor-mds --advertise
-ost://<this host>:<port> --domain PATH [--weight N]` (and `--id`, without
+ost://<this host>:<port> --domain-path PATH [--weight N]` (and `--id`, without
 TLS): a witness candidate only, always available while the MDS runs, its id
 that of the MDS. No OST may register under it (`-EEXIST`).
 
@@ -1386,9 +1386,9 @@ role: the MDS witness is an `ost://` location at the MDS endpoint, given with
 its failure domain so that placement knows it:
 
 ```bash
-rawstor-ost ... --id ${OST1} --mds mds://host3:7776 --advertise ost://host1:7777 --domain dc1/row1/rack1/host1 file:///srv/ost
-rawstor-ost ... --id ${OST2} --mds mds://host3:7776 --advertise ost://host2:7777 --domain dc1/row1/rack1/host2 file:///srv/ost
-rawstor-mds ... -b 0.0.0.0:7776 --advertise ost://host3:7776 --domain dc1/row1/rack1/host3
+rawstor-ost ... --id ${OST1} --mds mds://host3:7776 --advertise ost://host1:7777 --domain-path dc1/row1/rack1/host1 file:///srv/ost
+rawstor-ost ... --id ${OST2} --mds mds://host3:7776 --advertise ost://host2:7777 --domain-path dc1/row1/rack1/host2 file:///srv/ost
+rawstor-mds ... -b 0.0.0.0:7776 --advertise ost://host3:7776 --domain-path dc1/row1/rack1/host3
 ```
 
 Here `-m 2 --failure-domain server` places two DATA copies and a witness on

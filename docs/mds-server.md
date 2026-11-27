@@ -31,7 +31,7 @@ OSTs that have registered within the last three intervals.
 | `-w, --workers N` | Number of worker threads, each with its own client connections and I/O queue, all accepting on the same listening socket and sharing one database (default: `4`). |
 | `-r, --reconstruct` | Rebuild the chunk map from a LIST+META scan of the OSTs -- for recovering from a lost or corrupted database. The MDS waits a lease (three heartbeat intervals) for the OSTs to register and scans the ones that have, answering only registrations meanwhile; an OST of its topology that did not register is logged (see [Reconstruct / DR](mds.md#reconstruct--dr)). |
 | `--advertise LOCATION` | Host a witness: the location the clients reach it at, `ost://<this host>:<port>` (see [Automatic witness placement](mds.md#automatic-witness-placement)). Empty or absent: no witness. |
-| `--domain PATH` | The witness's failure domain, `[[[dc/]row/]rack/]server`; required with `--advertise`. |
+| `--domain-path PATH` | The witness's failure domain, `[[[dc/]row/]rack/]server`; required with `--advertise`. |
 | `--weight N` | The witness's share of new witnesses (default: `100`). |
 | `--id UUID` | The MDS's id, which its witness goes by: required with `--advertise` and `--insecure`; with TLS, that of its certificate, which `--id` must then match. |
 
@@ -42,7 +42,7 @@ Serve two OSTs, which register themselves:
 rawstor-mds --insecure -b 0.0.0.0:7776 -d /var/lib/rawstor/mds/mds.db
 # on host1 and host2:
 rawstor-ost --insecure -b 0.0.0.0:7777 --id ${OST_ID} --mds mds://mds:7776 \
-    --advertise ost://$(hostname):7777 --domain dc1/row1/rack1/$(hostname) \
+    --advertise ost://$(hostname):7777 --domain-path dc1/row1/rack1/$(hostname) \
     file:///var/lib/rawstor/ost
 ```
 
@@ -75,7 +75,7 @@ The config is an environment file (`KEY=VALUE` lines):
 | `DB_PATH` | `/var/lib/rawstor/mds/<uuid>/mds.db` | Database; its directory must be writable by `rawstor`. |
 | `QUEUE_SIZE` | `4096` | `--queue-size`. |
 | `WORKERS` | `4` | `--workers`. |
-| `ADVERTISE`, `DOMAIN`, `WEIGHT` | empty, empty, `100` | `--advertise`, `--domain`, `--weight`: the witness the instance hosts; none while `ADVERTISE` is empty. |
+| `ADVERTISE`, `DOMAIN_PATH`, `WEIGHT` | empty, empty, `100` | `--advertise`, `--domain-path`, `--weight`: the witness the instance hosts; none while `ADVERTISE` is empty. |
 | `RAWSTOR_TLS_*` | | TLS settings, see [Configuration](configuration.md#tls). |
 | `RAWSTOR_MDS_OPTS_*`, `RAWSTOR_OPTS_*` | | Tuning knobs, see [Configuration](configuration.md). |
 

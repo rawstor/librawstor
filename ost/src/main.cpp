@@ -104,7 +104,7 @@ constexpr int opt_id = 1002;
 constexpr int opt_mds = 1003;
 constexpr int opt_advertise = 1004;
 constexpr int opt_weight = 1005;
-constexpr int opt_domain = 1006;
+constexpr int opt_domain_path = 1006;
 
 void usage() {
     std::cout << "Rawstor OST backend " << PACKAGE_VERSION << std::endl
@@ -144,7 +144,7 @@ void usage() {
                  "at, e.g."
               << std::endl
               << "                        ost://<this host>:<port>" << std::endl
-              << "  --domain PATH         Failure domain, "
+              << "  --domain-path PATH    Failure domain, "
                  "[[[dc/]row/]rack/]server"
               << std::endl
               << "  --weight N            Share of new chunks (default: "
@@ -389,7 +389,7 @@ int main(int argc, char** argv) {
     struct option longopts[] = {
         {"advertise", required_argument, nullptr, opt_advertise},
         {"bind", required_argument, nullptr, 'b'},
-        {"domain", required_argument, nullptr, opt_domain},
+        {"domain-path", required_argument, nullptr, opt_domain_path},
         {"help", no_argument, nullptr, 'h'},
         {"id", required_argument, nullptr, opt_id},
         {"mds", required_argument, nullptr, opt_mds},
@@ -466,7 +466,7 @@ int main(int argc, char** argv) {
             weight_arg = optarg;
             break;
 
-        case opt_domain:
+        case opt_domain_path:
             domain_arg = optarg;
             break;
 
@@ -558,7 +558,7 @@ int main(int argc, char** argv) {
         }
         config.location = advertise_arg;
         if (domain_arg.empty()) {
-            std::cerr << "--mds needs --domain" << std::endl;
+            std::cerr << "--mds needs --domain-path" << std::endl;
             return EX_USAGE;
         }
         try {

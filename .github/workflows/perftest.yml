@@ -97,7 +97,7 @@ jobs:
       # it at: this OST, or the directory itself for the file backend.
       run: |
         mkdir -p /tmp/objects
-        env $(cat ${GITHUB_WORKSPACE}/pki/ost.env) rawstor-ost --bind 127.0.0.1:7777 --id ${OST_ID} --mds mds://127.0.0.1:7776 --advertise ${{ matrix.store }} --domain host1 file:///tmp/objects &
+        env $(cat ${GITHUB_WORKSPACE}/pki/ost.env) rawstor-ost --bind 127.0.0.1:7777 --id ${OST_ID} --mds mds://127.0.0.1:7776 --advertise ${{ matrix.store }} --domain-path host1 file:///tmp/objects &
         sleep 10
     - name: create object
       run: |
