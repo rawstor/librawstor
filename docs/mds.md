@@ -1134,8 +1134,7 @@ witness tables being the reason `synchronous=FULL` is non-negotiable.
 
 ```
 rebuild the map:
-  wait for the OSTs to register: a lease (three heartbeat intervals), and
-    every OST of the topology table, if the database still has one
+  wait a lease (three heartbeat intervals) for the OSTs to register
   for each OST registered: LIST -> physical ids, then per id: META -> chunk_meta
   drop member_role = WITNESS records (metadata-only, not slots)
   group by (id, version): nil version -> live chunk_map,
@@ -1146,7 +1145,7 @@ rebuild the map:
 
 ```mermaid
 flowchart TB
-    T[/"OSTs registered within a lease,<br/>and the topology table's"/] --> Scan
+    T[/"OSTs registered within a lease"/] --> Scan
     subgraph Scan ["for each OST"]
         direction LR
         L["LIST: physical ids"] --> Me["META per id: chunk_meta"]
@@ -1178,12 +1177,12 @@ of normal opens/closes.
   map is rebuilt (witness records are not part of the map and stay served).
   It waits one lease, three heartbeat intervals, in which every OST that runs
   registers (an OST gives each registration one interval, so it is back within
-  two of the MDS), and then for every OST the topology table has — a database
-  whose map is corrupt still has it — logging the ones it is waiting for every
-  ten seconds. A database that is gone has no table: the OSTs registered
-  within the lease are the ones scanned. An OST that is really gone, but still
-  in the table, is waited for; starting from no database is the operator's way
-  out, an explicit decision, not a timeout.
+  two of the MDS), and scans the OSTs that have. One that has not is left out,
+  as a dead one is while the MDS runs: the OSTs of the topology table — a
+  database whose map is corrupt still has it — that did not register are
+  logged. An OST that was only down meanwhile comes back to a map without its
+  slots, and the members it holds are reported as the map's disagreement with
+  it ([Member digest](#space-and-the-member-digest)).
 - **No partial scans, by construction:** every OST scanned must answer
   `LIST` or the reconstruct aborts outright, and the MDS exits. A half scan
   would silently drop the unanswered OST's live copies from the map. One

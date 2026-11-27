@@ -273,64 +273,56 @@ void scan_ost(
     } while (!rawstor_pagination_token_empty(&token));
 }
 
-// rawstor-mds --reconstruct (docs/mds.md, "Reconstruct / DR"): waits for the
-// OSTs to register -- a lease, three heartbeat intervals from the start, in
-// which every OST that runs does, and then for as long as an OST the topology
-// of the database still has is missing -- then rebuilds the whole map from a
-// scan of the OSTs available. No partial scans, by construction (see
-// ObjectStore::reconstruct()'s own doc comment): any OST that doesn't answer
-// LIST at all aborts the whole reconstruct rather than silently dropping its
-// live copies from the map (see scan_ost()'s own doc comment for the softer
-// per-object tolerance on META). `stop` gives the wait up.
+// rawstor-mds --reconstruct (docs/mds.md, "Reconstruct / DR"): waits a lease,
+// three heartbeat intervals from the start, in which every OST that runs
+// registers, then rebuilds the whole map from a scan of the OSTs that have.
+// An OST that has not is left out, as a dead one would be: the OSTs of the
+// topology of the database, if it has one, that are missing are logged. No
+// partial scans of an OST, by construction (see ObjectStore::reconstruct()'s
+// own doc comment): any OST scanned that doesn't answer LIST at all aborts the
+// whole reconstruct rather than silently dropping its live copies from the map
+// (see scan_ost()'s own doc comment for the softer per-object tolerance on
+// META). `stop` gives the wait up.
 void reconstruct(
     rawstor::mdsserver::ObjectStore& store,
-    const std::vector<RawstdUUID>& awaited, std::chrono::milliseconds lease,
+    const std::vector<RawstdUUID>& known, std::chrono::milliseconds lease,
     const std::atomic<bool>& stop
 ) {
+    rawstd_info(
+        "reconstruct: waiting %lld ms for the OSTs to register\n",
+        (long long)lease.count()
+    );
     const auto settled = std::chrono::steady_clock::now() + lease;
-    std::vector<rawstor::mdsserver::TopologyOST> osts;
-    auto logged = std::chrono::steady_clock::time_point{};
-    while (true) {
+    while (std::chrono::steady_clock::now() < settled) {
         if (stop) {
             RAWSTD_THROW_SYSTEM_ERROR(ECANCELED);
         }
-        osts = store.available_osts();
-        std::string missing;
-        size_t nmissing = 0;
-        for (const RawstdUUID& id : awaited) {
-            bool found = false;
-            for (const rawstor::mdsserver::TopologyOST& ost : osts) {
-                if (rawstd_uuid_cmp(&ost.id, &id) == 0) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                RawstdUUIDString name;
-                rawstd_uuid_to_string(&id, &name);
-                missing += std::string(nmissing++ == 0 ? "" : " ") + name;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    std::vector<rawstor::mdsserver::TopologyOST> osts = store.available_osts();
+    std::string missing;
+    size_t nmissing = 0;
+    for (const RawstdUUID& id : known) {
+        bool found = false;
+        for (const rawstor::mdsserver::TopologyOST& ost : osts) {
+            if (rawstd_uuid_cmp(&ost.id, &id) == 0) {
+                found = true;
+                break;
             }
         }
-        auto now = std::chrono::steady_clock::now();
-        if (now >= settled && nmissing == 0) {
-            break;
+        if (!found) {
+            RawstdUUIDString name;
+            rawstd_uuid_to_string(&id, &name);
+            missing += std::string(nmissing++ == 0 ? "" : " ") + name;
         }
-        if (now - logged >= std::chrono::seconds(10)) {
-            if (nmissing == 0) {
-                rawstd_info(
-                    "reconstruct: %zu OST(s) registered, waiting for any "
-                    "other\n",
-                    osts.size()
-                );
-            } else {
-                rawstd_info(
-                    "reconstruct: waiting for %zu OST(s) to register: %s\n",
-                    nmissing, missing.c_str()
-                );
-            }
-            logged = now;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+    if (nmissing != 0) {
+        rawstd_warning(
+            "reconstruct: %zu OST(s) of the topology did not register and are "
+            "left out: %s\n",
+            nmissing, missing.c_str()
+        );
     }
 
     RawIOQueue* queue;
@@ -371,18 +363,18 @@ void reconstruct(
     rawstd_info("reconstruct: done\n");
 }
 
-// What --reconstruct waits for beyond its lease: every OST the topology of the
-// database has, none for a database that is gone. Witness-only candidates
-// contain no recoverable DATA or CoW versions.
-std::vector<RawstdUUID> awaited_osts(rawstor::mdsserver::ObjectStore& store) {
-    std::vector<RawstdUUID> awaited;
+// The OSTs of the topology of the database, none for a database that is gone:
+// the ones --reconstruct reports if they do not register. Witness-only
+// candidates contain no recoverable DATA or CoW versions.
+std::vector<RawstdUUID> known_osts(rawstor::mdsserver::ObjectStore& store) {
+    std::vector<RawstdUUID> known;
     for (const rawstor::mdsserver::TopologyOST& ost :
          store.topology()->osts()) {
         if (!ost.witness_only()) {
-            awaited.push_back(ost.id);
+            known.push_back(ost.id);
         }
     }
-    return awaited;
+    return known;
 }
 
 // The id the MDS's own witness goes by: that of its certificate, and with
@@ -460,9 +452,9 @@ void mds(
     }
     // The workers serve registrations while the map is rebuilt: the OSTs it is
     // rebuilt from register with them.
-    std::vector<RawstdUUID> awaited;
+    std::vector<RawstdUUID> known;
     if (do_reconstruct) {
-        awaited = awaited_osts(store);
+        known = known_osts(store);
     }
     store.set_reconstructing(do_reconstruct);
 
@@ -504,10 +496,10 @@ void mds(
         const std::chrono::milliseconds lease(
             uint64_t{opts.heartbeat_interval} * 3
         );
-        threads.emplace_back([&errors, &store, &stop, &awaited, workers,
+        threads.emplace_back([&errors, &store, &stop, &known, workers,
                               lease]() {
             try {
-                reconstruct(store, awaited, lease, stop);
+                reconstruct(store, known, lease, stop);
                 store.set_reconstructing(false);
             } catch (...) {
                 if (!stop) {
