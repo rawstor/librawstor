@@ -859,10 +859,10 @@ ObjectStore::Access ObjectStore::authorize(
         result.permissions = 0;
         return result;
     }
-    if (peer->type() != rawtls::Type::client) {
+    if (peer->type() != rawtls::Type::account) {
         RAWSTD_THROW_SYSTEM_ERROR(EACCES);
     }
-    rawstd_uuid_from_string(&result.account, peer->account().c_str());
+    rawstd_uuid_from_string(&result.account, peer->cert_id().c_str());
     result.permissions = peer->permissions().mask(
         rawstd_uuid_is_nil(&object) ? nullptr : object.bytes
     );
@@ -952,13 +952,13 @@ ObjectStore::Access ObjectStore::authorize_witness(
     if (!peer) {
         return result;
     }
-    if (peer->type() != rawtls::Type::client) {
+    if (peer->type() != rawtls::Type::account) {
         if (!rawtls::provider_member(peer->type(), command)) {
             RAWSTD_THROW_SYSTEM_ERROR(EACCES);
         }
         return result;
     }
-    rawstd_uuid_from_string(&result.account, peer->account().c_str());
+    rawstd_uuid_from_string(&result.account, peer->cert_id().c_str());
     result.permissions = peer->permissions().mask(object.bytes);
     uint32_t required = rawtls::member_permission(command);
     if (!required || (result.permissions & required) != required) {
@@ -1197,12 +1197,12 @@ void ObjectStore::authorize_registration(
         RAWSTD_THROW_SYSTEM_ERROR(EACCES);
     }
     RawstdUUID named{};
-    if (rawstd_uuid_from_string(&named, peer->name().c_str()) < 0 ||
+    if (rawstd_uuid_from_string(&named, peer->cert_id().c_str()) < 0 ||
         rawstd_uuid_cmp(&named, &id) != 0) {
         RawstdUUIDString claimed;
         rawstd_uuid_to_string(&id, &claimed);
         rawstd_error(
-            "OST %s registered as %s\n", peer->name().c_str(), claimed
+            "OST %s registered as %s\n", peer->cert_id().c_str(), claimed
         );
         RAWSTD_THROW_SYSTEM_ERROR(EPERM);
     }

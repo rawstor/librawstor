@@ -115,13 +115,17 @@ The identity of a peer is a [SPIFFE ID](https://github.com/spiffe/spiffe/blob/ma
 in the certificate, as defined by the
 [X509-SVID](https://github.com/spiffe/spiffe/blob/master/standards/X509-SVID.md)
 standard: exactly one URI SAN, scheme `spiffe`. RawStor uses the standard
-format and invents none:
+format and invents none. The first path segment is the type of the
+certificate, the second its `cert_id`, and an account adds the `client_id` of
+its client:
 
 ```text
-spiffe://<trust_domain>/ost/<ost_id>               OST      (provider infrastructure)
-spiffe://<trust_domain>/mds/<mds_id>               MDS      (provider infrastructure)
-spiffe://<trust_domain>/admin/<name>               operator / control plane
-spiffe://<trust_domain>/account/<account_id>/client/<name>   an account's client
+spiffe://<trust_domain>/<type>/<cert_id>[/client/<client_id>]
+
+spiffe://<trust_domain>/ost/<ost_id>                            OST      (provider infrastructure)
+spiffe://<trust_domain>/mds/<mds_id>                            MDS      (provider infrastructure)
+spiffe://<trust_domain>/admin/<name>                            operator / control plane
+spiffe://<trust_domain>/account/<account_id>/client/<client_id> a client of an account
 ```
 
 - `<trust_domain>` is the trust boundary of one CA, that is of one deployment
@@ -195,8 +199,8 @@ published pages, to be re-checked when the choice is made):
   deployment tool already knows which process gets which account.
 - The project's own `rawstor pki` for installations with none of the above:
   `init` makes a CA for the trust domain of a deployment in a directory, `issue`
-  makes the certificate and key of one process from its type and name (`ost`,
-  `mds`, `admin` or `client`), `renew` replaces them before they expire. The CA is the one
+  makes the certificate and key of one process from its type (`ost`, `mds`,
+  `admin` or `account`) and ids, `renew` replaces them before they expire. The CA is the one
   place that holds a signing key, and the helper runs on that one machine; it
   is a small tool, not an enrolment service, so getting the files to the hosts
   is up to the operator. See [Configuration](configuration.md#issuing-certificates).

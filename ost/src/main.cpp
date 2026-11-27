@@ -616,7 +616,7 @@ int main(int argc, char** argv) {
                 rawtls::inspect(rawstor_opts_tls_cert()).identity
             );
             if (identity.type() == rawtls::Type::ost) {
-                named = identity.name();
+                named = identity.cert_id();
             }
         } catch (const std::exception& e) {
             std::cerr << e.what() << std::endl;

@@ -382,9 +382,9 @@ TEST_F(TransportTest, HandshakeNamesThePeers) {
     ASSERT_NE(client->peer(), nullptr);
     ASSERT_NE(server->peer(), nullptr);
     EXPECT_EQ(client->peer()->type(), rawtls::Type::ost);
-    EXPECT_EQ(client->peer()->name(), ost_id);
-    EXPECT_EQ(server->peer()->type(), rawtls::Type::client);
-    EXPECT_EQ(server->peer()->account(), account);
+    EXPECT_EQ(client->peer()->cert_id(), ost_id);
+    EXPECT_EQ(server->peer()->type(), rawtls::Type::account);
+    EXPECT_EQ(server->peer()->cert_id(), account);
 }
 
 TEST_F(TransportTest, BytesGoBothWaysThroughTls) {
@@ -1047,7 +1047,7 @@ TEST_F(HandshakeTest, ClientMayExpectOnlyTheTypeOfTheServer) {
         );
         EXPECT_EQ(r.client_error, 0);
         ASSERT_NE(r.client, nullptr);
-        EXPECT_EQ(r.client->peer()->name(), ost_id);
+        EXPECT_EQ(r.client->peer()->cert_id(), ost_id);
     }
     {
         Pair second;

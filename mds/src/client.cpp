@@ -670,7 +670,7 @@ rawstd::Task<void> Client::_dispatch(
             for (const auto& record : records) {
                 if (client->_transport->peer() &&
                     client->_transport->peer()->type() ==
-                        rawtls::Type::client &&
+                        rawtls::Type::account &&
                     !(client->_transport->peer()->permissions().mask(
                           record.id.bytes
                       ) &
