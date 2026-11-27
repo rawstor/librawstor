@@ -22,29 +22,31 @@ enum class Type {
     ost,
     mds,
     admin,
-    client,
+    account,
 };
 
 /*
- * The identity of a peer: a SPIFFE ID in one of the four shapes rawstor uses.
+ * The identity of a peer: a SPIFFE ID in one of the four shapes rawstor uses,
+ * `spiffe://<trust_domain>/<cert_type>/<cert_id>[/client/<client_id>]`.
  *
- *   spiffe://<trust_domain>/ost/<ost_id>
- *   spiffe://<trust_domain>/mds/<mds_id>
- *   spiffe://<trust_domain>/admin/<name>
- *   spiffe://<trust_domain>/account/<account_id>/client/<name>
+ *   spiffe://<trust_domain>/ost/<cert_id>
+ *   spiffe://<trust_domain>/mds/<cert_id>
+ *   spiffe://<trust_domain>/admin/<cert_id>
+ *   spiffe://<trust_domain>/account/<cert_id>/client/<client_id>
  *
  * The trust domain is lowercase letters, digits, '.', '-' and '_' (at most 255
  * bytes), a path segment is letters, digits, '.', '-' and '_' (never "." or
- * ".."), the whole ID is at most 2048 bytes, and `ost_id`, `mds_id` and
- * `account_id` are non-nil UUIDs in their canonical lowercase text form. There
- * is no user information, port, query or fragment.
+ * ".."), the whole ID is at most 2048 bytes, and the `cert_id` of an ost, an
+ * mds and an account (the OST id, the MDS id and the account id) is a non-nil
+ * UUID in its canonical lowercase text form. There is no user information,
+ * port, query or fragment.
  */
 class SpiffeId final {
 private:
     rawstd::URI _uri;
     Type _type;
-    std::string _account;
-    std::string _name;
+    std::string _cert_id;
+    std::string _client_id;
     Permissions _permissions;
 
 public:
@@ -59,11 +61,12 @@ public:
 
     Type type() const noexcept { return _type; }
 
-    // The account of a client, empty for every other type.
-    const std::string& account() const noexcept { return _account; }
+    // The segment after the type: the OST id of an ost, the MDS id of an mds,
+    // the name of an admin and the account id of an account.
+    const std::string& cert_id() const noexcept { return _cert_id; }
 
-    // The OST id of an ost, the MDS id of an mds, the name of every other type.
-    const std::string& name() const noexcept { return _name; }
+    // The client of an account, empty for every other type.
+    const std::string& client_id() const noexcept { return _client_id; }
 
     const Permissions& permissions() const noexcept { return _permissions; }
 

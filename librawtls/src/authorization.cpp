@@ -244,11 +244,11 @@ int Authorization::owner(
     const Transport& connection, const uint8_t* account
 ) const {
     auto peer = connection.peer();
-    if (!peer || peer->type() != Type::client) {
+    if (!peer || peer->type() != Type::account) {
         return 0;
     }
     RawstdUUID expected{};
-    if (rawstd_uuid_from_string(&expected, peer->account().c_str()) < 0 ||
+    if (rawstd_uuid_from_string(&expected, peer->cert_id().c_str()) < 0 ||
         memcmp(expected.bytes, account, 16)) {
         return ENOENT;
     }
@@ -266,7 +266,7 @@ int Authorization::check(
     if (connection.peer_expiry() <= static_cast<uint64_t>(time(nullptr))) {
         return EACCES;
     }
-    if (peer->type() != Type::client) {
+    if (peer->type() != Type::account) {
         return provider_member(peer->type(), command) ? 0 : EACCES;
     }
     uint32_t required = member_permission(command, flags),

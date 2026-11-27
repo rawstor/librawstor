@@ -9,7 +9,7 @@ so it can run before the settings it makes are in place.
 
 Every function raises ``OSError`` (``FileExistsError`` for an ``init`` over an
 existing CA, ``FileNotFoundError`` for a CA or a certificate that is not
-there, ``errno.EINVAL`` for a bad trust domain, a bad name, a bad validity or a
+there, ``errno.EINVAL`` for a bad trust domain, a bad id, a bad validity or a
 certificate this CA did not issue).
 """
 
@@ -29,7 +29,7 @@ VALIDITY = datetime.timedelta(days=7)
 _OST = 0
 _MDS = 1
 _ADMIN = 2
-_CLIENT = 3
+_ACCOUNT = 3
 
 
 def _seconds(validity: Validity) -> int:
@@ -59,8 +59,8 @@ def ca_file(directory: Path) -> str:
 def _issue(
     directory: Path,
     type_: int,
-    account: Optional[str],
-    name: Optional[str],
+    cert_id: Optional[str],
+    client_id: Optional[str],
     cert_file: Path,
     key_file: Path,
     validity: Validity,
@@ -70,8 +70,8 @@ def _issue(
     return libpki.issue(
         os.fspath(directory),
         type_,
-        account,
-        name,
+        cert_id,
+        client_id,
         _seconds(validity),
         os.fspath(cert_file),
         os.fspath(key_file),
@@ -84,44 +84,44 @@ def issue_ost(
     directory: Path,
     cert_file: Path,
     key_file: Path,
-    ost_id: Optional[str] = None,
+    cert_id: Optional[str] = None,
     validity: Validity = VALIDITY,
 ) -> str:
     """Issues a certificate and a new private key for a rawstor-ost, replacing
-    the files. ``ost_id`` is its id in the MDS topology, a UUID; a new one is
+    the files. ``cert_id`` is its id in the MDS topology, a UUID; a new one is
     made without it. Returns the SPIFFE ID the certificate names."""
-    return _issue(directory, _OST, None, ost_id, cert_file, key_file, validity)
+    return _issue(directory, _OST, cert_id, None, cert_file, key_file, validity)
 
 
 def issue_mds(
     directory: Path,
     cert_file: Path,
     key_file: Path,
-    mds_id: Optional[str] = None,
+    cert_id: Optional[str] = None,
     validity: Validity = VALIDITY,
 ) -> str:
-    """Issues a certificate and a key for a rawstor-mds. ``mds_id`` is its id,
-    a UUID like an OST's; a new one is made without it. Returns the SPIFFE ID
-    the certificate names."""
-    return _issue(directory, _MDS, None, mds_id, cert_file, key_file, validity)
+    """Issues a certificate and a key for a rawstor-mds. ``cert_id`` is its
+    id, a UUID like an OST's; a new one is made without it. Returns the SPIFFE
+    ID the certificate names."""
+    return _issue(directory, _MDS, cert_id, None, cert_file, key_file, validity)
 
 
 def issue_admin(
     directory: Path,
-    name: str,
+    cert_id: str,
     cert_file: Path,
     key_file: Path,
     validity: Validity = VALIDITY,
 ) -> str:
     """Issues a certificate and a key for an operator or a control plane
-    called ``name``."""
-    return _issue(directory, _ADMIN, None, name, cert_file, key_file, validity)
+    called ``cert_id``."""
+    return _issue(directory, _ADMIN, cert_id, None, cert_file, key_file, validity)
 
 
-def issue_client(
+def issue_account(
     directory: Path,
-    account: str,
-    name: str,
+    cert_id: str,
+    client_id: str,
     cert_file: Path,
     key_file: Path,
     validity: Validity = VALIDITY,
@@ -129,7 +129,8 @@ def issue_client(
     role: str,
     object_permissions: Optional[Mapping[str, int]] = None,
 ) -> str:
-    """Issue account credentials with a none, reader, writer or manager role.
+    """Issues a certificate and a key for the client ``client_id`` of the
+    account ``cert_id``, a UUID, with a none, reader, writer or manager role.
 
     Object masks override the role for each named UUID, including its versions;
     zero denies access. Other objects retain the role's permissions.
@@ -137,23 +138,32 @@ def issue_client(
     roles = {"none": 0, "reader": 1, "writer": 2, "manager": 3}
     if role not in roles:
         raise ValueError("role must be none, reader, writer or manager")
-    return _issue(directory, _CLIENT, account, name, cert_file, key_file, validity,
+    return _issue(directory, _ACCOUNT, cert_id, client_id, cert_file, key_file, validity,
                   roles[role], object_permissions)
 
 
 class Info(NamedTuple):
     """What a certificate says."""
 
-    #: The SPIFFE ID of the process it is for.
+    #: The SPIFFE ID of the process it is for,
+    #: ``spiffe://<trust_domain>/<type>/<cert_id>[/client/<client_id>]``.
     identity: str
+    #: ost, mds, admin or account.
+    type: str
+    trust_domain: str
+    #: The OST id of an ost, the MDS id of an mds, the name of an admin, the
+    #: account id of an account.
+    cert_id: str
+    #: The client of an account, None for every other type.
+    client_id: Optional[str]
     #: When it expires.
     not_after: datetime.datetime
     #: Whether the CA given to ``show()`` signed it, None without a CA.
     issued: Optional[bool]
-    #: The account role of a client: none, reader, writer or manager; None for
-    #: every other type.
+    #: The account role: none, reader, writer or manager; None for every other
+    #: type.
     role: Optional[str]
-    #: The signed object masks of a client.
+    #: The signed object masks of an account.
     object_permissions: Dict[str, int]
 
 
@@ -166,12 +176,20 @@ def show(cert_file: Path, directory: Optional[Path] = None) -> Info:
         os.fspath(cert_file),
         None if directory is None else os.fspath(directory),
     )
+    trust_domain, type_, cert_id, *client = (
+        identity[len("spiffe://"):].split("/")
+    )
+    account = type_ == "account"
     return Info(
         identity,
+        type_,
+        trust_domain,
+        cert_id,
+        client[1] if account else None,
         datetime.datetime.fromtimestamp(not_after, datetime.timezone.utc),
         issued,
         ({0: "none", 1: "reader", 2: "writer", 3: "manager"}[role]
-         if "/account/" in identity else None),
+         if account else None),
         object_permissions,
     )
 

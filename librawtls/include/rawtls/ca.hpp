@@ -39,7 +39,7 @@ CertInfo inspect(const std::string& cert_file, const std::string& ca_file = "");
  * It issues what rawtls::Context expects of a process: an EC P-256 key and a
  * certificate with exactly one URI SAN, the SPIFFE ID, the key usage
  * `digitalSignature` and the extended key usages `serverAuth` and
- * `clientAuth`. The ID is built from a type and a name, and always in the trust
+ * `clientAuth`. The ID is built from a type and ids, and always in the trust
  * domain of the CA, so a certificate cannot be made for another deployment.
  * Certificates are short-lived: the caller says for how long.
  *
@@ -82,10 +82,10 @@ public:
      * both as PEM and replacing what is there; the key is written with mode
      * 0600. Returns the SPIFFE ID.
      *
-     * `name` is the OST id of an ost and the MDS id of an mds, UUIDs that are
-     * made if empty, the name of an admin, and the name of a client of the
-     * account `account`, which only a client has. The shapes are those of
-     * SpiffeId.
+     * `cert_id` is the OST id of an ost and the MDS id of an mds, UUIDs that
+     * are made if empty, the name of an admin and the account id of an
+     * account. `client_id` is the client of an account, which only an account
+     * has. The shapes are those of SpiffeId.
      *
      * Both files are written aside and then renamed over the old ones, so a
      * failure to write leaves the old pair as it was. If publishing the
@@ -93,7 +93,7 @@ public:
      * the error reports the backup path for recovery.
      */
     std::string issue(
-        Type type, const std::string& account, const std::string& name,
+        Type type, const std::string& cert_id, const std::string& client_id,
         std::chrono::seconds validity, const std::string& cert_file,
         const std::string& key_file, const Permissions& permissions = {}
     ) const;

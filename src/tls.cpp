@@ -124,8 +124,8 @@ void initialize() {
     std::lock_guard<std::mutex> lock(mutex);
     rawtls::SpiffeId own(rawtls::inspect(config.cert_file).identity);
     client_account = {};
-    if (own.type() == rawtls::Type::client) {
-        rawstd_uuid_from_string(&client_account, own.account().c_str());
+    if (own.type() == rawtls::Type::account) {
+        rawstd_uuid_from_string(&client_account, own.cert_id().c_str());
     }
     process_context = std::move(context);
     mds_identity = std::move(mds);
