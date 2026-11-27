@@ -48,9 +48,8 @@ constexpr const char* SCHEMA =
      * The topology: every OST that has registered (docs/mds.md, "OST
      * registration") and the MDS's own witness. `roles` is a bitmask of
      * role_data and role_witness, `domain` the failure domain path
-     * ("[[[dc/]row/]rack/]server"; empty for an entry carried over from a
-     * store that had none, until its OST registers), and `used`, `total`,
-     * `members` and `members_hash` its latest sample (all 0 for none).
+     * ("[[[dc/]row/]rack/]server"), and `used`, `total`, `members` and
+     * `members_hash` its latest sample (all 0 for none).
      */
     "CREATE TABLE IF NOT EXISTS topology ("
     " id BLOB PRIMARY KEY, location TEXT NOT NULL,"
@@ -570,15 +569,10 @@ ObjectStore::ObjectStore(const std::string& path, const Opts& opts) :
         exec(_db, "PRAGMA journal_mode=WAL;");
         exec(_db, "PRAGMA synchronous=FULL;");
         exec(_db, "PRAGMA foreign_keys=ON;");
-        Transaction tx(_db);
-        uint64_t user_version = _check_layout();
+        _check_layout();
         exec(_db, SCHEMA);
-        if (user_version == 1) {
-            _migrate_backends();
-        }
         _register_default_account();
-        exec(_db, "PRAGMA user_version=2;");
-        tx.commit();
+        exec(_db, "PRAGMA user_version=1;");
         _load_topology();
     } catch (...) {
         sqlite3_close(_db);
@@ -592,10 +586,9 @@ ObjectStore::~ObjectStore() {
 
 /*
  * A store written before objects had an account has tables without it; it is
- * refused rather than misread. Layout 1 kept the space samples of a topology
- * read from a file; it is carried over (_migrate_backends()).
+ * refused rather than misread.
  */
-uint64_t ObjectStore::_check_layout() {
+void ObjectStore::_check_layout() {
     Stmt version(_db, "PRAGMA user_version;");
     if (!version.step()) {
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
@@ -609,25 +602,10 @@ uint64_t ObjectStore::_check_layout() {
         RAWSTD_THROW_SYSTEM_ERROR(EIO);
     }
     bool existing = tables.column_int64(0) != 0;
-    if (user_version != 1 && user_version != 2 &&
-        (user_version != 0 || existing)) {
+    if (user_version != 1 && (user_version != 0 || existing)) {
         rawstd_error("MDS store has an unsupported layout\n");
         RAWSTD_THROW_SYSTEM_ERROR(EPROTO);
     }
-    return user_version;
-}
-
-/*
- * The entries of layout 1 keep their addresses, so that the objects placed on
- * them still resolve, and their last samples. Their weight and domain were in
- * the file: they take no new chunks until their OSTs register.
- */
-void ObjectStore::_migrate_backends() {
-    exec(
-        _db, "INSERT OR IGNORE INTO topology (id, location, used, total)"
-             " SELECT id, location, used, total FROM backends;"
-             "DROP TABLE backends;"
-    );
 }
 
 /* Every store registers the default account, which can neither be created nor

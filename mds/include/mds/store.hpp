@@ -152,8 +152,7 @@ private:
     std::unordered_set<std::string> _map_changed;
     std::function<void(const TopologyOST&)> _on_disagreement;
 
-    uint64_t _check_layout();
-    void _migrate_backends();
+    void _check_layout();
     // ENOENT unless `account` is registered; the nil account (none) always is.
     void _require_account(const RawstdUUID& account);
     void _register_default_account();

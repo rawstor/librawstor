@@ -14,8 +14,6 @@
 #include <rawstd/gpp.hpp>
 #include <rawstd/uuid.h>
 
-#include <sqlite3.h>
-
 #include <algorithm>
 #include <chrono>
 #include <memory>
@@ -535,44 +533,6 @@ TEST_F(ObjectStoreTest, a_lasting_disagreement_is_reported_once) {
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     store.register_ost(registration);
     EXPECT_EQ(reported.size(), 1u);
-}
-
-// A store of layout 1 kept the space samples of a topology read from a file:
-// its entries keep their addresses and samples, and take chunks once their
-// OSTs register.
-TEST_F(ObjectStoreTest, a_store_of_layout_1_keeps_its_entries) {
-    {
-        sqlite3* db = nullptr;
-        ASSERT_EQ(sqlite3_open(dir.db_path().c_str(), &db), SQLITE_OK);
-        const char* sql =
-            "CREATE TABLE backends ("
-            " id BLOB PRIMARY KEY, location TEXT NOT NULL,"
-            " active INTEGER NOT NULL, available INTEGER NOT NULL DEFAULT 0,"
-            " used INTEGER NOT NULL DEFAULT 0, total INTEGER NOT NULL DEFAULT "
-            "0,"
-            " checked_at INTEGER NOT NULL DEFAULT 0,"
-            " sampled_at INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID;"
-            "INSERT INTO backends (id, location, active, available, used, "
-            "total) VALUES (x'00000000000070008000000000000001', "
-            "'ost://host1:7777', 1, 1, 10, 100);"
-            "PRAGMA user_version=1;";
-        ASSERT_EQ(sqlite3_exec(db, sql, nullptr, nullptr, nullptr), SQLITE_OK);
-        sqlite3_close(db);
-    }
-    ObjectStore store(dir.db_path());
-    TopologyOST ost = make_ost("00000000-0000-7000-8000-000000000001", "host1");
-
-    ASSERT_EQ(store.topology()->osts().size(), 1u);
-    EXPECT_EQ(store.topology()->osts()[0].location, "ost://host1:7777");
-    EXPECT_EQ(store.info().total, 100u);
-    EXPECT_FALSE(store.backend_available(ost.id));
-
-    store.register_ost(registration_of(ost));
-    EXPECT_TRUE(store.backend_available(ost.id));
-    EXPECT_EQ(store.topology()->osts()[0].path[3], "host1");
-    store.create(
-        RawstdUUID{}, {}, make_id(), chunk_size, chunk_size, make_policy(1)
-    );
 }
 
 // Idempotent mutations (docs/mds.md): a repeated idempotency_key replays the
