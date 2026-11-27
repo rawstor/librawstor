@@ -27,8 +27,8 @@ TEST(SpiffeTest, Ost) {
         rawtls::SpiffeId("spiffe://cluster.example/ost/" + uuid_a);
     EXPECT_EQ(id.type(), rawtls::Type::ost);
     EXPECT_EQ(id.trust_domain(), "cluster.example");
-    EXPECT_EQ(id.name(), uuid_a);
-    EXPECT_TRUE(id.account().empty());
+    EXPECT_EQ(id.cert_id(), uuid_a);
+    EXPECT_TRUE(id.client_id().empty());
     EXPECT_TRUE(id.is_server());
 }
 
@@ -36,7 +36,7 @@ TEST(SpiffeTest, Mds) {
     rawtls::SpiffeId id =
         rawtls::SpiffeId("spiffe://cluster.example/mds/" + uuid_a);
     EXPECT_EQ(id.type(), rawtls::Type::mds);
-    EXPECT_EQ(id.name(), uuid_a);
+    EXPECT_EQ(id.cert_id(), uuid_a);
     EXPECT_TRUE(id.is_server());
 }
 
@@ -44,17 +44,17 @@ TEST(SpiffeTest, Admin) {
     rawtls::SpiffeId id =
         rawtls::SpiffeId("spiffe://cluster.example/admin/ops_2");
     EXPECT_EQ(id.type(), rawtls::Type::admin);
-    EXPECT_EQ(id.name(), "ops_2");
+    EXPECT_EQ(id.cert_id(), "ops_2");
     EXPECT_FALSE(id.is_server());
 }
 
-TEST(SpiffeTest, Client) {
+TEST(SpiffeTest, Account) {
     std::string uri =
         "spiffe://cluster.example/account/" + uuid_b + "/client/vm42.disk0";
     rawtls::SpiffeId id(uri);
-    EXPECT_EQ(id.type(), rawtls::Type::client);
-    EXPECT_EQ(id.account(), uuid_b);
-    EXPECT_EQ(id.name(), "vm42.disk0");
+    EXPECT_EQ(id.type(), rawtls::Type::account);
+    EXPECT_EQ(id.cert_id(), uuid_b);
+    EXPECT_EQ(id.client_id(), "vm42.disk0");
     EXPECT_EQ(id.uri().str(), uri);
     EXPECT_FALSE(id.is_server());
 }
@@ -62,7 +62,7 @@ TEST(SpiffeTest, Client) {
 TEST(SpiffeTest, NamesAreCaseSensitive) {
     rawtls::SpiffeId id =
         rawtls::SpiffeId("spiffe://cluster.example/admin/Ops-One");
-    EXPECT_EQ(id.name(), "Ops-One");
+    EXPECT_EQ(id.cert_id(), "Ops-One");
 }
 
 TEST(SpiffeTest, Scheme) {

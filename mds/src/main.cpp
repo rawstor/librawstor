@@ -387,14 +387,14 @@ RawstdUUID local_witness_id(const std::string& id) {
             rawstd_error("The certificate is not an MDS's\n");
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
-        if (!name.empty() && name != identity.name()) {
+        if (!name.empty() && name != identity.cert_id()) {
             rawstd_error(
                 "--id %s is not the id of the certificate, %s\n", name.c_str(),
-                identity.name().c_str()
+                identity.cert_id().c_str()
             );
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
-        name = identity.name();
+        name = identity.cert_id();
     }
     RawstdUUID ret{};
     if (name.empty() || rawstd_uuid_from_string(&ret, name.c_str()) < 0) {

@@ -51,7 +51,7 @@ TEST_F(PkiTest, a_ca_issues_and_renews) {
     std::string key = path("ost.key");
     ASSERT_EQ(
         rawstor_pki_issue(
-            ca.c_str(), RAWSTOR_PKI_OST, nullptr, ost_id, 3600, cert.c_str(),
+            ca.c_str(), RAWSTOR_PKI_OST, ost_id, nullptr, 3600, cert.c_str(),
             key.c_str(), identity, sizeof(identity), nullptr
         ),
         0
@@ -119,7 +119,7 @@ TEST_F(PkiTest, every_type_has_its_shape) {
     const char* account = "0198f1a2-3b4c-7d5e-8f90-0123456789ab";
     ASSERT_EQ(
         rawstor_pki_issue(
-            ca.c_str(), RAWSTOR_PKI_MDS, nullptr, mds_id, 3600, cert.c_str(),
+            ca.c_str(), RAWSTOR_PKI_MDS, mds_id, nullptr, 3600, cert.c_str(),
             key.c_str(), identity, sizeof(identity), nullptr
         ),
         0
@@ -130,7 +130,7 @@ TEST_F(PkiTest, every_type_has_its_shape) {
     );
     ASSERT_EQ(
         rawstor_pki_issue(
-            ca.c_str(), RAWSTOR_PKI_ADMIN, nullptr, "ops", 3600, cert.c_str(),
+            ca.c_str(), RAWSTOR_PKI_ADMIN, "ops", nullptr, 3600, cert.c_str(),
             key.c_str(), identity, sizeof(identity), nullptr
         ),
         0
@@ -138,8 +138,8 @@ TEST_F(PkiTest, every_type_has_its_shape) {
     EXPECT_EQ(std::string(identity), "spiffe://cluster.example/admin/ops");
     ASSERT_EQ(
         rawstor_pki_issue(
-            ca.c_str(), RAWSTOR_PKI_CLIENT, account, "vm-1", 3600, cert.c_str(),
-            key.c_str(), identity, sizeof(identity), nullptr
+            ca.c_str(), RAWSTOR_PKI_ACCOUNT, account, "vm-1", 3600,
+            cert.c_str(), key.c_str(), identity, sizeof(identity), nullptr
         ),
         0
     );
@@ -156,7 +156,7 @@ TEST_F(PkiTest, failures_are_errno_and_a_message) {
     std::string key = path("x.key");
     EXPECT_EQ(
         rawstor_pki_issue(
-            ca.c_str(), RAWSTOR_PKI_OST, nullptr, ost_id, 3600, cert.c_str(),
+            ca.c_str(), RAWSTOR_PKI_OST, ost_id, nullptr, 3600, cert.c_str(),
             key.c_str(), nullptr, 0, nullptr
         ),
         -ENOENT
@@ -170,7 +170,7 @@ TEST_F(PkiTest, failures_are_errno_and_a_message) {
 
     EXPECT_EQ(
         rawstor_pki_issue(
-            ca.c_str(), RAWSTOR_PKI_OST, nullptr, "not an id", 3600,
+            ca.c_str(), RAWSTOR_PKI_OST, "not an id", nullptr, 3600,
             cert.c_str(), key.c_str(), nullptr, 0, nullptr
         ),
         -EINVAL
@@ -180,28 +180,28 @@ TEST_F(PkiTest, failures_are_errno_and_a_message) {
     );
     EXPECT_EQ(
         rawstor_pki_issue(
-            ca.c_str(), RAWSTOR_PKI_OST, nullptr, ost_id, 0, cert.c_str(),
+            ca.c_str(), RAWSTOR_PKI_OST, ost_id, nullptr, 0, cert.c_str(),
             key.c_str(), nullptr, 0, nullptr
         ),
         -EINVAL
     );
     EXPECT_EQ(
         rawstor_pki_issue(
-            ca.c_str(), RAWSTOR_PKI_MDS, nullptr, "mds-1", 3600, cert.c_str(),
+            ca.c_str(), RAWSTOR_PKI_MDS, "mds-1", nullptr, 3600, cert.c_str(),
             key.c_str(), nullptr, 0, nullptr
         ),
         -EINVAL
     );
     EXPECT_EQ(
         rawstor_pki_issue(
-            ca.c_str(), RAWSTOR_PKI_CLIENT, nullptr, "vm", 3600, cert.c_str(),
+            ca.c_str(), RAWSTOR_PKI_ACCOUNT, nullptr, "vm", 3600, cert.c_str(),
             key.c_str(), nullptr, 0, nullptr
         ),
         -EINVAL
     );
     EXPECT_EQ(
         rawstor_pki_issue(
-            ca.c_str(), static_cast<RawstorPkiType>(99), nullptr, "x", 3600,
+            ca.c_str(), static_cast<RawstorPkiType>(99), "x", nullptr, 3600,
             cert.c_str(), key.c_str(), nullptr, 0, nullptr
         ),
         -EINVAL
@@ -210,7 +210,7 @@ TEST_F(PkiTest, failures_are_errno_and_a_message) {
     char small[8];
     EXPECT_EQ(
         rawstor_pki_issue(
-            ca.c_str(), RAWSTOR_PKI_OST, nullptr, ost_id, 3600, cert.c_str(),
+            ca.c_str(), RAWSTOR_PKI_OST, ost_id, nullptr, 3600, cert.c_str(),
             key.c_str(), small, sizeof(small), nullptr
         ),
         -EINVAL
@@ -234,7 +234,7 @@ TEST_F(PkiTest, show_reads_a_certificate) {
     std::string key = path("ost.key");
     ASSERT_EQ(
         rawstor_pki_issue(
-            ca.c_str(), RAWSTOR_PKI_OST, nullptr, ost_id, 3600, cert.c_str(),
+            ca.c_str(), RAWSTOR_PKI_OST, ost_id, nullptr, 3600, cert.c_str(),
             key.c_str(), nullptr, 0, nullptr
         ),
         0

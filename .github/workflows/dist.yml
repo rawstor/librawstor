@@ -199,7 +199,7 @@ jobs:
         # The CA needs no TLS itself, so these run without any settings.
         ${RAWSTOR} pki init --trust-domain ${TD} ca
         ${RAWSTOR} pki issue --ca ca --cert ost.pem --key ost.key ost ${OST_ID}
-        ${RAWSTOR} pki issue --ca ca --cert cli.pem --key cli.key --role manager client ${ACCOUNT_ID} ci
+        ${RAWSTOR} pki issue --ca ca --cert cli.pem --key cli.key --role manager account ${ACCOUNT_ID} ci
         ${RAWSTOR} pki renew --ca ca --cert ost.pem --key ost.key
         # A certificate of another CA is not renewed.
         ${RAWSTOR} pki init --trust-domain ${TD} other

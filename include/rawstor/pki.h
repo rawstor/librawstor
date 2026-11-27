@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-/** Permissions and account roles signed into client certificates: the role
+/** Permissions and account roles signed into account certificates: the role
  * gives an account-wide default, object permissions override it. */
 #define RAWSTOR_PERM_READ 1u
 #define RAWSTOR_PERM_WRITE 2u
@@ -41,17 +41,19 @@ extern "C" {
  * more.
  */
 
-/** The type of the process a certificate is for. */
+/** The type of a certificate, the first segment of its SPIFFE ID:
+ * `spiffe://<trust_domain>/<cert_type>/<cert_id>[/client/<client_id>]`. */
 enum RawstorPkiType {
-    /** A rawstor-ost; `name` is its id, the one in the MDS topology, a UUID. */
+    /** A rawstor-ost; `cert_id` is its id, the one in the MDS topology, a
+     * UUID. */
     RAWSTOR_PKI_OST,
-    /** A rawstor-mds; `name` is its id, a UUID like an OST's. */
+    /** A rawstor-mds; `cert_id` is its id, a UUID like an OST's. */
     RAWSTOR_PKI_MDS,
-    /** An operator or a control plane; `name` is its name. */
+    /** An operator or a control plane; `cert_id` is its name. */
     RAWSTOR_PKI_ADMIN,
-    /** An account's client, such as rawstor-vhost; `account` is the account's
-     * id and `name` the client's name. */
-    RAWSTOR_PKI_CLIENT,
+    /** A client of an account, such as rawstor-vhost; `cert_id` is the
+     * account's id, a UUID, and `client_id` the client's name. */
+    RAWSTOR_PKI_ACCOUNT,
 };
 
 /** What `identity` of the functions below has to have room for. */
@@ -89,16 +91,16 @@ struct RawstorPkiPermissions {
  * there; the key is written with mode 0600. The old pair stays if the new one
  * cannot be written.
  *
- * `account` is for a client only and NULL otherwise. `name` may be NULL for an
- * OST or an MDS, which then gets a new id. The SPIFFE ID the certificate names
- * (see docs/security.md) is copied to `identity`, if it is not NULL, with room
- * for RAWSTOR_PKI_IDENTITY_SIZE bytes: `size` is checked before anything is
- * issued. `permissions` applies to account clients only; NULL grants no account
- * permissions.
+ * `cert_id` may be NULL for an OST or an MDS, which then gets a new id.
+ * `client_id` is for an account only and NULL otherwise. The SPIFFE ID the
+ * certificate names (see docs/security.md) is copied to `identity`, if it is
+ * not NULL, with room for RAWSTOR_PKI_IDENTITY_SIZE bytes: `size` is checked
+ * before anything is issued. `permissions` applies to accounts only; NULL
+ * grants no account permissions.
  */
 int rawstor_pki_issue(
-    const char* dir, enum RawstorPkiType type, const char* account,
-    const char* name, unsigned long validity, const char* cert_file,
+    const char* dir, enum RawstorPkiType type, const char* cert_id,
+    const char* client_id, unsigned long validity, const char* cert_file,
     const char* key_file, char* identity, size_t size,
     const struct RawstorPkiPermissions* permissions
 );
@@ -123,8 +125,8 @@ struct RawstorPkiInfo {
     /** Whether the CA given to rawstor_pki_show() signed it: 1 or 0, and -1 if
      * no CA was given. */
     int issued;
-    /** Signed account role and object restrictions; zero for provider
-     * certificates. */
+    /** Signed account role and object restrictions; zero for every type but
+     * an account. */
     struct RawstorPkiPermissions permissions;
 };
 

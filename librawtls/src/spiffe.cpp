@@ -98,22 +98,19 @@ SpiffeId::SpiffeId(const std::string& uri) : _uri(uri), _type(Type::ost) {
 
     if (segments.size() == 2 && segments[0] == "ost" && is_uuid(segments[1])) {
         _type = Type::ost;
-        _name = segments[1];
     } else if (segments.size() == 2 && segments[0] == "mds" &&
                is_uuid(segments[1])) {
         _type = Type::mds;
-        _name = segments[1];
     } else if (segments.size() == 2 && segments[0] == "admin") {
         _type = Type::admin;
-        _name = segments[1];
     } else if (segments.size() == 4 && segments[0] == "account" &&
                is_uuid(segments[1]) && segments[2] == "client") {
-        _type = Type::client;
-        _account = segments[1];
-        _name = segments[3];
+        _type = Type::account;
+        _client_id = segments[3];
     } else {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
+    _cert_id = segments[1];
 }
 
 } // namespace rawtls

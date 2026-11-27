@@ -80,23 +80,28 @@ static void issue_usage(void) {
     fprintf(
         stdout,
         "usage: rawstor pki issue --ca DIR --cert FILE --key FILE "
-        "[--validity DURATION] <process>\n"
+        "[--validity DURATION] <type>\n"
         "\n"
         "Issues a certificate and a new private key for a process, replacing "
         "the files; the\n"
         "key is written with mode 0600. Prints the SPIFFE ID the certificate "
         "names.\n"
         "\n"
-        "process:\n"
-        "  ost [ID]              A rawstor-ost. ID is its id in the MDS "
-        "topology, a UUID;\n"
+        "type:\n"
+        "  ost [CERT_ID]         A rawstor-ost. CERT_ID is its id in the MDS "
+        "topology, a\n"
+        "                        UUID; a new one is made without it\n"
+        "  mds [CERT_ID]         A rawstor-mds. CERT_ID is its id, a UUID like "
+        "an OST's;\n"
         "                        a new one is made without it\n"
-        "  mds [ID]              A rawstor-mds. ID is its id, a UUID like an "
-        "OST's; a new\n"
-        "                        one is made without it\n"
-        "  admin NAME            An operator or a control plane\n"
-        "  client ACCOUNT NAME    An account's client, such as rawstor-vhost; "
-        "ACCOUNT is a UUID\n"
+        "  admin CERT_ID         An operator or a control plane; CERT_ID is "
+        "its name\n"
+        "  account CERT_ID CLIENT_ID\n"
+        "                        A client of an account, such as "
+        "rawstor-vhost; CERT_ID\n"
+        "                        is the account's id, a UUID, and CLIENT_ID "
+        "the client's\n"
+        "                        name\n"
         "\n"
         "options:\n"
         "  --ca DIR              The CA made by `pki init`\n"
@@ -113,21 +118,22 @@ static void issue_usage(void) {
         "  --role ROLE           The account role, the default access: none, "
         "reader,\n"
         "                        writer or manager\n"
-        "                        Required for client certificates\n"
+        "                        Required for account certificates\n"
         "  --validity DURATION   How long the certificate is valid "
         "(default: 7d)\n" RAWSTOR_CLI_OUTPUT_USAGE "\n"
-        "Columns: identity (the SPIFFE ID), type (ost, mds, admin or "
-        "client),\n"
-        "trust_domain, id (of an ost or an mds), name (of an admin or a "
-        "client),\n"
-        "account_id (of a client), not_after (when the certificate expires, "
-        "UTC), issued\n"
-        "(yes), role (of a client) and object_permissions (of a client, as "
-        "UUID:rwx,\n"
-        "- for a missing bit); the ones that do not apply are empty, null in "
-        "json.\n"
-        "`--format value --column id` prints just an OST's or "
-        "an MDS's id.\n"
+        "Columns: identity (the SPIFFE ID, "
+        "spiffe://<trust_domain>/<type>/<cert_id>,\n"
+        "followed by /client/<client_id> for an account), type (ost, mds, "
+        "admin or\n"
+        "account), trust_domain, cert_id, client_id (of an account), "
+        "not_after (when the\n"
+        "certificate expires, UTC), issued (yes), role (of an account) and "
+        "object_permissions\n"
+        "(of an account, as UUID:rwx, - for a missing bit); the ones that do "
+        "not apply are\n"
+        "empty, null in json. `--format value --column cert_id` prints just "
+        "an OST's or an\n"
+        "MDS's id.\n"
     );
 }
 
@@ -318,20 +324,21 @@ static int command_init(int argc, char** argv) {
     return ret;
 }
 
-/* The type and its names from the arguments after the options: `ost [ID]`,
- * `mds [ID]`, `admin NAME`, `client ACCOUNT NAME`. Returns 0, or EX_USAGE. */
+/* The type and its ids from the arguments after the options: `ost [CERT_ID]`,
+ * `mds [CERT_ID]`, `admin CERT_ID`, `account CERT_ID CLIENT_ID`. Returns 0, or
+ * EX_USAGE. */
 static int parse_process(
-    int argc, char** argv, enum RawstorPkiType* type, const char** account,
-    const char** name
+    int argc, char** argv, enum RawstorPkiType* type, const char** cert_id,
+    const char** client_id
 ) {
     if (optind == argc) {
-        fprintf(stderr, "A process is required: ost, mds, admin or client\n");
+        fprintf(stderr, "A type is required: ost, mds, admin or account\n");
         return EX_USAGE;
     }
     const char* process = argv[optind++];
     int rest = argc - optind;
-    *account = NULL;
-    *name = NULL;
+    *cert_id = NULL;
+    *client_id = NULL;
     int min;
     int max;
     if (strcmp(process, "ost") == 0) {
@@ -345,19 +352,20 @@ static int parse_process(
     } else if (strcmp(process, "admin") == 0) {
         *type = RAWSTOR_PKI_ADMIN;
         min = max = 1;
-    } else if (strcmp(process, "client") == 0) {
-        *type = RAWSTOR_PKI_CLIENT;
+    } else if (strcmp(process, "account") == 0) {
+        *type = RAWSTOR_PKI_ACCOUNT;
         min = max = 2;
     } else {
         fprintf(
-            stderr, "Unknown process: %s (ost, mds, admin or client)\n", process
+            stderr, "Unknown type: %s (ost, mds, admin or account)\n", process
         );
         return EX_USAGE;
     }
     if (rest < min) {
         fprintf(
             stderr, "%s needs %s\n", process,
-            *type == RAWSTOR_PKI_CLIENT ? "an account and a name" : "a name"
+            *type == RAWSTOR_PKI_ACCOUNT ? "a cert id and a client id"
+                                         : "a cert id"
         );
         return EX_USAGE;
     }
@@ -365,60 +373,50 @@ static int parse_process(
         fprintf(stderr, "Unexpected argument: %s\n", argv[optind + max]);
         return EX_USAGE;
     }
-    if (*type == RAWSTOR_PKI_CLIENT) {
-        *account = argv[optind];
-        *name = argv[optind + 1];
+    if (*type == RAWSTOR_PKI_ACCOUNT) {
+        *cert_id = argv[optind];
+        *client_id = argv[optind + 1];
     } else if (rest == 1) {
-        *name = argv[optind];
+        *cert_id = argv[optind];
     }
     return 0;
 }
 
 static const char* const identity_columns[] = {
-    "identity",   "type",      "trust_domain", "id",   "name",
-    "account_id", "not_after", "issued",       "role", "object_permissions",
+    "identity", "type",      "trust_domain",
+    "cert_id",  "client_id", "not_after",
+    "issued",   "role",      "object_permissions",
 };
 static const enum RawstorCliColumnType identity_types[] = {
     RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
     RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
     RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
     RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
-    RAWSTOR_CLI_COLUMN_STRING, RAWSTOR_CLI_COLUMN_STRING,
+    RAWSTOR_CLI_COLUMN_STRING,
 };
 #define IDENTITY_NCOLUMNS                                                      \
     (sizeof(identity_columns) / sizeof(identity_columns[0]))
 
 /* The table of one process, from what its certificate says. The library has
  * checked the shape of the ID:
- *   spiffe://<trust domain>/ost/<id>
- *   spiffe://<trust domain>/mds/<id>
- *   spiffe://<trust domain>/admin/<name>
- *   spiffe://<trust domain>/account/<account>/client/<name>
+ *   spiffe://<trust domain>/<type>/<cert_id>
+ *   spiffe://<trust domain>/account/<cert_id>/client/<client_id>
  */
 static RawstorCliTable* identity_table(const struct RawstorPkiInfo* info) {
     char text[RAWSTOR_PKI_IDENTITY_SIZE];
     snprintf(text, sizeof(text), "%s", info->identity);
 
     const char* domain = text + strlen("spiffe://");
-    char* path = strchr(text + strlen("spiffe://"), '/');
-    *path++ = '\0';
-    const char* type = path;
-    const char* id = "";
-    const char* name = "";
-    const char* account_id = "";
-    char* slash = strchr(path, '/');
-    *slash++ = '\0';
-    if (strcmp(type, "ost") == 0 || strcmp(type, "mds") == 0) {
-        id = slash;
-    } else if (strcmp(type, "account") == 0) {
-        /* account/<account>/client/<name> */
-        type = "client";
-        account_id = slash;
-        char* rest = strchr(slash, '/');
+    char* type = strchr(text + strlen("spiffe://"), '/');
+    *type++ = '\0';
+    char* cert_id = strchr(type, '/');
+    *cert_id++ = '\0';
+    const char* client_id = "";
+    char* rest = strchr(cert_id, '/');
+    if (rest != NULL) {
+        /* <cert_id>/client/<client_id> */
         *rest++ = '\0';
-        name = strchr(rest, '/') + 1;
-    } else {
-        name = slash;
+        client_id = strchr(rest, '/') + 1;
     }
     char not_after[32];
     format_time(info->not_after, not_after, sizeof(not_after));
@@ -434,7 +432,7 @@ static RawstorCliTable* identity_table(const struct RawstorPkiInfo* info) {
         info->permissions.role == RAWSTOR_ROLE_READER    ? "reader"
         : info->permissions.role == RAWSTOR_ROLE_WRITER  ? "writer"
         : info->permissions.role == RAWSTOR_ROLE_MANAGER ? "manager"
-        : !strcmp(type, "client")                        ? "none"
+        : !strcmp(type, "account")                       ? "none"
                                                          : "";
     char object_permissions[RAWSTOR_PKI_MAX_OBJECT_PERMISSIONS * 41 + 1] = {0};
     size_t used = 0;
@@ -453,9 +451,8 @@ static RawstorCliTable* identity_table(const struct RawstorPkiInfo* info) {
         rawstor_cli_cell_string(info->identity),
         rawstor_cli_cell_string(type),
         rawstor_cli_cell_string(domain),
-        rawstor_cli_cell_optional(id),
-        rawstor_cli_cell_optional(name),
-        rawstor_cli_cell_optional(account_id),
+        rawstor_cli_cell_string(cert_id),
+        rawstor_cli_cell_optional(client_id),
         rawstor_cli_cell_optional(not_after),
         rawstor_cli_cell_optional(issued),
         rawstor_cli_cell_optional(role),
@@ -648,22 +645,23 @@ static int command_issue(int argc, char** argv, int renew) {
         }
     } else {
         enum RawstorPkiType type;
-        const char* account;
-        const char* name;
-        res = parse_process(argc, argv, &type, &account, &name);
+        const char* cert_id;
+        const char* client_id;
+        res = parse_process(argc, argv, &type, &cert_id, &client_id);
         if (res != 0) {
             return res;
         }
-        if ((type == RAWSTOR_PKI_CLIENT && !role_set) ||
-            (type != RAWSTOR_PKI_CLIENT && (role_set || permissions.count))) {
+        if ((type == RAWSTOR_PKI_ACCOUNT && !role_set) ||
+            (type != RAWSTOR_PKI_ACCOUNT && (role_set || permissions.count))) {
             fprintf(
-                stderr,
-                "--role is required for a client and applies only to clients\n"
+                stderr, "--role is required for an account and applies only to "
+                        "accounts\n"
             );
             return EX_USAGE;
         }
         res = rawstor_pki_issue(
-            ca, type, account, name, validity, cert, key, NULL, 0, &permissions
+            ca, type, cert_id, client_id, validity, cert, key, NULL, 0,
+            &permissions
         );
         if (res != 0) {
             return report("Failed to issue the certificate", res);

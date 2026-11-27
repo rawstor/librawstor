@@ -53,13 +53,15 @@ The one way to run without TLS is to say so, with `--insecure`: see
 | `RAWSTOR_TLS_MDS_ID` | Optional: the id of the MDS this process connects to, a UUID, the last segment of its SPIFFE ID (`0198f1a2-…` for `spiffe://cluster.example/mds/0198f1a2-…`). Every `mds://` connection must then present exactly that ID. |
 
 The SPIFFE ID of a process says what it is:
+`spiffe://<trust_domain>/<type>/<cert_id>`, followed by `/client/<client_id>`
+for an account.
 
-| ID | Process |
-|----|---------|
-| `spiffe://<trust_domain>/ost/<ost_id>` | an OST, `ost_id` being its id in the MDS topology |
-| `spiffe://<trust_domain>/mds/<mds_id>` | an MDS |
-| `spiffe://<trust_domain>/admin/<name>` | an operator or control plane |
-| `spiffe://<trust_domain>/account/<account_id>/client/<name>` | an account's client |
+| `type` | `cert_id` | Process |
+|--------|-----------|---------|
+| `ost` | its id in the MDS topology, a UUID | an OST |
+| `mds` | its id, a UUID | an MDS |
+| `admin` | its name | an operator or control plane |
+| `account` | the account's id, a UUID | a client of the account, `client_id` |
 
 A client takes a server to be an OST or an MDS by its ID: an `ost://` address
 needs an OST and an `mds://` one an MDS. An OST the MDS has resolved must also
@@ -93,7 +95,7 @@ rawstor pki issue --ca ca --cert ost.crt --key ost.key ost       # a new id
 rawstor pki issue --ca ca --cert mds.crt --key mds.key mds       # a new id
 rawstor pki issue --ca ca --cert hv1.crt --key hv1.key admin hv1
 rawstor pki issue --ca ca --cert vm.crt --key vm.key \
-  --role none --object-permissions <object-uuid>:rw- client <account-uuid> vm-1
+  --role none --object-permissions <object-uuid>:rw- account <account-uuid> vm-1
 rawstor pki renew --ca ca --cert ost.crt --key ost.key
 rawstor pki show ost.crt                                        # what it says
 ```
@@ -104,10 +106,10 @@ Mask `3` permits reading, writing and discarding data.
 
 A CA is made for the trust domain of one deployment and keeps it, so every
 certificate it issues is in it. `issue` writes a certificate and a new key
-(mode 0600) for a process, replacing the files. The process is `ost [ID]` (the
-id is the one in the MDS topology, a UUID), `mds [ID]` (the id of the MDS, a UUID
-as well), each with a new id if it is not given, `admin NAME` or
-`client ACCOUNT NAME`. `renew` does the same for the
+(mode 0600) for a process, replacing the files. The process is given by its
+type and ids: `ost [CERT_ID]` (the id in the MDS topology, a UUID),
+`mds [CERT_ID]` (the id of the MDS, a UUID as well), each with a new id if it is
+not given, `admin CERT_ID` or `account CERT_ID CLIENT_ID`. `renew` does the same for the
 process of a certificate this CA issued, over the same files, and the running
 process reads them again on `SIGHUP` or `SIGUSR1`.
 
@@ -117,13 +119,13 @@ process reads them again on `SIGHUP` or `SIGUSR1`.
 
 `issue`, `renew` and `show` print what a certificate says, as the other
 commands print their data (`--format table|json|value`, `--column`):
-`identity` (the SPIFFE ID), `type` (`ost`, `mds`, `admin` or `client`),
-`trust_domain`, `id` (of an OST or an MDS), `name` (of an admin or a client),
-`account_id` (of a client), `not_after` (when it expires, UTC), `issued`
-(whether the CA signed it), and the signed [authorization](#authorization) of a
-client: `role` and `object_permissions`. The ones the type does not have are
-empty, `null` in json; `--format value --column id` is how a script
-gets the id of a new OST or MDS.
+`identity` (the SPIFFE ID), its parts `type` (`ost`, `mds`, `admin` or
+`account`), `trust_domain`, `cert_id` and `client_id` (of an account),
+`not_after` (when it expires, UTC), `issued` (whether the CA signed it), and the
+signed [authorization](#authorization) of an account: `role` and
+`object_permissions`. The ones the type does not have are empty, `null` in
+json; `--format value --column cert_id` is how a script gets the id of a new OST
+or MDS.
 
 `show` reads a certificate and changes nothing: it is how the id is read from
 a certificate that was issued earlier, and, given the CA with `--ca`, whether
@@ -139,7 +141,7 @@ certificates short.
 The same is available to programs: `rawstor_pki_init()`, `rawstor_pki_issue()`
 `rawstor_pki_renew()` and `rawstor_pki_show()` in `<rawstor/pki.h>`, which need no
 `rawstor_initialize()`, and `rawstor.pki` (`init()`, `issue_ost()`,
-`issue_mds()`, `issue_admin()`, `issue_client()`, `renew()`, `show()`) in
+`issue_mds()`, `issue_admin()`, `issue_account()`, `renew()`, `show()`) in
 pyrawstor, which
 does not start rawstor when imported, so a program can make its certificates and
 set `RAWSTOR_TLS_*` before it first uses `Location` or `Target`.
@@ -207,14 +209,14 @@ Issue client credentials on the CA machine:
 
 ```sh
 rawstor pki issue --ca ca --cert client.crt --key client.key \
-  --role manager client 018f4e2a-2222-7000-8000-000000000001 account-manager
+  --role manager account 018f4e2a-2222-7000-8000-000000000001 account-manager
 ```
 
-`--role` is required for a client: `none` grants no default permissions,
+`--role` is required for an account: `none` grants no default permissions,
 `reader` reads and lists objects, `writer`
 adds writes and discards, and `manager` adds creation, deletion and version
 management. The role is that of a client in its account; the `type` column of
-`pki show` tells a client from the processes that have no role. Provider
+`pki show` tells an account from the processes that have no role. Provider
 `admin` certificates manage accounts, objects and ownership; `mds` certificates
 scan OST metadata and probe the space of OSTs. Neither provider type may open
 an object, read or write data, and OST certificates grant no provider
@@ -232,7 +234,7 @@ rawstor pki issue --ca ca --cert restricted-manager.crt --key restricted-manager
   --role manager \
   --object-permissions 018f4e2a-2222-7000-8000-000000000002:r-- \
   --object-permissions 018f4e2a-2222-7000-8000-000000000003:--- \
-  client 018f4e2a-2222-7000-8000-000000000001 restricted-manager
+  account 018f4e2a-2222-7000-8000-000000000001 restricted-manager
 rawstor pki show restricted-manager.crt
 ```
 
@@ -243,7 +245,7 @@ read/write/discard (`rw-`):
 rawstor pki issue --ca ca --cert vhost.crt --key vhost.key \
   --role none \
   --object-permissions 018f4e2a-2222-7000-8000-000000000002:rw- \
-  client 018f4e2a-2222-7000-8000-000000000001 vhost-1
+  account 018f4e2a-2222-7000-8000-000000000001 vhost-1
 ```
 
 All other objects, including ones created later, are denied. The same grant
@@ -274,8 +276,8 @@ A configured CRL is checked on new TLS connections.
 
 The C API in `<rawstor/pki.h>` accepts `RawstorPkiPermissions` in
 `rawstor_pki_issue()` and returns it in `RawstorPkiInfo.permissions`.
-Python `pki.issue_client(..., role="none", object_permissions={UUID: 3})` does
-the same; `pki.show()` returns `role` and `object_permissions`.
+Python `pki.issue_account(..., role="none", object_permissions={UUID: 3})` does
+the same; `pki.show()` returns the same fields as `rawstor pki show`.
 
 An external CA must issue the [authorization extension](protocol.md#authorization)
 in addition to the SPIFFE SAN. Missing permissions grant no account access;

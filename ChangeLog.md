@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An OST is available to the MDS for three heartbeats (`RAWSTOR_MDS_OPTS_HEARTBEAT_INTERVAL`) after it registers, instead of being probed; `RAWSTOR_MDS_OPTS_INFO_CONCURRENCY` is gone.
 - The space `rawstor location info mds://` reports is sampled by the OSTs themselves, every `RAWSTOR_MDS_OPTS_INFO_INTERVAL` and `RAWSTOR_MDS_OPTS_INFO_REFRESH_DELAY` after they created or removed a member or a version.
 - `rawstor-ost@<uuid>` runs with `--id=<uuid>`: with TLS, an instance whose certificate is for another id does not start.
+- A certificate's type is the first segment of its SPIFFE ID, `ost`, `mds`, `admin` or `account` (not `client`), and `rawstor pki show`, `issue` and `renew` print the next segment as `cert_id` and an account's client as `client_id`, instead of `id`, `name` and `account_id`; a client certificate is issued as `account CERT_ID CLIENT_ID` (`RAWSTOR_PKI_ACCOUNT`, pyrawstor `pki.issue_account()`).
 - `rawstor-mds --reconstruct` waits a lease for the OSTs to register and rebuilds the map from the ones that have, answering only registrations meanwhile.
 
 ## [0.3.6] - 2026-11-26
