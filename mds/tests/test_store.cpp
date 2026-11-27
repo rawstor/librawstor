@@ -162,12 +162,14 @@ TEST_F(ObjectStoreTest, a_connection_string_it_does_not_take_is_refused) {
         "postgresql://localhost/mds",            // not supported
         "sqlite://localhost" + path,             // an authority
         "sqlite://" + dir.path().string() + "/", // no file
+        "sqlite://" + path + "?mode=ro",         // a query
+        "sqlite://" + path + "#main",            // a fragment
     };
     for (const std::string& uri : uris) {
         SCOPED_TRACE(uri);
         EXPECT_EQ(errno_of([&] { ObjectStore store(uri); }), EINVAL);
     }
-    EXPECT_FALSE(std::filesystem::exists(path));
+    EXPECT_TRUE(std::filesystem::is_empty(dir.path()));
 }
 
 TEST_F(ObjectStoreTest, create_populates_chunk_map) {

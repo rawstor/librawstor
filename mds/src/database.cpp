@@ -16,9 +16,12 @@
 namespace {
 
 // The SQLite file a `sqlite:///path` connection string names; EINVAL for any
-// other form of it.
+// other form of it. A query or a fragment is refused rather than taken as
+// part of the file name.
 std::string sqlite_path(const rawstd::URI& uri) {
-    if (!uri.authority().empty() || uri.path().filename().empty()) {
+    const std::string& path = uri.path().str();
+    if (!uri.authority().empty() || uri.path().filename().empty() ||
+        path.find_first_of("?#") != std::string::npos) {
         rawstd_error(
             "Invalid SQLite connection string %s: expected "
             "sqlite:///path/to/file\n",
@@ -26,7 +29,7 @@ std::string sqlite_path(const rawstd::URI& uri) {
         );
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
-    return uri.path().str();
+    return path;
 }
 
 void check_scheme(const rawstd::URI& uri) {

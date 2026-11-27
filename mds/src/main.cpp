@@ -756,11 +756,12 @@ int main(int argc, char** argv) {
 
     rawstd_info("Rawstor MDS server %s\n", PACKAGE_VERSION);
 
+    // validate() has logged why, without a password the string may hold; the
+    // argument itself is not printed for the same reason.
     try {
         rawstor::mdsserver::db::Database::validate(db_arg);
     } catch (const std::system_error&) {
-        std::cerr << "Invalid database connection string: " << db_arg
-                  << std::endl;
+        std::cerr << "Invalid database connection string" << std::endl;
         rawstor_terminate();
         return EX_USAGE;
     }
