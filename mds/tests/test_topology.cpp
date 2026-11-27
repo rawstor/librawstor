@@ -1,9 +1,11 @@
 #include <mds/topology.hpp>
 
+#include "ost_registration.hpp"
+
 #include <rawstd/uuid.h>
 
-#include <sstream>
 #include <string>
+#include <system_error>
 
 #include <gtest/gtest.h>
 
@@ -13,126 +15,25 @@ using rawstor::mdsserver::Level;
 using rawstor::mdsserver::Topology;
 using rawstor::mdsserver::TopologyOST;
 
-TEST(TopologyTest, parse_single_ost) {
-    std::istringstream in(
-        "00000000-0000-7000-8000-000000000001 ost://127.0.0.1:8753 100 "
-        "data,witness "
-        "dc1/row1/rack1/host1\n"
-    );
-
-    Topology t = Topology::parse(in);
-
-    ASSERT_EQ(t.osts().size(), 1u);
-    const TopologyOST& ost = t.osts().front();
-    EXPECT_EQ(ost.location, "ost://127.0.0.1:8753");
-    EXPECT_EQ(ost.weight, 100u);
-    EXPECT_EQ(ost.path[0], "dc1");
-    EXPECT_EQ(ost.path[1], "row1");
-    EXPECT_EQ(ost.path[2], "rack1");
-    EXPECT_EQ(ost.path[3], "host1");
+TopologyOST ost_in(const char* id, const char* domain) {
+    TopologyOST ost{};
+    EXPECT_EQ(rawstd_uuid_from_string(&ost.id, id), 0);
+    rawstor::split_domain(domain, ost.path);
+    return ost;
 }
 
-TEST(TopologyTest, parse_skips_comments_and_blank_lines) {
-    std::istringstream in(
-        "# a comment\n"
-        "\n"
-        "00000000-0000-7000-8000-000000000001 ost://127.0.0.1:8753 100 "
-        "data,witness "
-        "dc1/row1/rack1/host1 # trailing comment\n"
-    );
-
-    Topology t = Topology::parse(in);
-
-    ASSERT_EQ(t.osts().size(), 1u);
-}
-
-TEST(TopologyTest, parse_multiple_osts) {
-    std::istringstream in(
-        "00000000-0000-7000-8000-000000000001 ost://127.0.0.1:8753 100 "
-        "data,witness "
-        "dc1/row1/rack1/host1\n"
-        "00000000-0000-7000-8000-000000000002 ost://127.0.0.1:8754 100 "
-        "data,witness "
-        "dc1/row1/rack1/host2\n"
-    );
-
-    Topology t = Topology::parse(in);
-
-    EXPECT_EQ(t.osts().size(), 2u);
-}
-
-TEST(TopologyTest, parse_accepts_any_backend_location) {
-    std::istringstream in(
-        "00000000-0000-7000-8000-000000000001 file:///srv/ost1 100 "
-        "data,witness "
-        "dc1/row1/rack1/host1\n"
-    );
-
-    Topology t = Topology::parse(in);
-
-    ASSERT_EQ(t.osts().size(), 1u);
-    EXPECT_EQ(t.osts().front().location, "file:///srv/ost1");
-}
-
-TEST(TopologyTest, parse_rejects_multiple_location_uris) {
-    std::istringstream in(
-        "00000000-0000-7000-8000-000000000001 "
-        "ost://127.0.0.1:8753,ost://127.0.0.1:8754 100 data,witness "
-        "dc1/row1/rack1/host1\n"
-    );
-
-    EXPECT_THROW(Topology::parse(in), std::system_error);
-}
-
-TEST(TopologyTest, parse_rejects_malformed_entry) {
-    std::istringstream in(
-        "00000000-0000-7000-8000-000000000001 ost://127.0.0.1:8753\n"
-    );
-
-    EXPECT_THROW(Topology::parse(in), std::system_error);
-}
-
-TEST(TopologyTest, parse_rejects_trailing_tokens) {
-    std::istringstream in(
-        "00000000-0000-7000-8000-000000000001 ost://127.0.0.1:8753 100 "
-        "data,witness "
-        "dc1/row1/rack1/host1 extra\n"
-    );
-
-    EXPECT_THROW(Topology::parse(in), std::system_error);
-}
-
-TEST(TopologyTest, parse_rejects_malformed_ost_id) {
-    std::istringstream in(
-        "not-a-uuid ost://127.0.0.1:8753 100 data,witness "
-        "dc1/row1/rack1/host1\n"
-    );
-
-    EXPECT_THROW(Topology::parse(in), std::system_error);
-}
+} // namespace
 
 // The path goes root first and only the server is required: a level an
 // entry leaves out is one implicit domain shared by every entry that
 // leaves it out too.
-TEST(TopologyTest, parse_accepts_path_without_head) {
-    std::istringstream in(
-        "00000000-0000-7000-8000-000000000001 ost://127.0.0.1:8753 100 "
-        "data,witness "
-        "rack1/host1\n"
-        "00000000-0000-7000-8000-000000000002 ost://127.0.0.1:8754 100 "
-        "data,witness "
-        "rack2/host2\n"
-        "00000000-0000-7000-8000-000000000003 ost://127.0.0.1:8755 100 "
-        "data,witness "
-        "host3\n"
-    );
+TEST(TopologyTest, a_domain_may_leave_out_its_head) {
+    TopologyOST a =
+        ost_in("00000000-0000-7000-8000-000000000001", "rack1/host1");
+    TopologyOST b =
+        ost_in("00000000-0000-7000-8000-000000000002", "rack2/host2");
+    TopologyOST c = ost_in("00000000-0000-7000-8000-000000000003", "host3");
 
-    Topology t = Topology::parse(in);
-
-    ASSERT_EQ(t.osts().size(), 3u);
-    const TopologyOST& a = t.osts()[0];
-    const TopologyOST& b = t.osts()[1];
-    const TopologyOST& c = t.osts()[2];
     EXPECT_EQ(a.path[3], "host1");
     EXPECT_EQ(a.path[2], "rack1");
     EXPECT_EQ(a.path[1], "");
@@ -146,52 +47,38 @@ TEST(TopologyTest, parse_accepts_path_without_head) {
     EXPECT_NE(c.domain(Level::Rack), b.domain(Level::Rack));
 }
 
-TEST(TopologyTest, parse_rejects_malformed_path) {
-    for (const char* path :
-         {"row1//host1", "region1/dc1/row1/rack1/host1", "/rack1", "host1/"}) {
-        std::istringstream in(
-            std::string(
-                "00000000-0000-7000-8000-000000000001 "
-                "ost://127.0.0.1:8753 100 data,witness "
-            ) +
-            path + "\n"
-        );
-        EXPECT_THROW(Topology::parse(in), std::system_error) << path;
+TEST(TopologyTest, a_malformed_domain_is_rejected) {
+    for (const char* domain :
+         {"", "row1//host1", "region1/dc1/row1/rack1/host1", "/rack1",
+          "host1/"}) {
+        std::string path[4];
+        EXPECT_THROW(rawstor::split_domain(domain, path), std::system_error)
+            << domain;
     }
 }
 
 TEST(TopologyTest, add_rejects_duplicate_ost_id) {
     Topology t;
-    TopologyOST ost{};
-    ASSERT_EQ(
-        rawstd_uuid_from_string(
-            &ost.id, "00000000-0000-7000-8000-000000000001"
-        ),
-        0
-    );
+    TopologyOST ost =
+        ost_in("00000000-0000-7000-8000-000000000001", "dc1/row1/rack1/host1");
     ost.location = "ost://127.0.0.1:8753";
     ost.weight = 100;
-    ost.path[0] = "dc1";
-    ost.path[1] = "row1";
-    ost.path[2] = "rack1";
-    ost.path[3] = "host1";
 
     t.add(ost);
     EXPECT_THROW(t.add(ost), std::system_error);
 }
 
+TEST(TopologyTest, add_rejects_an_entry_without_a_role) {
+    Topology t;
+    TopologyOST ost =
+        ost_in("00000000-0000-7000-8000-000000000001", "dc1/row1/rack1/host1");
+    ost.roles.clear();
+    EXPECT_THROW(t.add(ost), std::system_error);
+}
+
 TEST(TopologyTest, domain_identity_by_level) {
-    TopologyOST ost{};
-    ASSERT_EQ(
-        rawstd_uuid_from_string(
-            &ost.id, "00000000-0000-7000-8000-000000000001"
-        ),
-        0
-    );
-    ost.path[0] = "dc1";
-    ost.path[1] = "row1";
-    ost.path[2] = "rack1";
-    ost.path[3] = "host1";
+    TopologyOST ost =
+        ost_in("00000000-0000-7000-8000-000000000001", "dc1/row1/rack1/host1");
 
     EXPECT_EQ(ost.domain(Level::DC), "dc1");
     EXPECT_EQ(ost.domain(Level::Row), "dc1/row1");
@@ -210,16 +97,10 @@ TEST(TopologyTest, domain_identity_uses_full_path_not_last_component) {
     // Two "host1" in different racks are different domains (own doc
     // comment, topology.hpp) -- the full path prefix, not the leaf name
     // alone, is what makes a domain's identity.
-    TopologyOST a{};
-    a.path[0] = "dc1";
-    a.path[1] = "row1";
-    a.path[2] = "rack1";
-    a.path[3] = "host1";
-    TopologyOST b{};
-    b.path[0] = "dc1";
-    b.path[1] = "row1";
-    b.path[2] = "rack2";
-    b.path[3] = "host1";
+    TopologyOST a =
+        ost_in("00000000-0000-7000-8000-000000000001", "dc1/row1/rack1/host1");
+    TopologyOST b =
+        ost_in("00000000-0000-7000-8000-000000000002", "dc1/row1/rack2/host1");
 
     EXPECT_NE(a.domain(Level::Server), b.domain(Level::Server));
 }
@@ -232,51 +113,3 @@ TEST(TopologyTest, level_of_rejects_default_and_unknown_levels) {
     EXPECT_THROW(rawstor::mdsserver::level_of(0), std::system_error);
     EXPECT_THROW(rawstor::mdsserver::level_of(6), std::system_error);
 }
-
-TEST(TopologyTest, roles_are_explicit_and_order_independent) {
-    using rawstor::mdsserver::Role;
-    for (const auto& role :
-         {"data", "witness", "data,witness", "witness,data"}) {
-        std::istringstream in(
-            std::string(
-                "00000000-0000-7000-8000-000000000001 ost://127.0.0.1:7776 100 "
-            ) +
-            role + " host1\n"
-        );
-        auto topology = Topology::parse(in);
-        const auto& backend = topology.osts().front();
-        const std::string roles(role);
-        EXPECT_EQ(
-            backend.supports(Role::Data),
-            roles.find("data") != std::string::npos
-        );
-        EXPECT_EQ(
-            backend.supports(Role::Witness),
-            roles.find("witness") != std::string::npos
-        );
-    }
-}
-
-TEST(TopologyTest, rejects_missing_invalid_or_duplicate_roles) {
-    for (const auto& role :
-         {"", "unknown", "data,", ",witness", "data,,witness", "data,data",
-          "data,witness,other"}) {
-        std::istringstream in(
-            std::string(
-                "00000000-0000-7000-8000-000000000001 ost://127.0.0.1:7777 100 "
-            ) +
-            role + " host1\n"
-        );
-        EXPECT_THROW(Topology::parse(in), std::system_error) << role;
-    }
-}
-
-TEST(TopologyTest, rejects_logical_mds_locations) {
-    std::istringstream in(
-        "00000000-0000-7000-8000-000000000001 mds://127.0.0.1:7776 100 witness "
-        "host1\n"
-    );
-    EXPECT_THROW(Topology::parse(in), std::system_error);
-}
-
-} // namespace

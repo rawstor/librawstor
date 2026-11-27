@@ -217,6 +217,15 @@ extern "C" {
  * SET_OWNER, and again with the owner it then reads, until they agree.
  */
 #define RAWSTOR_CMD_OBJ_TRANSFER 0x49
+/*
+ * OST_REGISTER: an OST enters itself in the topology of the MDS of its cluster
+ * (docs/mds.md, "OST registration"), and keeps it alive by sending it again
+ * every heartbeat interval: rides RawstorFrameOstRegister, its response
+ * payload is a RawstorFrameOstRegisteredPayload. Only an OST sends it, with its
+ * own id (-EPERM for another one, -EACCES for any other peer). An OST answers
+ * -ENOSYS.
+ */
+#define RAWSTOR_CMD_OST_REGISTER 0x4a
 
 typedef uint16_t RawstorCommandType;
 
@@ -422,6 +431,52 @@ struct RawstorFrameLocationPage {
 
 struct RawstorFrameLocationEntry {
     uint16_t location_len;
+} RAWSTOR_PACKED;
+
+/*
+ * OST_REGISTER's request: the OST `ost_id`, reached at the location URI of the
+ * `location_len` bytes that follow the payload, placed under the failure
+ * domain path of the `domain_len` bytes after them ("[[[dc/]row/]rack/]server",
+ * neither null-terminated), taking new chunks in proportion to `weight`.
+ * With RAWSTOR_OST_SAMPLED in `flags`, `used`/`total` (as LOCATION_INFO
+ * reports them) and `members`/`members_hash` (the member digest, docs/mds.md)
+ * are its latest sample; without it they are 0 and the MDS keeps the sample it
+ * has. RAWSTOR_OST_LEAVING says the OST is stopping: the MDS places nothing
+ * more on it until it registers again.
+ */
+struct RawstorFrameOstRegisterPayload {
+    uint8_t ost_id[16];
+    uint64_t weight;
+    uint64_t used;
+    uint64_t total;
+    uint64_t members;
+    uint64_t members_hash;
+    uint8_t flags; /* RAWSTOR_OST_* */
+    uint8_t reserved[3];
+    uint16_t location_len;
+    uint16_t domain_len;
+} RAWSTOR_PACKED;
+
+#define RAWSTOR_OST_SAMPLED (1u << 0)
+#define RAWSTOR_OST_LEAVING (1u << 1)
+
+struct RawstorFrameOstRegister {
+    struct RawstorFrameHead head;
+    struct RawstorFrameOstRegisterPayload payload;
+} RAWSTOR_PACKED;
+
+/*
+ * OST_REGISTER's response, in milliseconds: how long until the OST registers
+ * again (`heartbeat_interval`; an OST that has not registered for three of
+ * them is unavailable), how long a sample is good for (`info_interval`), and
+ * how long after a member was created or removed it takes the next one
+ * (`info_refresh_delay`). `reserved` is 0.
+ */
+struct RawstorFrameOstRegisteredPayload {
+    uint32_t heartbeat_interval;
+    uint32_t info_interval;
+    uint32_t info_refresh_delay;
+    uint32_t reserved;
 } RAWSTOR_PACKED;
 
 /* ACCOUNT_CREATE / ACCOUNT_REMOVE request payload. */
@@ -936,6 +991,8 @@ RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameAccountEntry, 16);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameListLocationsPayload, 20);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameLocationPage, 16);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameLocationEntry, 2);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameOstRegisterPayload, 64);
+RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameOstRegisteredPayload, 16);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameAccountOpPayload, 32);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorFrameIOPayload, 29);
 RAWSTOR_PROTOCOL_ASSERT_SIZE(RawstorObjectBallot, 16);

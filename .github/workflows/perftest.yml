@@ -14,8 +14,9 @@ jobs:
         - 
         - --without-liburing
         # Every object goes through an MDS (chunked and placed by it, one
-        # copy per chunk) onto the one store its topology lists: a local
-        # directory, or a rawstor-ost serving one.
+        # copy per chunk) onto the one store registered with it: a local
+        # directory the clients reach directly, or a rawstor-ost serving
+        # one.
         backend:
         - file
         - ost
@@ -87,18 +88,17 @@ jobs:
         echo "RAWSTOR_TLS_CERT=${PWD}/cli.pem" >> $GITHUB_ENV
         echo "RAWSTOR_TLS_KEY=${PWD}/cli.key" >> $GITHUB_ENV
         echo "RAWSTOR_TLS_CA=${PWD}/ca/ca.crt" >> $GITHUB_ENV
-    - name: (ost) start rawstor-ost
-      if: "${{ matrix.backend == 'ost' }}"
-      run: |
-        mkdir ${GITHUB_WORKSPACE}/objects
-        env $(cat ${GITHUB_WORKSPACE}/pki/ost.env) rawstor-ost --bind 127.0.0.1:7777 file://${GITHUB_WORKSPACE}/objects &
-        sleep 10
     - name: start rawstor-mds
       run: |
-        mkdir -p /tmp/objects
-        echo "${OST_ID} ${{ matrix.store }} 100 data,witness host1" > ${GITHUB_WORKSPACE}/topology.conf
-        env $(cat ${GITHUB_WORKSPACE}/pki/mds.env) rawstor-mds --bind 127.0.0.1:7776 --db ${GITHUB_WORKSPACE}/mds.db --topology ${GITHUB_WORKSPACE}/topology.conf &
+        env $(cat ${GITHUB_WORKSPACE}/pki/mds.env) rawstor-mds --bind 127.0.0.1:7776 --db ${GITHUB_WORKSPACE}/mds.db &
         sleep 5
+    - name: start rawstor-ost
+      # Registers the store with the MDS at the location the clients reach
+      # it at: this OST, or the directory itself for the file backend.
+      run: |
+        mkdir -p /tmp/objects
+        env $(cat ${GITHUB_WORKSPACE}/pki/ost.env) rawstor-ost --bind 127.0.0.1:7777 --id ${OST_ID} --mds mds://127.0.0.1:7776 --advertise ${{ matrix.store }} --domain-path host1 file:///tmp/objects &
+        sleep 10
     - name: create object
       run: |
         target=$(rawstor object create mds://127.0.0.1:7776 --size=1G --chunk-size=256M --mirrors=1 --format value --column target)
@@ -129,11 +129,10 @@ jobs:
         if-no-files-found: error
     - name: remove object
       run: rawstor object remove ${TARGET}
+    - name: stop rawstor-ost
+      run: killall rawstor-ost
     - name: stop rawstor-mds
       run: killall rawstor-mds
-    - name: (ost) stop rawstor-ost
-      if: "${{ matrix.backend == 'ost' }}"
-      run: killall rawstor-ost
 
   export:
     needs: perftest

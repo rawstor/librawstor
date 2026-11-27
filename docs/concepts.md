@@ -470,8 +470,8 @@ target.
 - **On naming**: this document's "Location"/"Target" pair, and the
   Object/Chunk/Slot model above, could arguably be called a "topology" —
   but that word is already taken: [mds.md](mds.md) uses "topology" for a
-  different, unrelated concept (the MDS's own static list of known OSTs,
-  `TOPOLOGY_PATH`/`topology.conf`, scanned by `rawstor-mds --reconstruct`).
+  different, unrelated concept (the OSTs registered with an MDS, kept in its
+  database and scanned by `rawstor-mds --reconstruct`).
   Reusing it here for this document would make the two docs' shared
   vocabulary actively misleading, so this file keeps its current name.
 
@@ -526,7 +526,7 @@ member is unreachable.
 
 
 For new MDS chunks with an even DATA width, placement adds a witness on an
-unused failure domain. The required topology `role` column permits `data`,
-`witness` or both (`data,witness` in either order), independently of URI.
-MDS backends use `ost://` with role `witness`. With no eligible
-extra failure domain, placement fails instead of silently leaving out a witness.
+unused failure domain: an OST, a DATA and witness candidate each, or the
+witness the MDS hosts itself (`rawstor-mds --advertise`), an `ost://` location
+at the MDS endpoint. With no eligible extra failure domain, placement fails
+instead of silently leaving out a witness.

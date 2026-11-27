@@ -1,14 +1,18 @@
-#include <mds/monitor.hpp>
 #include <mds/opts.hpp>
+#include <mds/reconciler.hpp>
 #include <mds/server.hpp>
+
+#include "ost_registration.hpp"
 
 #include "config.h"
 #include "opts.h"
+#include "tls.hpp"
 #include <rawtls/ca.hpp>
 
 #include <rawstd/exitcode.h>
 #include <rawstd/logging.hpp>
 #include <rawstd/pipe.hpp>
+#include <rawstd/uri.hpp>
 #include <rawstd/uuid.h>
 
 #include <rawstor/location.h>
@@ -18,6 +22,8 @@
 #include <signal.h>
 #include <unistd.h>
 
+#include <atomic>
+#include <chrono>
 #include <iostream>
 #include <sstream>
 #include <system_error>
@@ -56,13 +62,18 @@ public:
 };
 
 constexpr int opt_insecure = 1000;
+constexpr int opt_id = 1001;
+constexpr int opt_advertise = 1002;
+constexpr int opt_weight = 1003;
+constexpr int opt_domain_path = 1004;
+
+constexpr uint64_t default_weight = 100;
 
 void usage() {
     std::cout
         << "Rawstor MDS server " << PACKAGE_VERSION << std::endl
         << std::endl
-        << "usage: rawstor-mds [options] -b ADDR -d DBPATH -t TOPOLOGY"
-        << std::endl
+        << "usage: rawstor-mds [options] -b ADDR -d DBPATH" << std::endl
         << std::endl
         << "options:" << std::endl
         << "  -h, --help            Show this help message and exit."
@@ -71,9 +82,11 @@ void usage() {
         << DEFAULT_QUEUE_SIZE << ")" << std::endl
         << "  -r, --reconstruct     Rebuild the map from a LIST+META scan"
         << std::endl
-        << "                        of every OST in the topology before"
+        << "                        of the OSTs registered once a lease has"
         << std::endl
-        << "                        serving (docs/mds.md)" << std::endl
+        << "                        passed and every OST of the topology has"
+        << std::endl
+        << "                        (docs/mds.md)" << std::endl
         << "  --insecure            "
            "Run without TLS: plaintext, and no peer is authenticated"
         << std::endl
@@ -81,18 +94,38 @@ void usage() {
         << "  -w, --workers N       Number of worker threads (default: "
         << DEFAULT_WORKERS << ")" << std::endl
         << std::endl
+        << "witness hosted by this MDS (all optional; none without "
+           "--advertise):"
+        << std::endl
+        << "  --advertise LOCATION  Location the clients reach the witness at,"
+        << std::endl
+        << "                        ost://<this host>:<port>" << std::endl
+        << "  --domain-path PATH    Its failure domain, "
+           "[[[dc/]row/]rack/]server"
+        << std::endl
+        << "  --weight N            Its share of new witnesses (default: "
+        << default_weight << ")" << std::endl
+        << "  --id UUID             This MDS's id, required with --insecure;"
+        << std::endl
+        << "                        otherwise that of its certificate"
+        << std::endl
+        << std::endl
         << "required arguments:" << std::endl
         << "  -b, --bind ADDR       Bind address in the format <ip>[:<port>]"
         << std::endl
         << "                        (the port defaults to " << DEFAULT_PORT
         << ")." << std::endl
         << "  -d, --db PATH         SQLite database file (created if missing)"
-        << std::endl
-        << "  -t, --topology PATH   Static topology config file "
-           "(docs/mds.md);"
-        << std::endl
-        << "                        re-read on SIGHUP" << std::endl;
+        << std::endl;
 }
+
+// The witness this MDS hosts itself, if it was told where clients reach it.
+struct LocalWitness {
+    std::string id;
+    std::string location;
+    std::string domain;
+    uint64_t weight = default_weight;
+};
 
 // Drives one async rawstor_location_*() call to completion synchronously
 // -- same shape as cli/rawio_sync.c's own RawstorCliOp, kept as a local
@@ -153,7 +186,7 @@ void scan_ost(
             rawstor_string_list_delete(targets);
             throw std::system_error(
                 static_cast<int>(-r), std::generic_category(),
-                "LIST failed for " + location
+                "LIST failed for " + rawstor::printable_location(location)
             );
         }
 
@@ -240,17 +273,58 @@ void scan_ost(
     } while (!rawstor_pagination_token_empty(&token));
 }
 
-// rawstor-mds --reconstruct (docs/mds.md, "Reconstruct / DR"): rebuilds
-// the whole map from a scan of every OST in the topology. No partial
-// scans, by construction (see ObjectStore::reconstruct()'s own doc
-// comment): any OST that doesn't answer LIST at all aborts the whole
-// reconstruct rather than silently dropping its live copies from the map
-// (see scan_ost()'s own doc comment for the softer per-object tolerance
-// on META).
+// rawstor-mds --reconstruct (docs/mds.md, "Reconstruct / DR"): waits a lease,
+// three heartbeat intervals from the start, in which every OST that runs
+// registers, then rebuilds the whole map from a scan of the OSTs that have.
+// An OST that has not is left out, as a dead one would be: the OSTs of the
+// topology of the database, if it has one, that are missing are logged. No
+// partial scans of an OST, by construction (see ObjectStore::reconstruct()'s
+// own doc comment): any OST scanned that doesn't answer LIST at all aborts the
+// whole reconstruct rather than silently dropping its live copies from the map
+// (see scan_ost()'s own doc comment for the softer per-object tolerance on
+// META). `stop` gives the wait up.
 void reconstruct(
-    const rawstor::mdsserver::Topology& topology,
-    rawstor::mdsserver::ObjectStore& store
+    rawstor::mdsserver::ObjectStore& store,
+    const std::vector<RawstdUUID>& known, std::chrono::milliseconds lease,
+    const std::atomic<bool>& stop
 ) {
+    rawstd_info(
+        "reconstruct: waiting %lld ms for the OSTs to register\n",
+        (long long)lease.count()
+    );
+    const auto settled = std::chrono::steady_clock::now() + lease;
+    while (std::chrono::steady_clock::now() < settled) {
+        if (stop) {
+            RAWSTD_THROW_SYSTEM_ERROR(ECANCELED);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    std::vector<rawstor::mdsserver::TopologyOST> osts = store.available_osts();
+    std::string missing;
+    size_t nmissing = 0;
+    for (const RawstdUUID& id : known) {
+        bool found = false;
+        for (const rawstor::mdsserver::TopologyOST& ost : osts) {
+            if (rawstd_uuid_cmp(&ost.id, &id) == 0) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            RawstdUUIDString name;
+            rawstd_uuid_to_string(&id, &name);
+            missing += std::string(nmissing++ == 0 ? "" : " ") + name;
+        }
+    }
+    if (nmissing != 0) {
+        rawstd_warning(
+            "reconstruct: %zu OST(s) of the topology did not register and are "
+            "left out: %s\n",
+            nmissing, missing.c_str()
+        );
+    }
+
     RawIOQueue* queue;
     int res = rawio_queue_create(256, &queue);
     if (res < 0) {
@@ -259,20 +333,20 @@ void reconstruct(
 
     std::vector<rawstor::mdsserver::ScanRecord> records;
     try {
-        for (const rawstor::mdsserver::TopologyOST& ost : topology.osts()) {
-            // Witness-only candidates contain no recoverable DATA or CoW
-            // versions; an MDS candidate may also be offline during startup.
-            if (ost.witness_only()) {
-                continue;
-            }
+        for (const rawstor::mdsserver::TopologyOST& ost : osts) {
             const std::string& location = ost.location;
             RawstdUUIDString ost_id_string;
             rawstd_uuid_to_string(&ost.id, &ost_id_string);
             rawstd_info(
-                "reconstruct: scanning %s (%s)\n", location.c_str(),
-                ost_id_string
+                "reconstruct: scanning %s (%s)\n",
+                rawstor::printable_location(location).c_str(), ost_id_string
             );
 
+            // With TLS the server at the address must be that OST.
+            rawstd::URI uri(location);
+            if (uri.scheme() == "ost") {
+                rawstor::tls::expect_ost(uri.host(), ost.id);
+            }
             scan_ost(queue, location, ost.id, records);
         }
     } catch (...) {
@@ -283,29 +357,51 @@ void reconstruct(
 
     rawstd_info(
         "reconstruct: %zu chunk records from %zu OST(s), rebuilding map\n",
-        records.size(), topology.osts().size()
+        records.size(), osts.size()
     );
     store.reconstruct(records);
     rawstd_info("reconstruct: done\n");
 }
 
-// Topology reload (SIGHUP): re-reads `topology_path` and swaps it in,
-// unless it can't be parsed or drops an OST that still holds chunks
-// (ObjectStore::set_topology()) -- the current topology then stays.
-void reload_topology(
-    rawstor::mdsserver::ObjectStore& store, const std::string& topology_path
-) {
-    try {
-        store.set_topology(
-            rawstor::mdsserver::Topology::parse_file(topology_path)
-        );
-        rawstd_info("Topology reloaded from %s\n", topology_path.c_str());
-    } catch (const std::exception& e) {
-        rawstd_error(
-            "Topology reload from %s failed, keeping the current one: %s\n",
-            topology_path.c_str(), e.what()
-        );
+// The OSTs of the topology of the database, none for a database that is gone:
+// the ones --reconstruct reports if they do not register. Witness-only
+// candidates contain no recoverable DATA or CoW versions.
+std::vector<RawstdUUID> known_osts(rawstor::mdsserver::ObjectStore& store) {
+    std::vector<RawstdUUID> known;
+    for (const rawstor::mdsserver::TopologyOST& ost :
+         store.topology()->osts()) {
+        if (!ost.witness_only()) {
+            known.push_back(ost.id);
+        }
     }
+    return known;
+}
+
+// The id the MDS's own witness goes by: that of its certificate, and with
+// --id the same one (EINVAL otherwise); without TLS, --id alone.
+RawstdUUID local_witness_id(const std::string& id) {
+    std::string name = id;
+    if (const char* cert = rawstor_opts_tls_cert()) {
+        rawtls::SpiffeId identity(rawtls::inspect(cert).identity);
+        if (identity.type() != rawtls::Type::mds) {
+            rawstd_error("The certificate is not an MDS's\n");
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+        if (!name.empty() && name != identity.name()) {
+            rawstd_error(
+                "--id %s is not the id of the certificate, %s\n", name.c_str(),
+                identity.name().c_str()
+            );
+            RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+        }
+        name = identity.name();
+    }
+    RawstdUUID ret{};
+    if (name.empty() || rawstd_uuid_from_string(&ret, name.c_str()) < 0) {
+        rawstd_error("--advertise needs the MDS's id: --id\n");
+        RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+    }
+    return ret;
 }
 
 // Each worker is a thread with its own rawstor::mdsserver::Server (own
@@ -323,9 +419,8 @@ void reload_topology(
 // pipe (Server::_wake_task()).
 void mds(
     unsigned int queue_size, unsigned int workers, const std::string& addr,
-    unsigned int port, const std::string& db_path,
-    const std::string& topology_path, bool do_reconstruct,
-    const rawstor::mdsserver::Opts& opts
+    unsigned int port, const std::string& db_path, bool do_reconstruct,
+    const LocalWitness& witness, const rawstor::mdsserver::Opts& opts
 ) {
     sigset_t signals;
     sigemptyset(&signals);
@@ -340,16 +435,28 @@ void mds(
         );
     }
 
-    rawstor::mdsserver::ObjectStore store(
-        db_path, rawstor::mdsserver::Topology::parse_file(topology_path)
-    );
-    // --reconstruct rebuilds the map from the topology's own OSTs, so a
-    // map referencing one no longer there is exactly what it replaces.
-    if (do_reconstruct) {
-        reconstruct(*store.topology(), store);
-    } else {
-        store.check_topology(*store.topology());
+    rawstor::mdsserver::ObjectStore store(db_path, opts);
+    if (!witness.location.empty()) {
+        rawstor::mdsserver::TopologyOST ost{};
+        ost.id = local_witness_id(witness.id);
+        ost.location = witness.location;
+        ost.weight = witness.weight;
+        ost.roles = {rawstor::mdsserver::Role::Witness};
+        rawstor::split_domain(witness.domain, ost.path);
+        store.set_local_witness(ost);
+        rawstd_info(
+            "Hosting a witness at %s in %s\n",
+            rawstor::printable_location(witness.location).c_str(),
+            witness.domain.c_str()
+        );
     }
+    // The workers serve registrations while the map is rebuilt: the OSTs it is
+    // rebuilt from register with them.
+    std::vector<RawstdUUID> known;
+    if (do_reconstruct) {
+        known = known_osts(store);
+    }
+    store.set_reconstructing(do_reconstruct);
 
     ScopedFd listen_fd(rawstor::mdsserver::Server::bind_listen(addr, port));
     rawstd_info(
@@ -363,32 +470,45 @@ void mds(
         wake_pipes.emplace_back(rawstd::Pipe::Mode::NonBlocking);
     }
 
-    RawstdUUID local_witness{};
-    if (const char* cert = rawstor_opts_tls_cert()) {
-        rawtls::SpiffeId identity(rawtls::inspect(cert).identity);
-        if (identity.type() == rawtls::Type::mds) {
-            rawstd_uuid_from_string(&local_witness, identity.name().c_str());
-        }
-    }
-    rawstor::mdsserver::Monitor monitor(store, opts, local_witness);
-    store.set_space_change_listener([&monitor](
-                                        const std::vector<RawstdUUID>& osts
-                                    ) { monitor.refresh(osts); });
     rawstd_info(
-        "MDS backend info: interval=%u ms, concurrency=%u\n",
-        opts.info_interval, opts.info_concurrency
+        "OST registration: heartbeat=%u ms, info=%u ms, info refresh=%u ms\n",
+        opts.heartbeat_interval, opts.info_interval, opts.info_refresh_delay
     );
-    std::vector<std::exception_ptr> errors(workers + 1);
+    std::vector<std::exception_ptr> errors(workers + 2);
     std::vector<std::thread> threads;
-    threads.reserve(workers + 1);
-    threads.emplace_back([&monitor, &errors, workers]() {
+    threads.reserve(workers + 2);
+    std::atomic<bool> stop{false};
+    rawstor::mdsserver::Reconciler reconciler(store);
+    store.set_disagreement_listener(
+        [&reconciler](const rawstor::mdsserver::TopologyOST& ost) {
+            reconciler.request(ost);
+        }
+    );
+    threads.emplace_back([&errors, &reconciler, workers]() {
         try {
-            monitor.loop();
+            reconciler.loop();
         } catch (...) {
-            errors[workers] = std::current_exception();
+            errors[workers + 1] = std::current_exception();
             kill(getpid(), SIGTERM);
         }
     });
+    if (do_reconstruct) {
+        const std::chrono::milliseconds lease(
+            uint64_t{opts.heartbeat_interval} * 3
+        );
+        threads.emplace_back([&errors, &store, &stop, &known, workers,
+                              lease]() {
+            try {
+                reconstruct(store, known, lease, stop);
+                store.set_reconstructing(false);
+            } catch (...) {
+                if (!stop) {
+                    errors[workers] = std::current_exception();
+                    kill(getpid(), SIGTERM);
+                }
+            }
+        });
+    }
     for (unsigned int i = 0; i < workers; i++) {
         threads.emplace_back([&errors, &store, i, queue_size,
                               fd = listen_fd.get(),
@@ -413,19 +533,14 @@ void mds(
             break;
         }
         // spiffe-helper signals SIGUSR1 after it renews the certificate.
-        if (sig == SIGUSR1) {
-            rawstor_tls_request_reload();
-            continue;
-        }
-        if (sig != SIGHUP) {
+        if (sig != SIGHUP && sig != SIGUSR1) {
             break;
         }
         rawstor_tls_request_reload();
-        reload_topology(store, topology_path);
-        monitor.reload();
     }
 
-    monitor.stop();
+    stop = true;
+    reconciler.stop();
     for (const rawstd::Pipe& pipe : wake_pipes) {
         char byte = 0;
         ssize_t n = write(pipe.write_fd(), &byte, 1);
@@ -470,16 +585,19 @@ void parse_addr(
 } // namespace
 
 int main(int argc, char** argv) {
-    const char* optstring = "b:d:hrt:vw:";
+    const char* optstring = "b:d:hrvw:";
     struct option longopts[] = {
+        {"advertise", required_argument, nullptr, opt_advertise},
         {"bind", required_argument, nullptr, 'b'},
         {"db", required_argument, nullptr, 'd'},
+        {"domain-path", required_argument, nullptr, opt_domain_path},
         {"help", no_argument, nullptr, 'h'},
+        {"id", required_argument, nullptr, opt_id},
         {"queue-size", required_argument, nullptr, 'q'},
         {"reconstruct", no_argument, nullptr, 'r'},
-        {"topology", required_argument, nullptr, 't'},
         {"insecure", no_argument, nullptr, opt_insecure},
         {"version", no_argument, nullptr, 'v'},
+        {"weight", required_argument, nullptr, opt_weight},
         {"workers", required_argument, nullptr, 'w'},
         {},
     };
@@ -487,8 +605,9 @@ int main(int argc, char** argv) {
     const char* queue_size_arg = nullptr;
     const char* bind_arg = nullptr;
     const char* db_arg = nullptr;
-    const char* topology_arg = nullptr;
     const char* workers_arg = nullptr;
+    const char* weight_arg = nullptr;
+    LocalWitness witness;
     bool do_reconstruct = false;
     bool insecure = false;
     while (1) {
@@ -518,8 +637,22 @@ int main(int argc, char** argv) {
             do_reconstruct = true;
             break;
 
-        case 't':
-            topology_arg = optarg;
+        // An empty value is none, so that a systemd unit can pass an unset
+        // variable as is.
+        case opt_advertise:
+            witness.location = optarg;
+            break;
+
+        case opt_domain_path:
+            witness.domain = optarg;
+            break;
+
+        case opt_id:
+            witness.id = optarg;
+            break;
+
+        case opt_weight:
+            weight_arg = optarg;
             break;
 
         case 'v':
@@ -576,9 +709,26 @@ int main(int argc, char** argv) {
         std::cerr << "db argument required" << std::endl;
         return EX_USAGE;
     }
-    if (topology_arg == nullptr) {
-        std::cerr << "topology argument required" << std::endl;
-        return EX_USAGE;
+    if (weight_arg != nullptr && *weight_arg != '\0') {
+        std::istringstream iss(weight_arg);
+        if (iss.peek() < '0' || iss.peek() > '9' || !(iss >> witness.weight) ||
+            !iss.eof()) {
+            std::cerr << "weight must be unsigned integer" << std::endl;
+            return EX_USAGE;
+        }
+    }
+    if (!witness.location.empty()) {
+        if (witness.domain.empty()) {
+            std::cerr << "--advertise needs --domain-path" << std::endl;
+            return EX_USAGE;
+        }
+        try {
+            std::string path[4];
+            rawstor::split_domain(witness.domain, path);
+        } catch (const std::system_error&) {
+            std::cerr << "Invalid domain: " << witness.domain << std::endl;
+            return EX_USAGE;
+        }
     }
 
     std::string name;
@@ -617,8 +767,8 @@ int main(int argc, char** argv) {
 
     int exit_code = EXIT_SUCCESS;
     try {
-        mds(queue_size, workers, name, port, db_arg, topology_arg,
-            do_reconstruct, opts);
+        mds(queue_size, workers, name, port, db_arg, do_reconstruct, witness,
+            opts);
     } catch (const std::system_error& e) {
         std::cerr << e.what() << std::endl;
         exit_code = rawstd_exitcode_for_errno(e.code().value());

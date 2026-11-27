@@ -37,6 +37,37 @@ std::thread spawn_server(ConstructAndLoop&& body) {
 namespace rawstor {
 namespace tests {
 
+mdsserver::Opts test_mds_opts() {
+    mdsserver::Opts opts;
+    opts.heartbeat_interval = 24 * 60 * 60 * 1000;
+    return opts;
+}
+
+void enter_topology(
+    mdsserver::ObjectStore& store, const mdsserver::Topology& topology,
+    const RawstorLocationInfo& info
+) {
+    for (const mdsserver::TopologyOST& ost : topology.osts()) {
+        if (ost.witness_only()) {
+            store.set_local_witness(ost);
+            continue;
+        }
+        OstRegistration registration;
+        registration.id = ost.id;
+        registration.location = ost.location;
+        registration.weight = ost.weight;
+        for (const std::string& part : ost.path) {
+            if (!part.empty()) {
+                registration.domain +=
+                    (registration.domain.empty() ? "" : "/") + part;
+            }
+        }
+        registration.sampled = true;
+        registration.info = info;
+        store.register_ost(registration);
+    }
+}
+
 ObjectEnv::ObjectEnv(
     unsigned int mds_port, unsigned int ost_port,
     const std::vector<mdsserver::TopologyOST>& extra_backends
@@ -110,11 +141,8 @@ ObjectEnv::ObjectEnv(
         [fd = _mds_listen_fd, mds_db, topology,
          mds_wake_read_fd](std::shared_ptr<std::promise<void>> ready) mutable {
             try {
-                mdsserver::ObjectStore store(mds_db, std::move(topology));
-                RawstorLocationInfo info{123, 456};
-                for (const auto& ost : store.topology()->osts()) {
-                    store.update_backend(ost, &info);
-                }
+                mdsserver::ObjectStore store(mds_db, test_mds_opts());
+                enter_topology(store, topology, RawstorLocationInfo{123, 456});
                 mdsserver::Server s(256, fd, store, mds_wake_read_fd);
                 ready->set_value();
                 s.loop();

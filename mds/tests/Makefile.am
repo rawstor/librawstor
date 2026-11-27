@@ -9,14 +9,14 @@ AM_CXXFLAGS = $(GENERIC_CXXFLAGS) \
               -I$(top_srcdir)/mds/include \
               -I$(top_srcdir)/librawstd/include \
               -I$(top_srcdir)/include \
-              -I$(top_srcdir)/librawio/include
+              -I$(top_srcdir)/librawio/include \
+              -I$(top_srcdir)/src
 
 AM_LDFLAGS = $(ASAN_LDFLAGS) \
              $(GTEST_LIBS)
 
 
 test_all_SOURCES = main.cpp \
-                   test_monitor.cpp \
                    test_opts.cpp \
                    test_placement.cpp \
                    test_store.cpp \

@@ -164,6 +164,9 @@ public:
         RawstdUUID& token
     ) override;
 
+    rawstd::Task<OstRegistered>
+    register_ost(const OstRegistration& registration) override;
+
     rawstd::Task<void> create_account(
         const RawstdUUID& idempotency_key, const RawstdUUID& account
     ) override;

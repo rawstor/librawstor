@@ -1,12 +1,17 @@
+#include <ost/registrar.hpp>
 #include <ost/server.hpp>
 
 #include "config.h"
 #include "meta_cache.hpp"
+#include "opts.h"
+#include "ost_registration.hpp"
+#include <rawtls/ca.hpp>
 
 #include <rawstd/exitcode.h>
 #include <rawstd/logging.hpp>
 #include <rawstd/pipe.hpp>
 #include <rawstd/uri.hpp>
+#include <rawstd/uuid.h>
 
 #include <rawstor/rawstor.h>
 
@@ -14,10 +19,14 @@
 #include <signal.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <chrono>
+#include <functional>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <sstream>
+#include <string>
 #include <system_error>
 #include <thread>
 #include <utility>
@@ -32,6 +41,7 @@
 #define DEFAULT_WORKERS 12
 #define DEFAULT_META_CACHE_TTL 60000
 #define DEFAULT_PORT 7777
+#define DEFAULT_WEIGHT 100
 
 namespace {
 
@@ -84,8 +94,17 @@ public:
 // way.
 std::vector<ScopedFd> wake_write_fds;
 
+// The Registrar, while one runs; sact_handler() stops it too. Registrar::stop()
+// only stores a flag and writes to a pipe, so it is safe in a handler.
+std::atomic<rawstor::ostserver::Registrar*> registrar{nullptr};
+
 constexpr int opt_insecure = 1000;
 constexpr int opt_meta_cache_ttl = 1001;
+constexpr int opt_id = 1002;
+constexpr int opt_mds = 1003;
+constexpr int opt_advertise = 1004;
+constexpr int opt_weight = 1005;
+constexpr int opt_domain_path = 1006;
 
 void usage() {
     std::cout << "Rawstor OST backend " << PACKAGE_VERSION << std::endl
@@ -114,6 +133,23 @@ void usage() {
               << std::endl
               << "  -v, --version         Rawstor version" << std::endl
               << std::endl
+              << "registration with the MDS of the cluster (none without "
+                 "--mds):"
+              << std::endl
+              << "  --mds LOCATION        The MDS, mds://host:port" << std::endl
+              << "  --id UUID             This OST's id; with TLS, the id of "
+                 "its certificate"
+              << std::endl
+              << "  --advertise LOCATION  Location the clients reach the store "
+                 "at, e.g."
+              << std::endl
+              << "                        ost://<this host>:<port>" << std::endl
+              << "  --domain-path PATH    Failure domain, "
+                 "[[[dc/]row/]rack/]server"
+              << std::endl
+              << "  --weight N            Share of new chunks (default: "
+              << DEFAULT_WEIGHT << ")" << std::endl
+              << std::endl
               << "required arguments:" << std::endl
               << "  -b, --bind ADDR       Bind address in the format "
               << "<ip>[:<port>] " << std::endl
@@ -140,6 +176,9 @@ void sact_handler(int) {
     for (const ScopedFd& fd : wake_write_fds) {
         ssize_t n = write(fd.get(), &byte, 1);
         (void)n;
+    }
+    if (rawstor::ostserver::Registrar* r = registrar.load()) {
+        r->stop();
     }
 }
 
@@ -185,7 +224,8 @@ make_meta_cache(const char* location, unsigned int ttl_ms) {
 
 void ost(
     unsigned int queue_size, unsigned int workers, const std::string& addr,
-    unsigned int port, const char* location, unsigned int meta_cache_ttl
+    unsigned int port, const char* location, unsigned int meta_cache_ttl,
+    const std::optional<rawstor::ostserver::Registrar::Config>& registration
 ) {
     ScopedFd listen_fd(rawstor::ostserver::Server::bind_listen(addr, port));
     rawstd_info(
@@ -250,7 +290,30 @@ void ost(
         rawstd_info("Member record cache: ttl=%u ms\n", meta_cache_ttl);
     }
 
-    std::vector<std::exception_ptr> errors(workers);
+    std::unique_ptr<rawstor::ostserver::Registrar> registering;
+    std::function<void()> members_changed;
+    if (registration) {
+        registering = std::make_unique<rawstor::ostserver::Registrar>(
+            *registration, rawstd::URI(location), meta_cache
+        );
+        members_changed = [r = registering.get()]() { r->members_changed(); };
+    }
+
+    std::vector<std::exception_ptr> errors(workers + 1);
+    std::thread registrar_thread;
+    if (registering) {
+        registrar = registering.get();
+        registrar_thread =
+            std::thread([&errors, workers, r = registering.get()]() {
+                try {
+                    r->loop();
+                } catch (...) {
+                    errors[workers] = std::current_exception();
+                    // The OST would serve on, unknown to the MDS: stop instead.
+                    kill(getpid(), SIGTERM);
+                }
+            });
+    }
     std::vector<std::thread> threads;
     threads.reserve(workers);
     for (unsigned int i = 0; i < workers; i++) {
@@ -260,11 +323,12 @@ void ost(
         // every one of them before this function returns -- Server never
         // closes it, see its own constructor doc comment.
         threads.emplace_back([&errors, i, queue_size, fd = listen_fd.get(),
-                              location, gate, meta_cache,
+                              location, gate, meta_cache, members_changed,
                               wake_fd = wake_read_fds[i].get()]() {
             try {
                 rawstor::ostserver::Server s(
-                    queue_size, fd, location, wake_fd, gate, meta_cache
+                    queue_size, fd, location, wake_fd, gate, meta_cache,
+                    members_changed
                 );
                 s.loop();
             } catch (...) {
@@ -276,7 +340,14 @@ void ost(
     for (std::thread& t : threads) {
         t.join();
     }
+    // The workers are done, by a signal or a failure: the MDS is told the OST
+    // leaves.
+    if (registering) {
+        registering->stop();
+        registrar_thread.join();
+    }
 
+    registrar = nullptr;
     wake_write_fds.clear();
 
     for (std::exception_ptr& error : errors) {
@@ -316,16 +387,28 @@ void version() {
 int main(int argc, char** argv) {
     const char* optstring = "b:hvw:";
     struct option longopts[] = {
+        {"advertise", required_argument, nullptr, opt_advertise},
         {"bind", required_argument, nullptr, 'b'},
+        {"domain-path", required_argument, nullptr, opt_domain_path},
         {"help", no_argument, nullptr, 'h'},
+        {"id", required_argument, nullptr, opt_id},
+        {"mds", required_argument, nullptr, opt_mds},
         {"queue-size", required_argument, nullptr, 'q'},
         {"insecure", no_argument, nullptr, opt_insecure},
         {"meta-cache-ttl", required_argument, nullptr, opt_meta_cache_ttl},
         {"version", no_argument, nullptr, 'v'},
+        {"weight", required_argument, nullptr, opt_weight},
         {"workers", required_argument, nullptr, 'w'},
         {},
     };
 
+    // An empty value is none, so that a systemd unit can pass an unset
+    // variable as is.
+    std::string id_arg;
+    std::string mds_arg;
+    std::string advertise_arg;
+    std::string weight_arg;
+    std::string domain_arg;
     const char* queue_size_arg = nullptr;
     const char* workers_arg = nullptr;
     const char* meta_cache_ttl_arg = nullptr;
@@ -365,6 +448,26 @@ int main(int argc, char** argv) {
 
         case opt_meta_cache_ttl:
             meta_cache_ttl_arg = optarg;
+            break;
+
+        case opt_id:
+            id_arg = optarg;
+            break;
+
+        case opt_mds:
+            mds_arg = optarg;
+            break;
+
+        case opt_advertise:
+            advertise_arg = optarg;
+            break;
+
+        case opt_weight:
+            weight_arg = optarg;
+            break;
+
+        case opt_domain_path:
+            domain_arg = optarg;
             break;
 
         default:
@@ -426,6 +529,58 @@ int main(int argc, char** argv) {
         return EX_USAGE;
     }
 
+    RawstdUUID id{};
+    if (!id_arg.empty() && rawstd_uuid_from_string(&id, id_arg.c_str()) < 0) {
+        std::cerr << "Invalid id: " << id_arg << std::endl;
+        return EX_USAGE;
+    }
+    std::optional<rawstor::ostserver::Registrar::Config> registration;
+    if (!mds_arg.empty()) {
+        rawstor::ostserver::Registrar::Config config;
+        try {
+            std::vector<rawstd::URI> mds = rawstd::URI::uriv(mds_arg.c_str());
+            if (mds.size() != 1 || mds.front().scheme() != "mds") {
+                RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
+            }
+            config.mds = mds.front().str();
+        } catch (const std::system_error&) {
+            std::cerr << "--mds must be one mds:// location" << std::endl;
+            return EX_USAGE;
+        }
+        if (id_arg.empty()) {
+            std::cerr << "--mds needs --id" << std::endl;
+            return EX_USAGE;
+        }
+        config.id = id;
+        if (advertise_arg.empty()) {
+            std::cerr << "--mds needs --advertise" << std::endl;
+            return EX_USAGE;
+        }
+        config.location = advertise_arg;
+        if (domain_arg.empty()) {
+            std::cerr << "--mds needs --domain-path" << std::endl;
+            return EX_USAGE;
+        }
+        try {
+            std::string path[4];
+            rawstor::split_domain(domain_arg, path);
+        } catch (const std::system_error&) {
+            std::cerr << "Invalid domain: " << domain_arg << std::endl;
+            return EX_USAGE;
+        }
+        config.domain = domain_arg;
+        config.weight = DEFAULT_WEIGHT;
+        if (!weight_arg.empty()) {
+            std::istringstream iss(weight_arg);
+            if (iss.peek() < '0' || iss.peek() > '9' ||
+                !(iss >> config.weight) || !iss.eof()) {
+                std::cerr << "weight must be unsigned integer" << std::endl;
+                return EX_USAGE;
+            }
+        }
+        registration = std::move(config);
+    }
+
     // SIGINT/SIGTERM are registered inside ost() itself, once every
     // worker's wake pipe exists -- see there.
     sact.sa_handler = sact_handler;
@@ -453,9 +608,34 @@ int main(int argc, char** argv) {
 
     rawstd_info("Rawstor OST backend %s\n", PACKAGE_VERSION);
 
+    // With TLS the id is that of the certificate: the MDS takes no other.
+    if (!id_arg.empty() && rawstor_opts_tls_cert() != nullptr) {
+        std::string named;
+        try {
+            rawtls::SpiffeId identity(
+                rawtls::inspect(rawstor_opts_tls_cert()).identity
+            );
+            if (identity.type() == rawtls::Type::ost) {
+                named = identity.name();
+            }
+        } catch (const std::exception& e) {
+            std::cerr << e.what() << std::endl;
+        }
+        RawstdUUID certified{};
+        if (rawstd_uuid_from_string(&certified, named.c_str()) < 0 ||
+            rawstd_uuid_cmp(&certified, &id) != 0) {
+            std::cerr << "--id " << id_arg
+                      << " is not the id of the OST certificate"
+                      << (named.empty() ? "" : ", " + named) << std::endl;
+            rawstor_terminate();
+            return EX_CONFIG;
+        }
+    }
+
     int exit_code = EXIT_SUCCESS;
     try {
-        ost(queue_size, workers, name, port, location_arg, meta_cache_ttl);
+        ost(queue_size, workers, name, port, location_arg, meta_cache_ttl,
+            registration);
     } catch (const std::system_error& e) {
         std::cerr << e.what() << std::endl;
         exit_code = rawstd_exitcode_for_errno(e.code().value());
