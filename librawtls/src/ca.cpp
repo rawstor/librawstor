@@ -467,11 +467,14 @@ std::string CA::issue_id(
             id + " is not in the trust domain " + _trust_domain + " of this CA"
         );
     }
-    if (parsed->type() != Type::client &&
+    if (parsed->type() != Type::account &&
         (permissions.role || !permissions.objects.empty())) {
-        raise(EINVAL, "Only a client has permissions");
+        raise(EINVAL, "Only an account has permissions");
     }
-    std::string common_name = parsed->name().substr(0, 64);
+    std::string common_name =
+        (parsed->type() == Type::account ? parsed->client_id()
+                                         : parsed->cert_id())
+            .substr(0, 64);
 
     Cert ca = read_cert(join(_dir, "ca.crt"));
     Key ca_key = read_key(join(_dir, "ca.key"));
@@ -491,32 +494,32 @@ std::string CA::issue_id(
 }
 
 std::string CA::issue(
-    Type type, const std::string& account, const std::string& name,
+    Type type, const std::string& cert_id, const std::string& client_id,
     std::chrono::seconds validity, const std::string& cert_file,
     const std::string& key_file, const Permissions& permissions
 ) const {
     ERR_clear_error();
     std::string id = "spiffe://" + _trust_domain;
-    if (type != Type::client && !account.empty()) {
-        raise(EINVAL, "Only a client has an account");
+    if (type != Type::account && !client_id.empty()) {
+        raise(EINVAL, "Only an account has a client id");
     }
     switch (type) {
     case Type::ost:
     case Type::mds:
         id += (type == Type::ost ? "/ost/" : "/mds/") +
-              (name.empty() ? new_id() : name);
+              (cert_id.empty() ? new_id() : cert_id);
         break;
     case Type::admin:
-        if (name.empty()) {
-            raise(EINVAL, "A name is required");
+        if (cert_id.empty()) {
+            raise(EINVAL, "A cert id is required");
         }
-        id += "/admin/" + name;
+        id += "/admin/" + cert_id;
         break;
-    case Type::client:
-        if (account.empty() || name.empty()) {
-            raise(EINVAL, "A client needs an account and a name");
+    case Type::account:
+        if (cert_id.empty() || client_id.empty()) {
+            raise(EINVAL, "An account needs a cert id and a client id");
         }
-        id += "/account/" + account + "/client/" + name;
+        id += "/account/" + cert_id + "/client/" + client_id;
         break;
     }
     return issue_id(id, validity, cert_file, key_file, permissions);

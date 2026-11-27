@@ -483,7 +483,7 @@ private:
             }
         }
         parsed->permissions(rawtls::certificate_permissions(cert));
-        if (id.type() != rawtls::Type::client &&
+        if (id.type() != rawtls::Type::account &&
             (id.permissions().role || !id.permissions().objects.empty())) {
             refuse("only account clients may carry permissions");
         }

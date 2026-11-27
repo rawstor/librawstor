@@ -80,6 +80,10 @@ class TestPki(unittest.TestCase):
 
         info = pki.show(cert)
         self.assertEqual(info.identity, identity)
+        self.assertEqual(info.type, "ost")
+        self.assertEqual(info.trust_domain, "cluster.example")
+        self.assertEqual(info.cert_id, OST)
+        self.assertIsNone(info.client_id)
         self.assertIsNone(info.issued)
         now = datetime.datetime.now(datetime.timezone.utc)
         self.assertGreater(info.not_after, now)
@@ -109,17 +113,22 @@ class TestPki(unittest.TestCase):
             "spiffe://cluster.example/admin/ops",
         )
         self.assertEqual(
-            pki.issue_client(self.ca, ACCOUNT, "vm-1", crt, key, role="reader"),
+            pki.issue_account(
+                self.ca, ACCOUNT, "vm-1", crt, key, role="reader"
+            ),
             f"spiffe://cluster.example/account/{ACCOUNT}/client/vm-1",
         )
 
-    def test_client_permissions_survive_renewal(self):
+    def test_account_permissions_survive_renewal(self):
         pki.init(self.ca, "cluster.example")
         crt, key = self.dir / "client.crt", self.dir / "client.key"
         permissions = {OST: 1, MDS: 0}
-        pki.issue_client(self.ca, ACCOUNT, "vm", crt, key,
+        pki.issue_account(self.ca, ACCOUNT, "vm", crt, key,
                          role="manager", object_permissions=permissions)
         before = pki.show(crt)
+        self.assertEqual(before.type, "account")
+        self.assertEqual(before.cert_id, ACCOUNT)
+        self.assertEqual(before.client_id, "vm")
         self.assertEqual(before.role, "manager")
         self.assertEqual(before.object_permissions, permissions)
         pki.renew(self.ca, crt, key)
@@ -128,21 +137,21 @@ class TestPki(unittest.TestCase):
         self.assertEqual(after.role, before.role)
         self.assertEqual(after.object_permissions, permissions)
         with self.assertRaises((OSError, ValueError)):
-            pki.issue_client(self.ca, ACCOUNT, "vm", crt, key,
+            pki.issue_account(self.ca, ACCOUNT, "vm", crt, key,
                              role="manager", object_permissions={OST: 8})
         self.assertEqual(pki.show(crt).object_permissions, permissions)
 
     def test_none_with_object_permissions_survives_renewal(self):
         pki.init(self.ca, "cluster.example")
         crt, key = self.dir / "vhost.crt", self.dir / "vhost.key"
-        pki.issue_client(self.ca, ACCOUNT, "vhost", crt, key,
+        pki.issue_account(self.ca, ACCOUNT, "vhost", crt, key,
                          role="none", object_permissions={OST: 3})
         self.assertEqual(pki.show(crt).role, "none")
         self.assertEqual(pki.show(crt).object_permissions, {OST: 3})
         pki.renew(self.ca, crt, key)
         self.assertEqual(pki.show(crt).role, "none")
         self.assertEqual(pki.show(crt).object_permissions, {OST: 3})
-        pki.issue_client(self.ca, ACCOUNT, "empty", crt, key, role="none")
+        pki.issue_account(self.ca, ACCOUNT, "empty", crt, key, role="none")
         self.assertEqual(pki.show(crt).role, "none")
         self.assertEqual(pki.show(crt).object_permissions, {})
         admin = self.dir / "admin.crt"

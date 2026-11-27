@@ -70,8 +70,8 @@ int rawstor_pki_init(
 }
 
 int rawstor_pki_issue(
-    const char* dir, enum RawstorPkiType type, const char* account,
-    const char* name, unsigned long validity, const char* cert_file,
+    const char* dir, enum RawstorPkiType type, const char* cert_id,
+    const char* client_id, unsigned long validity, const char* cert_file,
     const char* key_file, char* identity, size_t size,
     const RawstorPkiPermissions* permissions
 ) {
@@ -88,8 +88,8 @@ int rawstor_pki_issue(
         case RAWSTOR_PKI_ADMIN:
             r = rawtls::Type::admin;
             break;
-        case RAWSTOR_PKI_CLIENT:
-            r = rawtls::Type::client;
+        case RAWSTOR_PKI_ACCOUNT:
+            r = rawtls::Type::account;
             break;
         default:
             throw std::system_error(
@@ -119,7 +119,7 @@ int rawstor_pki_issue(
         }
         give(
             rawtls::CA(dir).issue(
-                r, text(account), text(name), seconds(validity), cert_file,
+                r, text(cert_id), text(client_id), seconds(validity), cert_file,
                 key_file, policy
             ),
             identity

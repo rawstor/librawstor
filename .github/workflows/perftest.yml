@@ -78,7 +78,7 @@ jobs:
         rawstor pki init --trust-domain ${TD} ca
         rawstor pki issue --ca ca --cert ost.pem --key ost.key ost ${OST_ID}
         rawstor pki issue --ca ca --cert mds.pem --key mds.key mds ${MDS_ID}
-        rawstor pki issue --ca ca --cert cli.pem --key cli.key --role manager client ${ACCOUNT_ID} perftest
+        rawstor pki issue --ca ca --cert cli.pem --key cli.key --role manager account ${ACCOUNT_ID} perftest
         for who in ost mds; do
           echo "RAWSTOR_TLS_TRUST_DOMAIN=${TD} RAWSTOR_TLS_CERT=${PWD}/${who}.pem RAWSTOR_TLS_KEY=${PWD}/${who}.key RAWSTOR_TLS_CA=${PWD}/ca/ca.crt" > ${who}.env
         done
