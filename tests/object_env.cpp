@@ -136,7 +136,7 @@ ObjectEnv::ObjectEnv(
     _mds_wake_write_fd = mds_wake.release_write();
     int mds_wake_read_fd = mds_wake.release_read();
 
-    std::string mds_db = (_mds_dir.path() / "mds.db").string();
+    std::string mds_db = "sqlite://" + (_mds_dir.path() / "mds.db").string();
     _mds_thread = spawn_server(
         [fd = _mds_listen_fd, mds_db, topology,
          mds_wake_read_fd](std::shared_ptr<std::promise<void>> ready) mutable {

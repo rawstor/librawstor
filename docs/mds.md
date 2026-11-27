@@ -9,7 +9,7 @@ numbers its stages separately.
 | Feature | Stage | Status | Where |
 |---|---|---|---|
 | `rawstor-mds` server, `-w/--workers` threads | 1 | ✅ | `mds/src/main.cpp`, `mds/src/server.cpp` |
-| SQLite store (WAL, `synchronous=FULL`) | 1 | ✅ | `mds/src/store.cpp` |
+| SQLite store (WAL, `synchronous=FULL`) | 1 | ✅ | `mds/src/store.cpp`, `mds/src/sqlite_database.cpp` |
 | `OBJ_CREATE` / `RESOLVE` / `OBJ_RESIZE` / `OBJ_REMOVE` | 1 | ✅ | `mds/src/client.cpp`, `src/mds_backend.cpp` |
 | Explicit chunk map, client-side routing by chunk | 1 | ✅ | `src/mds_backend.cpp`, `src/object.cpp` |
 | Weighted HRW placement, `failure_domain`, `stripe_width` | 1 | ✅ | `mds/src/placement.cpp` |
@@ -1108,8 +1108,8 @@ epoch/CAS data model here is already compatible with it.
 
 Within that one process, `-w/--workers N` (default 4) worker threads each
 run their own I/O queue and client sessions, all accepting on one listening
-socket, like `rawstor-ost`. They share one store: a single SQLite
-connection, every store call serialized by a mutex. SQLite never sees
+socket, like `rawstor-ost`. They share one store: a single database
+connection, every store call serialized by a mutex. The database never sees
 concurrent use of the connection, and a read-then-write mutation (e.g.
 resize reading the descriptor before its transaction) can't race another
 worker's; mutations are rare enough that serializing them costs nothing.
