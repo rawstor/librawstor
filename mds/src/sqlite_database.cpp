@@ -146,8 +146,8 @@ std::unique_ptr<Statement> SqliteDatabase::prepare(const char* sql) {
     return std::make_unique<SqliteStatement>(_db, sql);
 }
 
-void SqliteDatabase::begin() {
-    exec("BEGIN IMMEDIATE;");
+void SqliteDatabase::begin(TransactionMode mode) {
+    exec(mode == TransactionMode::write ? "BEGIN IMMEDIATE;" : "BEGIN;");
 }
 
 void SqliteDatabase::commit() {
