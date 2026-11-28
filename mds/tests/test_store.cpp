@@ -22,6 +22,7 @@
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <sqlite3.h>
 
 #include <functional>
 
@@ -300,6 +301,40 @@ TEST_F(ObjectStoreTest, topology_reads_commits_from_another_connection) {
     leave(writer, ost);
     EXPECT_TRUE(reader.topology()->osts().empty());
     EXPECT_TRUE(reader.list_locations(token, 1).empty());
+}
+
+TEST_F(ObjectStoreTest, unchanged_heartbeats_succeed_during_a_database_write) {
+    ObjectStore& store = make_store();
+    TopologyOST ost = make_topology().osts()[0];
+    RawstorLocationInfo info{};
+    info.total = 100;
+    auto registration = registration_of(ost, &info);
+    store.register_ost(registration);
+
+    sqlite3* db = nullptr;
+    const std::string path = (dir.path() / "mds.db").string();
+    int rc = sqlite3_open_v2(path.c_str(), &db, SQLITE_OPEN_READWRITE, nullptr);
+    std::unique_ptr<sqlite3, decltype(&sqlite3_close)> writer(
+        db, sqlite3_close
+    );
+    ASSERT_EQ(rc, SQLITE_OK);
+    ASSERT_EQ(
+        sqlite3_exec(db, "BEGIN IMMEDIATE;", nullptr, nullptr, nullptr),
+        SQLITE_OK
+    );
+
+    EXPECT_NO_THROW(store.register_ost(registration_of(ost)));
+    EXPECT_NO_THROW(store.register_ost(registration));
+
+    registration.info.used = 10;
+    EXPECT_EQ(errno_of([&] { store.register_ost(registration); }), EAGAIN);
+    EXPECT_EQ(store.info().used, 0u);
+
+    ASSERT_EQ(
+        sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, nullptr), SQLITE_OK
+    );
+    EXPECT_NO_THROW(store.register_ost(registration));
+    EXPECT_EQ(store.info().used, 10u);
 }
 
 // Three heartbeats: an OST that has not registered since is unavailable, and

@@ -17,7 +17,8 @@ namespace db {
  * A prepared statement. Parameters are numbered from 1, columns from 0.
  *
  * Errors are thrown as std::system_error: EEXIST for a statement that
- * violates a constraint, EIO for any other database failure.
+ * violates a constraint, EAGAIN for database write contention, and EIO
+ * for other database failures.
  */
 class Statement {
 public:

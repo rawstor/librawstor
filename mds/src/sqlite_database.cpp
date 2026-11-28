@@ -14,6 +14,9 @@
 namespace {
 
 [[noreturn]] void throw_sqlite(sqlite3* db, const char* what) {
+    if (sqlite3_errcode(db) == SQLITE_BUSY) {
+        RAWSTD_THROW_SYSTEM_ERROR(EAGAIN);
+    }
     rawstd_error("%s: %s\n", what, sqlite3_errmsg(db));
     RAWSTD_THROW_SYSTEM_ERROR(EIO);
 }
@@ -134,11 +137,8 @@ SqliteDatabase::~SqliteDatabase() {
 }
 
 void SqliteDatabase::exec(const char* sql) {
-    char* err = nullptr;
-    if (sqlite3_exec(_db, sql, nullptr, nullptr, &err) != SQLITE_OK) {
-        rawstd_error("sqlite exec: %s\n", err != nullptr ? err : "?");
-        sqlite3_free(err);
-        RAWSTD_THROW_SYSTEM_ERROR(EIO);
+    if (sqlite3_exec(_db, sql, nullptr, nullptr, nullptr) != SQLITE_OK) {
+        throw_sqlite(_db, "sqlite exec");
     }
 }
 
