@@ -52,7 +52,7 @@ public:
     void exec(const char* sql) override;
     std::unique_ptr<Statement> prepare(const char* sql) override;
 
-    void begin() override;
+    void begin(TransactionMode mode) override;
     void commit() override;
     void rollback() noexcept override;
 

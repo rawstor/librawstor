@@ -22,7 +22,6 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 namespace rawstor {
@@ -130,7 +129,7 @@ private:
     };
 
     // Serializes every public call: one database connection shared by every
-    // worker thread, the topology and the registrations.
+    // worker thread and the local registration state.
     std::recursive_mutex _mutex;
     std::unique_ptr<db::Database> _db;
     Opts _opts;
@@ -138,20 +137,13 @@ private:
     Clock::duration _lease;
     Clock::time_point _started;
     Clock::time_point _last_sweep;
-    // The topology table as it stands, swapped whole whenever an entry is
-    // added, changed or dropped, never modified in place: a caller of
-    // topology() keeps using the one it got.
-    std::shared_ptr<const Topology> _topology;
     // Liveness is kept in memory only: a heartbeat writes nothing, and after
     // a restart every OST is unavailable until it registers again.
     std::unordered_map<std::string, Seen> _seen;
     // The witness this MDS hosts itself, nil for none: always available.
     RawstdUUID _local_witness{};
     bool _reconstructing = false;
-    // Compared again with the next sample of the OST: its digest, or the
-    // map's slots on it, changed.
     std::unordered_map<std::string, Digests> _digests;
-    std::unordered_set<std::string> _map_changed;
     std::function<void(const TopologyOST&)> _on_disagreement;
 
     void _check_layout();
@@ -159,16 +151,14 @@ private:
     void _require_account(const RawstdUUID& account);
     void _register_default_account();
     // The caller holds _mutex.
-    void _load_topology();
+    Topology _load_topology();
     bool _alive(const RawstdUUID& id, Clock::time_point now) const;
     void _sweep(Clock::time_point now, bool force);
     Topology _available_topology();
-    std::vector<Member> _members_on(const RawstdUUID& ost);
     void _check_members(
         const TopologyOST& ost, const MemberDigest& reported,
         Clock::time_point now
     );
-    void _slots_changed(const std::vector<RawstdUUID>& osts);
     ObjectDescriptor _descriptor(const RawstdUUID& id);
     ObjectMap _open_live(const RawstdUUID& id);
     ObjectMap _open_version(const RawstdUUID& id, const RawstdUUID& version_id);
@@ -298,6 +288,7 @@ public:
     std::vector<TopologyOST>
     list_locations(RawstdUUID& token, unsigned int limit);
 
+    /* A snapshot of the database topology at the time of this call. */
     std::shared_ptr<const Topology> topology();
 
     const Opts& opts() const noexcept { return _opts; }

@@ -371,8 +371,8 @@ void reconstruct(
 // candidates contain no recoverable DATA or CoW versions.
 std::vector<RawstdUUID> known_osts(rawstor::mdsserver::ObjectStore& store) {
     std::vector<RawstdUUID> known;
-    for (const rawstor::mdsserver::TopologyOST& ost :
-         store.topology()->osts()) {
+    auto topology = store.topology();
+    for (const rawstor::mdsserver::TopologyOST& ost : topology->osts()) {
         if (!ost.witness_only()) {
             known.push_back(ost.id);
         }

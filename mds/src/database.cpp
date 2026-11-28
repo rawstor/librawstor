@@ -77,8 +77,10 @@ std::unique_ptr<Database> Database::open(const std::string& uri) {
     return std::make_unique<SqliteDatabase>(sqlite_path(parsed));
 }
 
-Transaction::Transaction(Database& db) : _db(db), _committed(false) {
-    _db.begin();
+Transaction::Transaction(Database& db, TransactionMode mode) :
+    _db(db),
+    _committed(false) {
+    _db.begin(mode);
 }
 
 Transaction::~Transaction() {

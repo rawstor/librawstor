@@ -22,6 +22,7 @@
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <sqlite3.h>
 
 #include <functional>
 
@@ -283,6 +284,59 @@ TEST_F(ObjectStoreTest, registering_adds_an_ost) {
     }
 }
 
+TEST_F(ObjectStoreTest, topology_reads_commits_from_another_connection) {
+    ObjectStore reader(dir.db_uri());
+    ObjectStore writer(dir.db_uri());
+    auto original = reader.topology();
+    TopologyOST ost = make_topology().osts()[0];
+    writer.register_ost(registration_of(ost));
+
+    EXPECT_TRUE(original->osts().empty());
+    ASSERT_EQ(reader.topology()->osts().size(), 1u);
+    RawstdUUID token{};
+    auto locations = reader.list_locations(token, 1);
+    ASSERT_EQ(locations.size(), 1u);
+    EXPECT_EQ(locations[0].location, ost.location);
+
+    leave(writer, ost);
+    EXPECT_TRUE(reader.topology()->osts().empty());
+    EXPECT_TRUE(reader.list_locations(token, 1).empty());
+}
+
+TEST_F(ObjectStoreTest, unchanged_heartbeats_succeed_during_a_database_write) {
+    ObjectStore& store = make_store();
+    TopologyOST ost = make_topology().osts()[0];
+    RawstorLocationInfo info{};
+    info.total = 100;
+    auto registration = registration_of(ost, &info);
+    store.register_ost(registration);
+
+    sqlite3* db = nullptr;
+    const std::string path = (dir.path() / "mds.db").string();
+    int rc = sqlite3_open_v2(path.c_str(), &db, SQLITE_OPEN_READWRITE, nullptr);
+    std::unique_ptr<sqlite3, decltype(&sqlite3_close)> writer(
+        db, sqlite3_close
+    );
+    ASSERT_EQ(rc, SQLITE_OK);
+    ASSERT_EQ(
+        sqlite3_exec(db, "BEGIN IMMEDIATE;", nullptr, nullptr, nullptr),
+        SQLITE_OK
+    );
+
+    EXPECT_NO_THROW(store.register_ost(registration_of(ost)));
+    EXPECT_NO_THROW(store.register_ost(registration));
+
+    registration.info.used = 10;
+    EXPECT_EQ(errno_of([&] { store.register_ost(registration); }), EAGAIN);
+    EXPECT_EQ(store.info().used, 0u);
+
+    ASSERT_EQ(
+        sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, nullptr), SQLITE_OK
+    );
+    EXPECT_NO_THROW(store.register_ost(registration));
+    EXPECT_EQ(store.info().used, 10u);
+}
+
 // Three heartbeats: an OST that has not registered since is unavailable, and
 // registering again makes it available.
 TEST_F(ObjectStoreTest, a_registration_lasts_three_heartbeats) {
@@ -541,7 +595,9 @@ TEST_F(ObjectStoreTest, a_lasting_disagreement_is_reported_once) {
     rawstor::OstRegistration registration = registration_of(ost, &info);
     store.register_ost(registration);
     RawstdUUID id = make_id();
-    store.create(RawstdUUID{}, {}, id, chunk_size, chunk_size, make_policy(1));
+    ObjectStore writer(dir.db_uri());
+    writer.register_ost(registration_of(ost));
+    writer.create(RawstdUUID{}, {}, id, chunk_size, chunk_size, make_policy(1));
 
     // The client has not created the chunk yet: not a disagreement to report.
     store.register_ost(registration);
@@ -859,7 +915,8 @@ TEST_F(ObjectStoreTest, list_objects_pages_by_id) {
 
 // The location URI of the topology entry `id`.
 std::string location_of(ObjectStore& store, const RawstdUUID& id) {
-    for (const auto& ost : store.topology()->osts()) {
+    auto topology = store.topology();
+    for (const auto& ost : topology->osts()) {
         if (rawstd_uuid_cmp(&ost.id, &id) == 0) {
             return ost.location;
         }
@@ -901,7 +958,8 @@ TEST_F(ObjectStoreTest, list_objects_on_a_location) {
 
     // Every object lists on the one location its slot is on, and only there.
     size_t listed = 0;
-    for (const auto& ost : store.topology()->osts()) {
+    auto topology = store.topology();
+    for (const auto& ost : topology->osts()) {
         std::vector<RawstdUUID> expected;
         for (const auto& id : ids) {
             if (rawstd_uuid_cmp(
@@ -932,7 +990,8 @@ TEST_F(ObjectStoreTest, list_objects_on_a_location_counts_version_members) {
     RawstdUUID slot_ost = map.chunks[0][0].ost_id;
     // A location that holds no slot of the object, but one of its versions.
     RawstdUUID other{};
-    for (const auto& ost : store.topology()->osts()) {
+    auto topology = store.topology();
+    for (const auto& ost : topology->osts()) {
         if (rawstd_uuid_cmp(&ost.id, &slot_ost) != 0) {
             other = ost.id;
             break;
@@ -2036,7 +2095,8 @@ list_locations_of(ObjectStore& store, unsigned int limit) {
 
 TEST_F(ObjectStoreTest, list_locations_pages_by_id) {
     ObjectStore& store = make_store();
-    const auto& osts = store.topology()->osts();
+    auto topology = store.topology();
+    const auto& osts = topology->osts();
     std::vector<RawstdUUID> expected;
     for (const auto& ost : osts) {
         expected.push_back(ost.id);

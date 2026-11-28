@@ -17,7 +17,8 @@ namespace db {
  * A prepared statement. Parameters are numbered from 1, columns from 0.
  *
  * Errors are thrown as std::system_error: EEXIST for a statement that
- * violates a constraint, EIO for any other database failure.
+ * violates a constraint, EAGAIN for database write contention, and EIO
+ * for other database failures.
  */
 class Statement {
 public:
@@ -48,6 +49,8 @@ public:
     // EIO unless the column is a blob of exactly a UUID's size.
     void column_uuid(int pos, RawstdUUID* out);
 };
+
+enum class TransactionMode { read, write };
 
 /*
  * One connection to the database the MDS store keeps its map in. It is not
@@ -83,9 +86,8 @@ public:
 
     virtual std::unique_ptr<Statement> prepare(const char* sql) = 0;
 
-    // A transaction that takes the write lock at once, so that it never
-    // fails later on a concurrent writer.
-    virtual void begin() = 0;
+    // A write transaction reserves the write lock before reading state.
+    virtual void begin(TransactionMode mode) = 0;
     virtual void commit() = 0;
     virtual void rollback() noexcept = 0;
 
@@ -106,7 +108,9 @@ private:
     bool _committed;
 
 public:
-    explicit Transaction(Database& db);
+    explicit Transaction(
+        Database& db, TransactionMode mode = TransactionMode::write
+    );
     Transaction(const Transaction&) = delete;
     Transaction(Transaction&&) = delete;
     ~Transaction();

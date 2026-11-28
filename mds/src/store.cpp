@@ -30,6 +30,7 @@ namespace {
 
 using rawstor::mdsserver::PlacementPolicy;
 using rawstor::mdsserver::db::Database;
+using rawstor::mdsserver::db::Statement;
 using rawstor::mdsserver::db::Transaction;
 
 /*
@@ -143,14 +144,11 @@ void validate_geometry(uint64_t logical_size, uint64_t chunk_size) {
     }
 }
 
-/* Returns every OST that gets a slot. */
-std::vector<RawstdUUID> insert_chunks(
+void insert_chunks(
     Database& db, const rawstor::mdsserver::Topology& topology,
     const RawstdUUID& id, uint64_t first_index, uint64_t end_index,
-    uint64_t chunk_size, const PlacementPolicy& policy
+    const PlacementPolicy& policy
 ) {
-    std::vector<RawstdUUID> touched;
-    (void)chunk_size;
     auto insert = db.prepare(
         "INSERT INTO chunk_map"
         " (id, logical_index, slot_index, ost_id)"
@@ -167,10 +165,8 @@ std::vector<RawstdUUID> insert_chunks(
                 .bind_int64(3, slot.slot_index)
                 .bind_blob(4, slot.ost_id.bytes, sizeof(slot.ost_id.bytes))
                 .step();
-            touched.push_back(slot.ost_id);
         }
     }
-    return touched;
 }
 
 /*
@@ -359,6 +355,29 @@ std::set<rawstor::mdsserver::Role> roles_of(uint64_t bits) {
     return roles;
 }
 
+rawstor::mdsserver::TopologyOST read_ost(Statement& row) {
+    rawstor::mdsserver::TopologyOST ost{};
+    row.column_uuid(0, &ost.id);
+    ost.location = row.column_text(1);
+    ost.weight = row.column_int64(2);
+    ost.roles = roles_of(row.column_int64(3));
+    std::string domain = row.column_text(4);
+    if (!domain.empty()) {
+        rawstor::split_domain(domain, ost.path);
+    }
+    return ost;
+}
+
+std::unique_ptr<Statement>
+select_members_on(Database& db, const RawstdUUID& ost) {
+    auto select = db.prepare(
+        "SELECT c.id, c.logical_index * o.chunk_size FROM chunk_map c"
+        " JOIN objects o ON o.id = c.id WHERE c.ost_id = ?;"
+    );
+    select->bind_blob(1, ost.bytes, sizeof(ost.bytes));
+    return select;
+}
+
 /* The failure domain path of an entry, as it registered it. */
 std::string domain_of(const rawstor::mdsserver::TopologyOST& ost) {
     std::string ret;
@@ -415,8 +434,7 @@ ObjectStore::ObjectStore(const std::string& uri, const Opts& opts) :
     _opts(opts),
     _lease(std::chrono::milliseconds(uint64_t{opts.heartbeat_interval} * 3)),
     _started(Clock::now()),
-    _last_sweep(_started),
-    _topology(std::make_shared<const Topology>()) {
+    _last_sweep(_started) {
     if (opts.heartbeat_interval == 0) {
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
@@ -425,7 +443,6 @@ ObjectStore::ObjectStore(const std::string& uri, const Opts& opts) :
     _db->exec(SCHEMA);
     _register_default_account();
     _db->set_schema_version(1);
-    _load_topology();
 }
 
 ObjectStore::~ObjectStore() = default;
@@ -826,11 +843,11 @@ RawstdUUID ObjectStore::transfer(
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     std::lock_guard<std::recursive_mutex> guard(_mutex);
+    Transaction tx(*_db);
     if (replay_mutation(*_db, idempotency_key, MutationType::transfer, id)) {
         // Not applied again: the owner is whoever has it now.
         return object_owner(*_db, id);
     }
-    Transaction tx(*_db);
     _require_account(account);
     auto update = _db->prepare("UPDATE objects SET account_id=? WHERE id=?");
     update->bind_blob(1, account.bytes, sizeof(account.bytes))
@@ -870,6 +887,7 @@ std::vector<ChunkEntry> ObjectStore::list_chunks(
     const std::string& held_by
 ) {
     std::lock_guard<std::recursive_mutex> guard(_mutex);
+    Transaction tx(*_db, db::TransactionMode::read);
     /* The objects an account owns; no account lists them all. */
     const bool all = rawstd_uuid_is_nil(&account);
     /* The entries of the topology at the location, normally one. */
@@ -881,7 +899,8 @@ std::vector<ChunkEntry> ObjectStore::list_chunks(
         } catch (const std::system_error&) {
             RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
         }
-        for (const TopologyOST& ost : _topology->osts()) {
+        const Topology topology = _load_topology();
+        for (const TopologyOST& ost : topology.osts()) {
             if (rawstd::URI(ost.location).canonical() == wanted) {
                 holders.push_back(ost.id);
             }
@@ -957,29 +976,27 @@ std::vector<ChunkEntry> ObjectStore::list_chunks(
             return a.offset < b.offset;
         }
     );
+    tx.commit();
     return entries;
 }
 
 std::vector<TopologyOST>
 ObjectStore::list_locations(RawstdUUID& token, unsigned int limit) {
     std::lock_guard<std::recursive_mutex> guard(_mutex);
-    std::vector<TopologyOST> sorted = _topology->osts();
-    std::sort(
-        sorted.begin(), sorted.end(),
-        [](const TopologyOST& a, const TopologyOST& b) {
-            return rawstd_uuid_cmp(&a.id, &b.id) < 0;
-        }
+    auto select = _db->prepare(
+        "SELECT id, location, weight, roles, domain FROM topology"
+        " WHERE id > ? ORDER BY id LIMIT CASE WHEN ? = 0 THEN -1 ELSE ? END;"
     );
+    select->bind_blob(1, token.bytes, sizeof(token.bytes))
+        .bind_int64(2, limit)
+        .bind_int64(3, uint64_t{limit} + 1);
     std::vector<TopologyOST> page;
-    for (const TopologyOST& ost : sorted) {
-        if (rawstd_uuid_cmp(&ost.id, &token) <= 0) {
-            continue;
-        }
+    while (select->step()) {
         if (limit != 0 && page.size() == limit) {
             token = page.back().id;
             return page;
         }
-        page.push_back(ost);
+        page.push_back(read_ost(*select));
     }
     token = {};
     return page;
@@ -987,27 +1004,18 @@ ObjectStore::list_locations(RawstdUUID& token, unsigned int limit) {
 
 std::shared_ptr<const Topology> ObjectStore::topology() {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
-    return _topology;
+    return std::make_shared<const Topology>(_load_topology());
 }
 
-void ObjectStore::_load_topology() {
+Topology ObjectStore::_load_topology() {
     auto select = _db->prepare(
         "SELECT id, location, weight, roles, domain FROM topology;"
     );
     Topology topology;
     while (select->step()) {
-        TopologyOST ost{};
-        select->column_uuid(0, &ost.id);
-        ost.location = select->column_text(1);
-        ost.weight = select->column_int64(2);
-        ost.roles = roles_of(select->column_int64(3));
-        std::string domain = select->column_text(4);
-        if (!domain.empty()) {
-            split_domain(domain, ost.path);
-        }
-        topology.add(ost);
+        topology.add(read_ost(*select));
     }
-    _topology = std::make_shared<const Topology>(std::move(topology));
+    return topology;
 }
 
 bool ObjectStore::_alive(const RawstdUUID& id, Clock::time_point now) const {
@@ -1057,7 +1065,6 @@ void ObjectStore::set_local_witness(const TopologyOST& witness) {
         .bind_text(5, domain_of(witness))
         .step();
     _local_witness = witness.id;
-    _load_topology();
 }
 
 void ObjectStore::register_ost(const OstRegistration& registration) {
@@ -1081,91 +1088,110 @@ void ObjectStore::register_ost(const OstRegistration& registration) {
     RawstdUUIDString name;
     rawstd_uuid_to_string(&ost.id, &name);
 
-    auto select = _db->prepare(
-        "SELECT location, weight, roles, domain, used, total, members,"
-        " members_hash FROM topology WHERE id = ?;"
-    );
-    select->bind_blob(1, ost.id.bytes, sizeof(ost.id.bytes));
-    const bool known = select->step();
-    std::string location, old_domain;
-    uint64_t weight = 0, roles = 0, used = 0, total = 0, members = 0,
-             members_hash = 0;
-    if (known) {
-        location = select->column_text(0);
-        weight = select->column_int64(1);
-        roles = select->column_int64(2);
-        old_domain = select->column_text(3);
-        used = select->column_int64(4);
-        total = select->column_int64(5);
-        members = select->column_int64(6);
-        members_hash = select->column_int64(7);
-    }
-
-    // One id, one OST: another process with the same identity is refused for
-    // as long as the first one keeps registering.
-    if (known && location != ost.location && _alive(ost.id, now)) {
-        rawstd_error(
-            "OST %s registered at %s while it is registered at %s\n", name,
-            printable_location(ost.location).c_str(),
-            printable_location(location).c_str()
+    struct Entry {
+        std::string location;
+        std::string domain;
+        uint64_t weight;
+        uint64_t roles;
+        uint64_t used;
+        uint64_t total;
+        MemberDigest members;
+    };
+    auto read_entry = [&]() -> std::optional<Entry> {
+        auto select = _db->prepare(
+            "SELECT location, weight, roles, domain, used, total, members,"
+            " members_hash FROM topology WHERE id = ?;"
         );
-        RAWSTD_THROW_SYSTEM_ERROR(EEXIST);
-    }
+        select->bind_blob(1, ost.id.bytes, sizeof(ost.id.bytes));
+        if (!select->step()) {
+            return std::nullopt;
+        }
+        return Entry{
+            select->column_text(0),
+            select->column_text(3),
+            select->column_int64(1),
+            select->column_int64(2),
+            select->column_int64(4),
+            select->column_int64(5),
+            {select->column_int64(6), select->column_int64(7)}
+        };
+    };
+    auto topology_changed = [&](const std::optional<Entry>& entry) {
+        return !entry || entry->location != ost.location ||
+               entry->weight != ost.weight ||
+               entry->roles != (role_data | role_witness) ||
+               entry->domain != domain;
+    };
+    auto sample_changed = [&](const std::optional<Entry>& entry) {
+        return registration.sampled &&
+               (!entry || entry->used != registration.info.used ||
+                entry->total != registration.info.total ||
+                entry->members != registration.members);
+    };
 
-    if (!known) {
-        rawstd_info(
-            "OST %s registered at %s in %s\n", name,
-            printable_location(ost.location).c_str(), domain.c_str()
-        );
-    } else {
-        if (location != ost.location) {
-            rawstd_info(
-                "OST %s moved from %s to %s\n", name,
-                printable_location(location).c_str(),
-                printable_location(ost.location).c_str()
-            );
-        }
-        // A domain or weight is the OST's own setting. The chunks placed
-        // under the old one stay where they are, even where two copies of a
-        // chunk now share a domain.
-        if (!old_domain.empty() && old_domain != domain) {
-            rawstd_warning(
-                "OST %s moved from failure domain %s to %s; chunks placed on "
-                "it stay where they are\n",
-                name, old_domain.c_str(), domain.c_str()
-            );
-        }
-        if (!old_domain.empty() && weight != ost.weight) {
-            rawstd_warning(
-                "OST %s changed its weight from %llu to %llu\n", name,
-                (unsigned long long)weight, (unsigned long long)ost.weight
-            );
-        }
-    }
-
-    const bool changed =
-        !known || location != ost.location || weight != ost.weight ||
-        roles != (role_data | role_witness) || old_domain != domain;
-    const bool resampled =
-        registration.sampled && (!known || used != registration.info.used ||
-                                 total != registration.info.total ||
-                                 members != registration.members.count ||
-                                 members_hash != registration.members.hash);
-    // A heartbeat that changes nothing writes nothing.
-    if (changed || resampled) {
+    auto entry = read_entry();
+    if (topology_changed(entry) || sample_changed(entry)) {
         Transaction tx(*_db);
-        auto upsert = _db->prepare(
-            "INSERT INTO topology (id, location, weight, roles, domain)"
-            " VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET"
-            " location = excluded.location, weight = excluded.weight,"
-            " roles = excluded.roles, domain = excluded.domain;"
-        );
-        upsert->bind_blob(1, ost.id.bytes, sizeof(ost.id.bytes))
-            .bind_text(2, ost.location)
-            .bind_int64(3, ost.weight)
-            .bind_int64(4, role_data | role_witness)
-            .bind_text(5, domain)
-            .step();
+        entry = read_entry();
+        // One id, one OST: another process with the same identity is refused
+        // for as long as the first one keeps registering.
+        if (entry && entry->location != ost.location && _alive(ost.id, now)) {
+            rawstd_error(
+                "OST %s registered at %s while it is registered at %s\n", name,
+                printable_location(ost.location).c_str(),
+                printable_location(entry->location).c_str()
+            );
+            RAWSTD_THROW_SYSTEM_ERROR(EEXIST);
+        }
+
+        if (!entry) {
+            rawstd_info(
+                "OST %s registered at %s in %s\n", name,
+                printable_location(ost.location).c_str(), domain.c_str()
+            );
+        } else {
+            if (entry->location != ost.location) {
+                rawstd_info(
+                    "OST %s moved from %s to %s\n", name,
+                    printable_location(entry->location).c_str(),
+                    printable_location(ost.location).c_str()
+                );
+            }
+            // A domain or weight is the OST's own setting. The chunks placed
+            // under the old one stay where they are, even where two copies of a
+            // chunk now share a domain.
+            if (!entry->domain.empty() && entry->domain != domain) {
+                rawstd_warning(
+                    "OST %s moved from failure domain %s to %s; chunks placed "
+                    "on "
+                    "it stay where they are\n",
+                    name, entry->domain.c_str(), domain.c_str()
+                );
+            }
+            if (!entry->domain.empty() && entry->weight != ost.weight) {
+                rawstd_warning(
+                    "OST %s changed its weight from %llu to %llu\n", name,
+                    (unsigned long long)entry->weight,
+                    (unsigned long long)ost.weight
+                );
+            }
+        }
+
+        const bool resampled = sample_changed(entry);
+        if (topology_changed(entry)) {
+            auto upsert = _db->prepare(
+                "INSERT INTO topology (id, location, weight, roles, domain)"
+                " VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET"
+                " location = excluded.location, weight = excluded.weight,"
+                " roles = excluded.roles, domain = excluded.domain;"
+            );
+            upsert->bind_blob(1, ost.id.bytes, sizeof(ost.id.bytes))
+                .bind_text(2, ost.location)
+                .bind_int64(3, ost.weight)
+                .bind_int64(4, role_data | role_witness)
+                .bind_text(5, domain)
+                .step();
+        }
         if (resampled) {
             auto update = _db->prepare(
                 "UPDATE topology SET used = ?, total = ?, members = ?,"
@@ -1180,9 +1206,6 @@ void ObjectStore::register_ost(const OstRegistration& registration) {
         }
         tx.commit();
     }
-    if (changed) {
-        _load_topology();
-    }
 
     // Not with a map that is being replaced.
     if (registration.sampled && !registration.leaving && !_reconstructing) {
@@ -1192,7 +1215,7 @@ void ObjectStore::register_ost(const OstRegistration& registration) {
     _seen[key_of(ost.id)] = Seen{now, registration.leaving};
     if (registration.leaving) {
         rawstd_info("OST %s is leaving\n", name);
-    } else if (!was_alive && known) {
+    } else if (!was_alive && entry) {
         rawstd_info("OST %s is available\n", name);
     }
     _sweep(now, registration.leaving);
@@ -1209,58 +1232,75 @@ void ObjectStore::_sweep(Clock::time_point now, bool force) {
     if (!force && now - _last_sweep < _lease) {
         return;
     }
-    _last_sweep = now;
-    auto held = _db->prepare(
-        "SELECT 1 FROM chunk_map WHERE ost_id = ?"
-        " UNION ALL SELECT 1 FROM version_members WHERE ost_id = ?"
-        " LIMIT 1;"
-    );
+    auto find_gone = [&]() {
+        auto held = _db->prepare(
+            "SELECT 1 FROM chunk_map WHERE ost_id = ?"
+            " UNION ALL SELECT 1 FROM version_members WHERE ost_id = ?"
+            " LIMIT 1;"
+        );
+        std::vector<RawstdUUID> gone;
+        const Topology topology = _load_topology();
+        for (const TopologyOST& ost : topology.osts()) {
+            if (_alive(ost.id, now)) {
+                continue;
+            }
+            auto seen = _seen.find(key_of(ost.id));
+            if (seen == _seen.end() && now - _started < _lease) {
+                continue;
+            }
+            held->reset();
+            held->bind_blob(1, ost.id.bytes, sizeof(ost.id.bytes))
+                .bind_blob(2, ost.id.bytes, sizeof(ost.id.bytes));
+            if (held->step()) {
+                continue;
+            }
+            gone.push_back(ost.id);
+        }
+        return gone;
+    };
     std::vector<RawstdUUID> gone;
-    for (const TopologyOST& ost : _topology->osts()) {
-        if (_alive(ost.id, now)) {
-            continue;
-        }
-        auto seen = _seen.find(key_of(ost.id));
-        if (seen == _seen.end() && now - _started < _lease) {
-            continue;
-        }
-        held->reset();
-        held->bind_blob(1, ost.id.bytes, sizeof(ost.id.bytes))
-            .bind_blob(2, ost.id.bytes, sizeof(ost.id.bytes));
-        if (held->step()) {
-            continue;
-        }
-        gone.push_back(ost.id);
+    {
+        Transaction tx(*_db, db::TransactionMode::read);
+        gone = find_gone();
+        tx.commit();
     }
     if (gone.empty()) {
+        _last_sweep = now;
         return;
     }
     Transaction tx(*_db);
+    gone = find_gone();
     auto del = _db->prepare("DELETE FROM topology WHERE id = ?;");
     for (const RawstdUUID& id : gone) {
         del->reset();
         del->bind_blob(1, id.bytes, sizeof(id.bytes)).step();
     }
     tx.commit();
+    _last_sweep = now;
     for (const RawstdUUID& id : gone) {
         _seen.erase(key_of(id));
         RawstdUUIDString name;
         rawstd_uuid_to_string(&id, &name);
         rawstd_info("OST %s left the topology\n", name);
     }
-    _load_topology();
 }
 
 bool ObjectStore::backend_available(const RawstdUUID& id) {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
-    return _alive(id, Clock::now());
+    if (!_alive(id, Clock::now())) {
+        return false;
+    }
+    auto select = _db->prepare("SELECT 1 FROM topology WHERE id = ?;");
+    select->bind_blob(1, id.bytes, sizeof(id.bytes));
+    return select->step();
 }
 
 std::vector<TopologyOST> ObjectStore::available_osts() {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
     std::vector<TopologyOST> ret;
     const Clock::time_point now = Clock::now();
-    for (const TopologyOST& ost : _topology->osts()) {
+    const Topology topology = _load_topology();
+    for (const TopologyOST& ost : topology.osts()) {
         if (rawstd_uuid_cmp(&ost.id, &_local_witness) != 0 &&
             _alive(ost.id, now)) {
             ret.push_back(ost);
@@ -1276,15 +1316,7 @@ void ObjectStore::set_reconstructing(bool reconstructing) {
 
 std::vector<Member> ObjectStore::members_on(const RawstdUUID& ost) {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
-    return _members_on(ost);
-}
-
-std::vector<Member> ObjectStore::_members_on(const RawstdUUID& ost) {
-    auto select = _db->prepare(
-        "SELECT c.id, c.logical_index * o.chunk_size FROM chunk_map c"
-        " JOIN objects o ON o.id = c.id WHERE c.ost_id = ?;"
-    );
-    select->bind_blob(1, ost.bytes, sizeof(ost.bytes));
+    auto select = select_members_on(*_db, ost);
     std::vector<Member> ret;
     while (select->step()) {
         Member member{};
@@ -1302,17 +1334,9 @@ void ObjectStore::set_disagreement_listener(
     _on_disagreement = std::move(listener);
 }
 
-void ObjectStore::_slots_changed(const std::vector<RawstdUUID>& osts) {
-    for (const RawstdUUID& id : osts) {
-        _map_changed.insert(key_of(id));
-    }
-}
-
 /*
- * The map's digest is computed only when the OST's or the map's has changed
- * since the last comparison, so a heartbeat costs nothing here. A
- * disagreement is given a lease to go away before it is reported: between a
- * create's reply and the client creating the chunks, the map places members
+ * A disagreement is given a lease to go away before it is reported: between
+ * a create's reply and the client creating the chunks, the map places members
  * the OST does not have yet, until its next sample.
  */
 void ObjectStore::_check_members(
@@ -1320,14 +1344,15 @@ void ObjectStore::_check_members(
 ) {
     const std::string key = key_of(ost.id);
     Digests& digests = _digests[key];
-    const bool changed = _map_changed.erase(key) != 0;
-    if (!digests.checked || changed || digests.reported != reported) {
-        MemberDigest expected;
-        for (const Member& member : _members_on(ost.id)) {
-            expected.add(member.id, member.offset);
-        }
-        const bool same = digests.checked && digests.reported == reported &&
-                          digests.expected == expected;
+    MemberDigest expected;
+    auto select = select_members_on(*_db, ost.id);
+    while (select->step()) {
+        RawstdUUID id;
+        select->column_uuid(0, &id);
+        expected.add(id, select->column_int64(1));
+    }
+    if (!digests.checked || digests.reported != reported ||
+        digests.expected != expected) {
         digests.reported = reported;
         digests.expected = expected;
         digests.checked = true;
@@ -1339,7 +1364,7 @@ void ObjectStore::_check_members(
             }
             digests.disagreeing.reset();
             digests.reported_disagreement = false;
-        } else if (!same) {
+        } else {
             digests.disagreeing = now;
             digests.reported_disagreement = false;
         }
@@ -1384,12 +1409,13 @@ RawstorLocationInfo ObjectStore::info() {
 Topology ObjectStore::_available_topology() {
     const Clock::time_point now = Clock::now();
     std::vector<RawstdUUID> ids;
-    for (const TopologyOST& ost : _topology->osts()) {
+    const Topology topology = _load_topology();
+    for (const TopologyOST& ost : topology.osts()) {
         if (_alive(ost.id, now)) {
             ids.push_back(ost.id);
         }
     }
-    return _topology->select(ids);
+    return topology.select(ids);
 }
 
 ObjectDescriptor ObjectStore::create(
@@ -1399,6 +1425,7 @@ ObjectDescriptor ObjectStore::create(
 ) {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
     validate_geometry(logical_size, chunk_size);
+    Transaction tx(*_db);
 
     if (replay_mutation(*_db, idempotency_key, MutationType::create, id)) {
         try {
@@ -1429,8 +1456,6 @@ ObjectDescriptor ObjectStore::create(
     Topology available = _available_topology();
     place_chunk(available, ret.id, 0, policy);
 
-    Transaction tx(*_db);
-
     {
         auto insert = _db->prepare(
             "INSERT INTO objects"
@@ -1452,14 +1477,11 @@ ObjectDescriptor ObjectStore::create(
             .step();
     }
 
-    std::vector<RawstdUUID> touched = insert_chunks(
-        *_db, available, ret.id, 0, nchunks, chunk_size, ret.policy
-    );
+    insert_chunks(*_db, available, ret.id, 0, nchunks, ret.policy);
 
     record_mutation(*_db, idempotency_key, MutationType::create, id, {});
 
     tx.commit();
-    _slots_changed(touched);
 
     return ret;
 }
@@ -1467,10 +1489,12 @@ ObjectDescriptor ObjectStore::create(
 ObjectMap
 ObjectStore::open(const RawstdUUID& id, const RawstdUUID& version_id) {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
-    if (!rawstd_uuid_is_nil(&version_id)) {
-        return _open_version(id, version_id);
-    }
-    return _open_live(id);
+    Transaction tx(*_db, db::TransactionMode::read);
+    ObjectMap map = rawstd_uuid_is_nil(&version_id)
+                        ? _open_live(id)
+                        : _open_version(id, version_id);
+    tx.commit();
+    return map;
 }
 
 ObjectMap ObjectStore::_open_live(const RawstdUUID& id) {
@@ -1528,6 +1552,7 @@ ResizeResult ObjectStore::resize(
     const RawstdUUID& idempotency_key, const RawstdUUID& id, uint64_t new_size
 ) {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
+    Transaction tx(*_db);
     if (std::optional<std::vector<unsigned char>> recorded =
             replay_mutation(*_db, idempotency_key, MutationType::resize, id)) {
         ResultReader r(*recorded);
@@ -1554,8 +1579,6 @@ ResizeResult ObjectStore::resize(
     uint64_t new_chunks = nchunks_of(new_size, descriptor.chunk_size);
     uint64_t map_version = descriptor.map_version + 1;
 
-    Transaction tx(*_db);
-
     {
         auto update = _db->prepare(
             "UPDATE objects SET logical_size = ?, map_version = ?"
@@ -1567,9 +1590,9 @@ ResizeResult ObjectStore::resize(
             .step();
     }
 
-    std::vector<RawstdUUID> touched = insert_chunks(
+    insert_chunks(
         *_db, _available_topology(), id, old_chunks, new_chunks,
-        descriptor.chunk_size, descriptor.policy
+        descriptor.policy
     );
 
     record_mutation(
@@ -1577,21 +1600,13 @@ ResizeResult ObjectStore::resize(
         ResultWriter().put(map_version).put(old_chunks).data()
     );
 
+    ResizeResult result{map_version, old_chunks, object_owner(*_db, id)};
     tx.commit();
-    _slots_changed(touched);
-
-    return ResizeResult{
-        .map_version = map_version,
-        .old_nchunks = old_chunks,
-        .account = object_owner(*_db, id)
-    };
+    return result;
 }
 
 void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
-    // Every comparison was with the map this replaces.
-    _digests.clear();
-    _map_changed.clear();
     struct Chunk {
         /* Scan order becomes the slot order. */
         std::vector<RawstdUUID> ost_ids;
@@ -1769,6 +1784,7 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
     }
 
     tx.commit();
+    _digests.clear();
 
     rawstd_info(
         "reconstruct: %zu objects rebuilt from %zu records\n", objects.size(),
@@ -1779,12 +1795,11 @@ void ObjectStore::reconstruct(const std::vector<ScanRecord>& records) {
 ObjectMap
 ObjectStore::remove(const RawstdUUID& idempotency_key, const RawstdUUID& id) {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
+    Transaction tx(*_db);
     if (std::optional<std::vector<unsigned char>> recorded =
             replay_mutation(*_db, idempotency_key, MutationType::remove, id)) {
         return decode_map(*recorded);
     }
-
-    Transaction tx(*_db);
 
     {
         /* An object with versions must not silently disappear. */
@@ -1823,19 +1838,12 @@ ObjectStore::remove(const RawstdUUID& idempotency_key, const RawstdUUID& id) {
     }
 
     tx.commit();
-    std::vector<RawstdUUID> touched;
-    for (const auto& chunk : ret.chunks) {
-        for (const PlacementSlot& slot : chunk) {
-            touched.push_back(slot.ost_id);
-        }
-    }
-    _slots_changed(touched);
-
     return ret;
 }
 
 std::vector<RawstdUUID> ObjectStore::list_versions(const RawstdUUID& id) {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
+    Transaction tx(*_db, db::TransactionMode::read);
     _descriptor(id);
 
     auto select = _db->prepare(
@@ -1849,6 +1857,7 @@ std::vector<RawstdUUID> ObjectStore::list_versions(const RawstdUUID& id) {
         select->column_uuid(0, &version_id);
         ret.push_back(version_id);
     }
+    tx.commit();
     return ret;
 }
 
@@ -1917,6 +1926,7 @@ uint64_t ObjectStore::commit_version(
     const RawstdUUID& version_id, const std::vector<VersionMember>& members
 ) {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
+    Transaction tx(*_db);
     if (std::optional<std::vector<unsigned char>> recorded = replay_mutation(
             *_db, idempotency_key, MutationType::commit_version, id
         )) {
@@ -1953,8 +1963,6 @@ uint64_t ObjectStore::commit_version(
     }
 
     uint64_t map_version = descriptor.map_version + 1;
-
-    Transaction tx(*_db);
 
     {
         auto insert = _db->prepare(
@@ -2008,6 +2016,7 @@ std::vector<VersionMember> ObjectStore::remove_version(
     const RawstdUUID& version_id
 ) {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
+    Transaction tx(*_db);
     std::vector<VersionMember> ret;
     if (std::optional<std::vector<unsigned char>> recorded = replay_mutation(
             *_db, idempotency_key, MutationType::remove_version, id
@@ -2020,8 +2029,6 @@ std::vector<VersionMember> ObjectStore::remove_version(
         }
         return ret;
     }
-
-    Transaction tx(*_db);
 
     {
         auto select = _db->prepare(
@@ -2074,6 +2081,7 @@ void ObjectStore::create_account(
         RAWSTD_THROW_SYSTEM_ERROR(EINVAL);
     }
     std::lock_guard<std::recursive_mutex> lock(_mutex);
+    Transaction tx(*_db);
     /* The registry's own mutations are recorded under the account they concern.
      */
     if (replay_mutation(
@@ -2088,7 +2096,6 @@ void ObjectStore::create_account(
         }
     }
 
-    Transaction tx(*_db);
     auto insert =
         _db->prepare("INSERT INTO accounts (id, created_at) VALUES (?, ?);");
     insert->bind_blob(1, account.bytes, sizeof(account.bytes))
@@ -2109,13 +2116,13 @@ void ObjectStore::remove_account(
         RAWSTD_THROW_SYSTEM_ERROR(EPERM);
     }
     std::lock_guard<std::recursive_mutex> lock(_mutex);
+    Transaction tx(*_db);
     if (replay_mutation(
             *_db, idempotency_key, MutationType::remove_account, account
         )) {
         return;
     }
 
-    Transaction tx(*_db);
     auto exists = _db->prepare("SELECT 1 FROM accounts WHERE id = ?;");
     exists->bind_blob(1, account.bytes, sizeof(account.bytes));
     if (!exists->step()) {

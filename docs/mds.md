@@ -1312,9 +1312,9 @@ that is the OST's business (sparse files, compression and so on).
 
 The MDS compares the digest with its own over the slots its map places on the
 OST (every live chunk's, witnesses included: the store lists those too). It
-computes its own only when the OST's or the map's has changed since the last
-comparison, so a heartbeat costs it nothing. A disagreement is reported only
-once it has lasted three heartbeat intervals: between a create's reply and the
+reads the current slots from the database to compute its digest whenever a
+registration carries a sample. A disagreement is reported only once it has
+lasted three heartbeat intervals: between a create's reply and the
 client creating the chunks, the map places members the OST does not have yet.
 Then the MDS logs it (`OST ... disagrees with the map: ...`), lists the OST
 with `LIST`, once -- an `ost://` location only, and with TLS only the server
